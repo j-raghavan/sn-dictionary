@@ -177,7 +177,7 @@ buildPlugin.sh                   build: prepare:dict + Metro bundle + .snplg zip
 - **`OkReward5192`** (r/Supernote_dev) — community thread on dictionary plugins, including the empirical observation that the SDK only supports lasso / text-selection entry gestures (no tap-on-word).
 - **Princeton WordNet** (BSD-style license) — the bundled English content. Distribution via the dict.org community mirror.
 - **`pako`** (MIT) — the only third-party runtime dependency.
-- Sibling Supernote plugins **`sn-shapes`**, **`sn-formula`**, and **`sn-mindmap`** — patterns for the lasso pipeline (delete-before-recognize, `setLassoBoxState(2)`, reentrancy guard with sync-release), popup close semantics (`PluginManager.closePluginView` from the close button), and the localized `nameMap` shape on `PluginButton.name`.
+- Sibling Supernote plugins **`sn-shapes`** and **`sn-mindmap`** — patterns for the lasso pipeline (delete-before-recognize, `setLassoBoxState(2)`, reentrancy guard with sync-release), popup close semantics (`PluginManager.closePluginView` from the close button), and the localized `nameMap` shape on `PluginButton.name`.
 
 ## License
 
