@@ -1,4 +1,4 @@
-import React, {useCallback, useEffect, useState} from 'react';
+import React, {useCallback, useEffect, useMemo, useState} from 'react';
 import {Pressable, ScrollView, StyleSheet, Text, View} from 'react-native';
 import {PluginManager} from 'sn-plugin-lib';
 import {
@@ -7,6 +7,11 @@ import {
   subscribe,
   type PopupState,
 } from './popupController';
+import {
+  labelForPos,
+  parseWordNetEntry,
+  type WordNetSense,
+} from './wordnetFormatter';
 
 export default function DefinitionPopup(): React.JSX.Element {
   const [state, setState] = useState<PopupState>(getCurrentState);
@@ -27,6 +32,16 @@ export default function DefinitionPopup(): React.JSX.Element {
     });
   }, []);
 
+  // Parse the WordNet entry once per definition change. Memoise so
+  // subsequent re-renders (e.g. from popupController state echoes)
+  // don't re-tokenise.
+  const parsed = useMemo(() => {
+    if (!state.visible || !state.result.found) {
+      return null;
+    }
+    return parseWordNetEntry(state.result.entry.definition);
+  }, [state]);
+
   if (!state.visible) {
     // Zero-size, non-interactive when nothing to show — matches the
     // sn-formula phase-1 pattern that avoids ghost-touching the page.
@@ -46,9 +61,13 @@ export default function DefinitionPopup(): React.JSX.Element {
         ) : null}
         <ScrollView style={styles.body}>
           {state.result.found ? (
-            <Text style={styles.definition}>
-              {state.result.entry.definition}
-            </Text>
+            parsed && !parsed.parseFailed ? (
+              <SenseList senses={parsed.senses} />
+            ) : (
+              <Text style={styles.definition}>
+                {state.result.entry.definition}
+              </Text>
+            )
           ) : (
             <Text style={styles.notFound}>
               No definition found for "{state.result.queriedFor}".
@@ -65,6 +84,49 @@ export default function DefinitionPopup(): React.JSX.Element {
     </View>
   );
 }
+
+type SenseListProps = {senses: WordNetSense[]};
+
+const SenseList = ({senses}: SenseListProps): React.JSX.Element => (
+  <View>
+    {senses.map((sense, i) => (
+      <SenseBlock
+        key={`${sense.pos ?? '?'}-${sense.index}-${i}`}
+        sense={sense}
+        showDivider={i > 0}
+      />
+    ))}
+  </View>
+);
+
+type SenseBlockProps = {sense: WordNetSense; showDivider: boolean};
+
+const SenseBlock = ({sense, showDivider}: SenseBlockProps): React.JSX.Element => (
+  <View style={[styles.sense, showDivider && styles.senseDivider]}>
+    <View style={styles.senseHeader}>
+      {sense.pos ? (
+        <Text style={styles.posBadge}>{labelForPos(sense.pos)}</Text>
+      ) : null}
+      <Text style={styles.senseIndex}>{`${sense.index}.`}</Text>
+    </View>
+    <Text style={styles.definition}>{sense.definition}</Text>
+    {sense.examples.length > 0 ? (
+      <View style={styles.examples}>
+        {sense.examples.map((ex, j) => (
+          <Text key={j} style={styles.example}>
+            “{ex}”
+          </Text>
+        ))}
+      </View>
+    ) : null}
+    {sense.synonyms.length > 0 ? (
+      <Text style={styles.synonyms}>
+        <Text style={styles.synonymsLabel}>Synonyms: </Text>
+        {sense.synonyms.join(', ')}
+      </Text>
+    ) : null}
+  </View>
+);
 
 const styles = StyleSheet.create({
   hidden: {width: 0, height: 0},
@@ -99,14 +161,62 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   definition: {
-    fontSize: 18,
-    lineHeight: 26,
+    fontSize: 17,
+    lineHeight: 24,
     color: '#000000',
   },
   notFound: {
     fontSize: 18,
     color: '#555555',
     fontStyle: 'italic',
+  },
+  sense: {
+    paddingVertical: 10,
+  },
+  senseDivider: {
+    borderTopWidth: 1,
+    borderTopColor: '#dddddd',
+  },
+  senseHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  posBadge: {
+    fontSize: 12,
+    fontStyle: 'italic',
+    color: '#555555',
+    marginRight: 8,
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderWidth: 1,
+    borderColor: '#888888',
+    borderRadius: 3,
+  },
+  senseIndex: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#000000',
+  },
+  examples: {
+    marginTop: 6,
+    marginLeft: 12,
+  },
+  example: {
+    fontSize: 15,
+    fontStyle: 'italic',
+    color: '#444444',
+    lineHeight: 22,
+  },
+  synonyms: {
+    marginTop: 8,
+    fontSize: 14,
+    color: '#444444',
+    lineHeight: 20,
+  },
+  synonymsLabel: {
+    fontWeight: '600',
+    color: '#000000',
   },
   closeButton: {
     alignSelf: 'flex-end',

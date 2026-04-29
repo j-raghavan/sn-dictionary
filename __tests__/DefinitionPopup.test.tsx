@@ -119,6 +119,54 @@ describe('DefinitionPopup', () => {
     expect(closePluginView).toHaveBeenCalledTimes(1);
   });
 
+  test('renders parsed WordNet senses with POS labels, examples, synonyms', () => {
+    const tree = renderPopup();
+    const aiEntry =
+      'AI\n' +
+      '     n 1: an agency of the United States Army responsible for ' +
+      'providing intelligence [syn: {Army Intelligence}]\n' +
+      '     2: the branch of computer science that deal with writing ' +
+      'computer programs that can solve problems creatively; ' +
+      '"workers in AI hope to imitate intelligence" ' +
+      '[syn: {artificial intelligence}]';
+    act(() => {
+      showDefinition(
+        {found: true, entry: {word: 'AI', definition: aiEntry}},
+        'OCR: AI',
+      );
+    });
+    const text = collectText(tree);
+    // Both senses should be visible in the rendered tree, with the
+    // CS sense reachable to the eye even though it's sense #2.
+    expect(text).toContain('Army Intelligence');
+    expect(text).toContain('artificial intelligence');
+    expect(text).toContain('branch of computer science');
+    // POS label rendered as the long form
+    expect(text).toContain('noun');
+    // Numbered senses
+    expect(text).toContain('1.');
+    expect(text).toContain('2.');
+    // Example from sense 2 should be quoted with curly quotes
+    expect(text).toContain('workers in AI hope to imitate intelligence');
+    // Synonyms label appears
+    expect(text).toMatch(/Synonyms/i);
+  });
+
+  test('falls back to raw text when the entry does not parse as WordNet format', () => {
+    const tree = renderPopup();
+    act(() => {
+      showDefinition({
+        found: true,
+        entry: {
+          word: 'unstructured',
+          definition: 'a single line with no WordNet structure',
+        },
+      });
+    });
+    const text = collectText(tree);
+    expect(text).toContain('a single line with no WordNet structure');
+  });
+
   test('Close button swallows a closePluginView rejection without throwing', () => {
     closePluginView.mockImplementationOnce(() =>
       Promise.reject(new Error('host gone')),
