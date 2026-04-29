@@ -21,6 +21,12 @@ describe('t (popup string lookup)', () => {
     expect(t('popup.close', 'zh_CN')).toBe('关闭');
   });
 
+  test('returns the German string for de', () => {
+    expect(t('popup.synonyms', 'de')).toBe('Synonyme');
+    expect(t('popup.close', 'de')).toBe('Schließen');
+    expect(t('popup.notFoundFor', 'de')).toBe('Keine Definition gefunden für');
+  });
+
   test('accepts BCP-47 hyphenated locale codes (zh-CN -> zh_CN)', () => {
     expect(t('popup.close', 'zh-CN')).toBe('关闭');
   });
@@ -160,6 +166,7 @@ describe('localizedButtonName / localizedPluginName', () => {
     expect(parsed.ja).toBe('検索');
     expect(parsed.th).toBe('ค้นหา');
     expect(parsed.nl).toBe('Opzoeken');
+    expect(parsed.de).toBe('Nachschlagen');
     // Every locale in the strings table also has a button-name row.
     for (const locale of Object.keys(STRINGS)) {
       expect(BUTTON_NAME[locale]).toBeDefined();
@@ -174,6 +181,7 @@ describe('localizedButtonName / localizedPluginName', () => {
     expect(parsed.ja).toBe('辞書');
     expect(parsed.th).toBe('พจนานุกรม');
     expect(parsed.nl).toBe('Woordenboek');
+    expect(parsed.de).toBe('Wörterbuch');
     for (const locale of Object.keys(STRINGS)) {
       expect(PLUGIN_NAME[locale]).toBeDefined();
     }

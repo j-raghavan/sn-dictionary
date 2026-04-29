@@ -66,6 +66,12 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.notFoundFor': 'Geen definitie gevonden voor',
     'popup.close': 'Sluiten',
   },
+  de: {
+    'popup.synonyms': 'Synonyme',
+    'popup.ocr': 'OCR',
+    'popup.notFoundFor': 'Keine Definition gefunden für',
+    'popup.close': 'Schließen',
+  },
 };
 
 // Toolbar button label — the firmware reads this as a JSON-encoded
@@ -78,6 +84,7 @@ const BUTTON_NAME: Record<string, string> = {
   ja: '検索',
   th: 'ค้นหา',
   nl: 'Opzoeken',
+  de: 'Nachschlagen',
 };
 
 // Plugin display name on the plugin manager card.
@@ -88,6 +95,7 @@ const PLUGIN_NAME: Record<string, string> = {
   ja: '辞書',
   th: 'พจนานุกรม',
   nl: 'Woordenboek',
+  de: 'Wörterbuch',
 };
 
 const FALLBACK_LOCALE = 'en';
