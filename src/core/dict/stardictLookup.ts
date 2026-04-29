@@ -24,26 +24,38 @@ export type StardictLookupDeps = {
   logger?: {warn: (msg: string) => void};
 };
 
+// safeBuild distinguishes three outcomes so the caller can decide
+// whether a load attempt is "done" (intentional empty / partial
+// success) or "should retry next time" (transient failure):
+//   - 'success'   -> dict is non-null
+//   - 'absent'    -> loader intentionally returned null/undefined
+//                    (no dict configured for this slot)
+//   - 'failed'    -> loader or buildDict threw
+type BuildOutcome =
+  | {kind: 'success'; dict: ParsedDict}
+  | {kind: 'absent'}
+  | {kind: 'failed'};
+
 const safeBuild = (
   loader: LoadDictBytes,
   tag: string,
   warn: (msg: string) => void,
-): ParsedDict | null => {
+): BuildOutcome => {
   let bytes: DictBytes | null;
   try {
     bytes = loader();
   } catch (e) {
     warn(`[${tag}] loader threw: ${(e as Error).message}`);
-    return null;
+    return {kind: 'failed'};
   }
   if (!bytes) {
-    return null;
+    return {kind: 'absent'};
   }
   try {
-    return buildDict(bytes.ifo, bytes.idx, bytes.dict);
+    return {kind: 'success', dict: buildDict(bytes.ifo, bytes.idx, bytes.dict)};
   } catch (e) {
     warn(`[${tag}] buildDict threw: ${(e as Error).message}`);
-    return null;
+    return {kind: 'failed'};
   }
 };
 
@@ -59,11 +71,35 @@ export const createStardictLookup = (
     if (loaded) {
       return;
     }
-    baseDict = safeBuild(deps.loadBase, 'stardict:base', warn);
-    if (deps.loadCustom) {
-      customDict = safeBuild(deps.loadCustom, 'stardict:custom', warn);
+    const baseOutcome = safeBuild(deps.loadBase, 'stardict:base', warn);
+    if (baseOutcome.kind === 'success') {
+      baseDict = baseOutcome.dict;
     }
-    loaded = true;
+    let customOutcome: BuildOutcome = {kind: 'absent'};
+    if (deps.loadCustom) {
+      customOutcome = safeBuild(deps.loadCustom, 'stardict:custom', warn);
+      if (customOutcome.kind === 'success') {
+        customDict = customOutcome.dict;
+      }
+    }
+    // Stickily mark loaded when there's nothing useful to retry.
+    // Three cases:
+    //   1. We have at least one parsed dict -> session is usable;
+    //      stop retrying even if another slot failed (don't burn
+    //      loader calls on every lookup against a permanently-broken
+    //      slot when the fallback is already serving content).
+    //   2. All loaders returned 'absent' -> intentional no-dict
+    //      configuration; stick.
+    //   3. Otherwise (everything failed, no content) -> leave
+    //      loaded=false so the next lookup retries; a transient
+    //      decode / build error shouldn't permanently dead-end the
+    //      session.
+    const haveAnyContent = baseDict !== null || customDict !== null;
+    const anyFailed =
+      baseOutcome.kind === 'failed' || customOutcome.kind === 'failed';
+    if (haveAnyContent || !anyFailed) {
+      loaded = true;
+    }
   };
 
   return {

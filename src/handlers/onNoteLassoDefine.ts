@@ -124,9 +124,11 @@ export const onNoteLassoDefine = async (
       return 'empty-lasso';
     }
 
-    const recognized = await ocrLassoedStrokes(deps);
+    const recognized = (await ocrLassoedStrokes(deps)).trim();
     if (recognized.length === 0) {
-      deps.logger.warn('[define:recognize] empty result');
+      deps.logger.warn(
+        '[define:recognize] empty / whitespace-only result',
+      );
       return 'recognize-empty';
     }
     const result = await deps.lookup.lookup(recognized);

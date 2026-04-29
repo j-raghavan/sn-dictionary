@@ -62,6 +62,35 @@ describe('parseIfo', () => {
     );
   });
 
+  test('rejects a wordcount that starts numeric but contains trailing garbage', () => {
+    // Regression: parseInt('12abc', 10) === 12 silently — strict
+    // \d+ check rejects so we don't accept malformed metadata.
+    expect(() => parseIfo(ifoOf('wordcount=12abc\n'))).toThrow(
+      /missing or invalid wordcount/,
+    );
+    expect(() => parseIfo(ifoOf('wordcount=  42\n'))).toThrow(
+      /missing or invalid wordcount/,
+    );
+    expect(() => parseIfo(ifoOf('wordcount=42 \n'))).toThrow(
+      /missing or invalid wordcount/,
+    );
+    expect(() => parseIfo(ifoOf('wordcount=4.5\n'))).toThrow(
+      /missing or invalid wordcount/,
+    );
+  });
+
+  test('treats malformed synwordcount / idxfilesize as undefined (diagnostic-only fields)', () => {
+    const meta = parseIfo(
+      ifoOf('wordcount=10\nsynwordcount=12abc\nidxfilesize=garbage\n'),
+    );
+    expect(meta.wordcount).toBe(10);
+    expect(meta.synwordcount).toBeUndefined();
+    expect(meta.idxfilesize).toBeUndefined();
+    // The raw values are still preserved in rawFields for diagnostics.
+    expect(meta.rawFields.synwordcount).toBe('12abc');
+    expect(meta.rawFields.idxfilesize).toBe('garbage');
+  });
+
   test('throws when wordcount is zero or negative', () => {
     expect(() => parseIfo(ifoOf('wordcount=0\n'))).toThrow();
     expect(() => parseIfo(ifoOf('wordcount=-5\n'))).toThrow();

@@ -36,9 +36,19 @@ export const parseIfo = (bytes: Uint8Array): IfoMeta => {
       map[k] = v;
     }
   }
-  const wordcountRaw = map.wordcount;
-  const wordcount = wordcountRaw ? parseInt(wordcountRaw, 10) : NaN;
-  if (!Number.isFinite(wordcount) || wordcount <= 0) {
+  // Strict numeric parse: parseInt('12abc', 10) === 12 silently.
+  // For headline metadata that drives parsing (wordcount drives the
+  // expected entry count for diagnostics; idxoffsetbits picks the
+  // .idx field width) we reject any value that isn't pure digits.
+  const strictPositiveInt = (raw: string | undefined): number | null => {
+    if (raw === undefined || !/^\d+$/.test(raw)) {
+      return null;
+    }
+    const n = parseInt(raw, 10);
+    return Number.isFinite(n) ? n : null;
+  };
+  const wordcount = strictPositiveInt(map.wordcount);
+  if (wordcount === null || wordcount <= 0) {
     throw new Error('parseIfo: missing or invalid wordcount');
   }
   const idxoffsetbitsRaw = map.idxoffsetbits;
@@ -54,13 +64,17 @@ export const parseIfo = (bytes: Uint8Array): IfoMeta => {
       );
     }
   }
+  // synwordcount and idxfilesize are diagnostic-only — drop a
+  // malformed value rather than throwing, since a bad header
+  // shouldn't block lookup.
+  const synwordcount = strictPositiveInt(map.synwordcount) ?? undefined;
+  const idxfilesize = strictPositiveInt(map.idxfilesize) ?? undefined;
+
   return {
     bookname: map.bookname,
     wordcount,
-    synwordcount: map.synwordcount
-      ? parseInt(map.synwordcount, 10)
-      : undefined,
-    idxfilesize: map.idxfilesize ? parseInt(map.idxfilesize, 10) : undefined,
+    synwordcount,
+    idxfilesize,
     idxoffsetbits,
     sametypesequence: map.sametypesequence,
     rawFields: map,

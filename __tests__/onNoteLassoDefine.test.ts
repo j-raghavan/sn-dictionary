@@ -191,6 +191,40 @@ describe('onNoteLassoDefine', () => {
     expect(deps.comm.closePluginView).toHaveBeenCalled();
   });
 
+  test('returns recognize-empty when OCR yields whitespace only ("  \\n  ")', async () => {
+    // Regression: previously `.length === 0` only caught the literal
+    // empty string and let " \n " through to lookup, which trimmed
+    // it internally and surfaced a misleading "not found" popup.
+    const deps = buildDeps({
+      comm: {
+        ...buildDeps().comm,
+        recognizeElements: jest.fn(async () => ok('  \n\t ')),
+      } as DefineDeps['comm'],
+    });
+    const outcome = await onNoteLassoDefine(deps);
+    expect(outcome).toBe('recognize-empty');
+    expect(deps.lookup.lookup).not.toHaveBeenCalled();
+    expect(deps.showResult).not.toHaveBeenCalled();
+    expect(deps.comm.closePluginView).toHaveBeenCalled();
+  });
+
+  test('trims surrounding whitespace from OCR output before lookup and OCR label', async () => {
+    const deps = buildDeps({
+      comm: {
+        ...buildDeps().comm,
+        recognizeElements: jest.fn(async () => ok('  hello\n')),
+      } as DefineDeps['comm'],
+    });
+    await onNoteLassoDefine(deps);
+    expect(deps.lookup.lookup).toHaveBeenCalledWith('hello');
+    // OCR label uses the trimmed text too — popup doesn't show
+    // "OCR:   hello\n".
+    expect(deps.showResult).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.stringMatching(/^.+: hello$/),
+    );
+  });
+
   test('reentrancy flag is released even on pipeline crash', async () => {
     const deps = buildDeps({
       comm: {
