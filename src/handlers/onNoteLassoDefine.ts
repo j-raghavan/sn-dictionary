@@ -105,6 +105,15 @@ export const onNoteLassoDefine = async (
     return 'busy';
   }
 
+  // When we successfully render the popup, the firmware overlay must
+  // STAY OPEN until the user dismisses the popup. Closing the view
+  // here while the popup is still on-screen leaves the host's input
+  // channel in a bad state — pen taps land nowhere afterwards. The
+  // popup's Close button calls PluginManager.closePluginView() itself
+  // (matching the sn-shapes / sn-mindmap pattern). On every other
+  // exit path we close in the finally block.
+  let popupShown = false;
+
   try {
     const counts = unwrap(
       await deps.comm.getLassoElementTypeCounts(),
@@ -121,6 +130,7 @@ export const onNoteLassoDefine = async (
       }
       const result = await deps.lookup.lookup(recognized);
       deps.showResult(result, `OCR: ${recognized}`);
+      popupShown = true;
     } else if (
       counts.normalTextBoxNum > 0 ||
       counts.digestTextBoxNum > 0 ||
@@ -133,6 +143,7 @@ export const onNoteLassoDefine = async (
       }
       const result = await deps.lookup.lookup(text);
       deps.showResult(result);
+      popupShown = true;
     } else {
       deps.logger.warn('[define] empty lasso — nothing to define');
       return 'empty-lasso';
@@ -148,10 +159,12 @@ export const onNoteLassoDefine = async (
     return 'failed';
   } finally {
     // Clear the reentrancy flag SYNCHRONOUSLY before awaiting
-    // closePluginView. If we cleared it after the await, the host's
+    // anything. If we cleared it after the await, the host's
     // state:stop transition can suspend the JS context and the
     // assignment may never run — see sn-formula/src/spike.ts:438-446.
     release();
-    await safeClosePluginView(deps.comm, deps.logger);
+    if (!popupShown) {
+      await safeClosePluginView(deps.comm, deps.logger);
+    }
   }
 };

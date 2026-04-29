@@ -88,7 +88,7 @@ beforeEach(() => {
 });
 
 describe('onNoteLassoDefine', () => {
-  test('stroke path: counts → elements → page-info → recognize → lookup → setLassoBoxState → closePluginView', async () => {
+  test('stroke path: counts → elements → page-info → recognize → lookup → setLassoBoxState (no closePluginView — popup owns close)', async () => {
     const deps = buildDeps();
     const outcome = await onNoteLassoDefine(deps);
     expect(outcome).toBe('ok');
@@ -101,8 +101,8 @@ describe('onNoteLassoDefine', () => {
       'getPageSize',
       'recognizeElements',
       'setLassoBoxState',
-      'closePluginView',
     ]);
+    expect(deps.comm.closePluginView).not.toHaveBeenCalled();
     expect(deps.lookup.lookup).toHaveBeenCalledWith('hello');
     expect(deps.showResult).toHaveBeenCalledWith(
       expect.objectContaining({found: true}),
@@ -134,6 +134,9 @@ describe('onNoteLassoDefine', () => {
     expect(deps.showResult).toHaveBeenCalledWith(
       expect.objectContaining({found: true}),
     );
+    // Popup is up; the firmware overlay must stay open until the
+    // user dismisses the popup themselves.
+    expect(deps.comm.closePluginView).not.toHaveBeenCalled();
   });
 
   test('strokes win when both strokes and text are lassoed', async () => {

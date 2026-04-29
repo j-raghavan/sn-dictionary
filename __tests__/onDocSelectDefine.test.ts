@@ -40,7 +40,7 @@ beforeEach(() => {
 });
 
 describe('onDocSelectDefine', () => {
-  test('happy path: getLastSelectedText → lookup → showResult → closePluginView', async () => {
+  test('happy path: getLastSelectedText → lookup → showResult (no closePluginView — popup owns close)', async () => {
     const deps = buildDeps();
     const outcome = await onDocSelectDefine(deps);
     expect(outcome).toBe('ok');
@@ -50,7 +50,7 @@ describe('onDocSelectDefine', () => {
     expect(deps.showResult).toHaveBeenCalledWith(
       expect.objectContaining({found: true}),
     );
-    expect(deps.comm.closePluginView).toHaveBeenCalledTimes(1);
+    expect(deps.comm.closePluginView).not.toHaveBeenCalled();
   });
 
   test('trims whitespace before passing to lookup', async () => {

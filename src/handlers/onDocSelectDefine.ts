@@ -35,6 +35,11 @@ export const onDocSelectDefine = async (
     return 'busy';
   }
 
+  // When the popup is rendered, leave the firmware overlay open and
+  // let the popup's own Close button release it. See onNoteLassoDefine
+  // for the full rationale.
+  let popupShown = false;
+
   try {
     const selected = unwrap(
       await deps.doc.getLastSelectedText(),
@@ -47,6 +52,7 @@ export const onDocSelectDefine = async (
     }
     const result = await deps.lookup.lookup(text);
     deps.showResult(result);
+    popupShown = true;
     return 'ok';
   } catch (e) {
     deps.logger.error(`[doc-define] pipeline crashed: ${(e as Error).message}`);
@@ -55,6 +61,8 @@ export const onDocSelectDefine = async (
     // Release the reentrancy flag synchronously before any await; same
     // rationale as the NOTE handler — see src/handlers/onNoteLassoDefine.ts.
     release();
-    await safeClosePluginView(deps.comm, deps.logger);
+    if (!popupShown) {
+      await safeClosePluginView(deps.comm, deps.logger);
+    }
   }
 };

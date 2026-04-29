@@ -11,8 +11,13 @@ jest.mock('react-native', () => ({
   StyleSheet: {create: (s: unknown) => s},
 }));
 
+jest.mock('sn-plugin-lib', () => ({
+  PluginManager: {closePluginView: jest.fn(() => Promise.resolve(true))},
+}));
+
 import React from 'react';
 import {act, create, type ReactTestRenderer} from 'react-test-renderer';
+import {PluginManager} from 'sn-plugin-lib';
 import DefinitionPopup from '../src/ui/DefinitionPopup';
 import {
   showDefinition,
@@ -20,8 +25,12 @@ import {
   __testing__,
 } from '../src/ui/popupController';
 
+const closePluginView = PluginManager.closePluginView as jest.Mock;
+
 beforeEach(() => {
   __testing__.reset();
+  closePluginView.mockClear();
+  closePluginView.mockImplementation(() => Promise.resolve(true));
 });
 
 const renderPopup = (): ReactTestRenderer => {
@@ -91,5 +100,38 @@ describe('DefinitionPopup', () => {
       hideDefinition();
     });
     expect(collectText(tree)).toBe('');
+  });
+
+  test('Close button calls PluginManager.closePluginView and hides locally', () => {
+    const tree = renderPopup();
+    act(() => {
+      showDefinition({found: false, queriedFor: 'foo'});
+    });
+    expect(collectText(tree)).toContain('foo');
+    const closeBtn = tree.root.findByProps({accessibilityRole: 'button'});
+    act(() => {
+      closeBtn.props.onPress();
+    });
+    // Local state is hidden immediately so a subsequent lookup
+    // doesn't briefly flash the previous content.
+    expect(collectText(tree)).toBe('');
+    // Firmware overlay close is requested fire-and-forget.
+    expect(closePluginView).toHaveBeenCalledTimes(1);
+  });
+
+  test('Close button swallows a closePluginView rejection without throwing', () => {
+    closePluginView.mockImplementationOnce(() =>
+      Promise.reject(new Error('host gone')),
+    );
+    const tree = renderPopup();
+    act(() => {
+      showDefinition({found: false, queriedFor: 'foo'});
+    });
+    const closeBtn = tree.root.findByProps({accessibilityRole: 'button'});
+    expect(() => {
+      act(() => {
+        closeBtn.props.onPress();
+      });
+    }).not.toThrow();
   });
 });
