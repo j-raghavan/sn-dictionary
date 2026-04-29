@@ -1,5 +1,5 @@
 {
-  "name": "SnDict",
+  "name": "Dictionary",
   "desc": "Tap or lasso a word on your Supernote and see its definition. Offline-first dictionary plugin with optional user-supplied dictionaries.",
   "iconPath": "assets/icon.png",
   "versionName": "0.1.0",
