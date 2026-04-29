@@ -9,7 +9,10 @@
     "lint": "eslint .",
     "start": "react-native start",
     "test": "jest",
-    "coverage": "jest --coverage"
+    "coverage": "jest --coverage",
+    "fetch:dict": "bash scripts/fetchBaseDict.sh",
+    "build:dict": "node scripts/buildBaseDict.mjs",
+    "prepare:dict": "npm run --silent fetch:dict && npm run --silent build:dict"
   },
   "dependencies": {
     "pako": "^2.1.0",

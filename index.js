@@ -13,7 +13,7 @@ import {registerDocSelectButton} from './src/buttons/registerDocSelectButton';
 import {onNoteLassoDefine} from './src/handlers/onNoteLassoDefine';
 import {onDocSelectDefine} from './src/handlers/onDocSelectDefine';
 import {createStardictLookup} from './src/core/dict/stardictLookup';
-import {loadPlaceholderBaseDict} from './src/core/dict/data/placeholderBaseDict';
+import {loadBaseDictFromGenerated} from './src/core/dict/data/baseDictData';
 import {showDefinition} from './src/ui/popupController';
 
 AppRegistry.registerComponent(appName, () => App);
@@ -31,7 +31,7 @@ const logger = {
 };
 
 const lookup = createStardictLookup({
-  loadBase: loadPlaceholderBaseDict,
+  loadBase: loadBaseDictFromGenerated,
   logger,
 });
 

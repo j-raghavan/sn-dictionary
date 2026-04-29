@@ -815,6 +815,15 @@ main() {
     # hits an opaque platform-mismatch stacktrace.
     ensure_node_modules_platform "$project_root"
 
+    # Stage + regenerate the bundled base dictionary so Metro picks up
+    # the latest src/core/dict/data/baseDictData.ts before bundling.
+    # Idempotent: fetch:dict skips the download if the source files
+    # are already present, and build:dict re-emits in <1s for the
+    # ~10MB WordNet input.
+    write_color_output "Preparing base dictionary..." "Blue"
+    (cd "$project_root" && npm run --silent prepare:dict) \
+        || { write_color_output "Base dictionary preparation failed" "Red"; exit 1; }
+
     build_react_native_bundle "$project_root" "$PACKAGE_NAME" "$gen_dir"
 
     local root_cfg="$project_root/PluginConfig.json"
