@@ -12,10 +12,16 @@ const EDIT_DATA_TYPE_STROKE = 0;
 const EDIT_DATA_TYPE_TEXT = 3;
 const APP_TYPE_NOTE = 'NOTE';
 
-// Stable id for the Define lasso button. Sticking to a fixed integer
-// matches the convention in sn-shapes/sn-formula and lets logcat /
-// listener filtering identify our events without ambiguity.
+// Two button ids: the firmware appears to apply AND semantics on
+// `editDataTypes` (a button with [0, 3] only shows when the lasso
+// contains BOTH strokes and text — empirically confirmed on-device,
+// where a pure-text lasso of an "Anatomy" text box never surfaced
+// the Lookup option). To cover the three input modes from the
+// requirements doc — handwritten lasso, typed-text lasso, and the
+// rare both-in-one — I register two buttons that share a single
+// listener and dispatch into the same handler.
 export const NOTE_LASSO_DEFINE_BUTTON_ID = 100;
+export const NOTE_LASSO_DEFINE_TEXT_BUTTON_ID = 101;
 
 // Re-exported so existing tests / callers don't have to know about
 // the buttonCommon split.
@@ -27,6 +33,27 @@ export type RegisterDeps = {
   logger: {warn: (msg: string) => void};
 };
 
+const buildButton = (
+  id: number,
+  iconUri: string,
+  editDataTypes: number[],
+): object => ({
+  id,
+  name: 'Lookup',
+  icon: iconUri,
+  enable: true,
+  editDataTypes,
+  // UI display: center-dialog region holding the DefinitionPopup.
+  // Field name(s) here are unverified on SDK 0.1.34 — sn-shapes uses
+  // `showType` (proven on-device), the SDK JSDoc references
+  // `regionType`. Setting both is defensive; the native host reads
+  // one and ignores the other.
+  showType: 1,
+  regionType: 1,
+  regionWidth: 720,
+  regionHeight: 540,
+});
+
 export const registerNoteLassoButton = async (
   deps: RegisterDeps,
 ): Promise<void> => {
@@ -36,34 +63,31 @@ export const registerNoteLassoButton = async (
     'define',
   );
 
+  // Stroke lasso (handwritten content) — handler routes to OCR.
   await deps.pluginManager.registerButton(
     BUTTON_TYPE_LASSO_TOOLBAR,
     [APP_TYPE_NOTE],
-    {
-      id: NOTE_LASSO_DEFINE_BUTTON_ID,
-      name: 'Lookup',
-      icon: iconUri,
-      enable: true,
-      // Strokes (handwritten) and text boxes (typed). The handler
-      // branches on getLassoElementTypeCounts to decide between OCR
-      // and direct text read.
-      editDataTypes: [EDIT_DATA_TYPE_STROKE, EDIT_DATA_TYPE_TEXT],
-      // UI display: center-dialog region holding the DefinitionPopup.
-      // Field name(s) here are unverified on SDK 0.1.34 — sn-shapes uses
-      // `showType` (proven on-device), the SDK JSDoc references
-      // `regionType`. Setting both is defensive; the native host reads
-      // one and ignores the other. Empirical confirmation lands in
-      // spike 1's on-device run.
-      showType: 1,
-      regionType: 1,
-      regionWidth: 720,
-      regionHeight: 540,
-    },
+    buildButton(NOTE_LASSO_DEFINE_BUTTON_ID, iconUri, [
+      EDIT_DATA_TYPE_STROKE,
+    ]),
+  );
+
+  // Text-box lasso (typed content) — handler reads textContentFull
+  // directly, no OCR needed.
+  await deps.pluginManager.registerButton(
+    BUTTON_TYPE_LASSO_TOOLBAR,
+    [APP_TYPE_NOTE],
+    buildButton(NOTE_LASSO_DEFINE_TEXT_BUTTON_ID, iconUri, [
+      EDIT_DATA_TYPE_TEXT,
+    ]),
   );
 
   deps.pluginManager.registerButtonListener({
     onButtonPress: event => {
-      if (event.id !== NOTE_LASSO_DEFINE_BUTTON_ID) {
+      if (
+        event.id !== NOTE_LASSO_DEFINE_BUTTON_ID &&
+        event.id !== NOTE_LASSO_DEFINE_TEXT_BUTTON_ID
+      ) {
         return;
       }
       deps.onPress(event);
