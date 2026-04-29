@@ -20,21 +20,30 @@ AppRegistry.registerComponent(appName, () => App);
 
 PluginManager.init();
 
+// Supernote's RN host filters console.warn / console.error out of
+// logcat (every ReactNativeJS line in observed traces is at info
+// level), so we route every level through console.log with an
+// explicit prefix. Keeps diagnostics visible during on-device runs.
 const logger = {
   log: msg => console.log(msg),
-  warn: msg => console.warn(msg),
-  error: msg => console.error(msg),
+  warn: msg => console.log(`[WARN] ${msg}`),
+  error: msg => console.log(`[ERROR] ${msg}`),
 };
 
-// Spike 3: vendored StarDict reader backed by an in-memory placeholder
-// dict so the runtime path is exercised end-to-end on-device. The
-// follow-up commit replaces `loadPlaceholderBaseDict` with a
-// build-time-emitted base64 module loading a real WordNet StarDict;
-// nothing else here changes.
 const lookup = createStardictLookup({
   loadBase: loadPlaceholderBaseDict,
   logger,
 });
+
+// Eager-load the dict at plugin start so any build error is visible
+// immediately in logcat rather than at first lookup. The dict is
+// memoised inside the loader, so this doesn't add per-lookup cost.
+lookup
+  .lookup('__sndict_init__')
+  .then(() =>
+    logger.log('[stardict] base dict loaded ok (init probe complete)'),
+  )
+  .catch(e => logger.error(`[stardict] init probe threw: ${e.message}`));
 
 const noteHandlerDeps = {
   comm: PluginCommAPI,

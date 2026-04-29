@@ -4,6 +4,8 @@
 // the fields the runtime needs; everything else is preserved as-is in
 // the rawFields map for diagnostics.
 
+import {decodeUtf8} from '../../../sdk/utf8';
+
 export type IfoMeta = {
   bookname?: string;
   wordcount: number;
@@ -20,7 +22,7 @@ export type IfoMeta = {
 };
 
 export const parseIfo = (bytes: Uint8Array): IfoMeta => {
-  const text = new TextDecoder('utf-8').decode(bytes);
+  const text = decodeUtf8(bytes);
   const lines = text.split(/\r?\n/);
   const map: Record<string, string> = {};
   for (const line of lines) {

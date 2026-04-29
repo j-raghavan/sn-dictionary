@@ -7,6 +7,8 @@
 // StarDict spec; we don't depend on that order — the orchestrator
 // re-indexes case-insensitively for lookup.
 
+import {decodeUtf8} from '../../../sdk/utf8';
+
 export type IdxEntry = {
   word: string;
   offset: number;
@@ -18,7 +20,6 @@ export const parseIdx = (
   idxoffsetbits: 32 | 64,
 ): IdxEntry[] => {
   const entries: IdxEntry[] = [];
-  const decoder = new TextDecoder('utf-8');
   const view = new DataView(
     bytes.buffer,
     bytes.byteOffset,
@@ -43,7 +44,7 @@ export const parseIdx = (
         `parseIdx: truncated record after word at offset ${i}`,
       );
     }
-    const word = decoder.decode(bytes.subarray(i, end));
+    const word = decodeUtf8(bytes.subarray(i, end));
     let pos = end + 1;
     let offset: number;
     if (idxoffsetbits === 64) {

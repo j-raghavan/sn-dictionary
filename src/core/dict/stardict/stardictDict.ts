@@ -8,6 +8,7 @@ import {parseIfo} from './parseIfo';
 import type {IdxEntry} from './parseIdx';
 import {parseIdx} from './parseIdx';
 import {decompressDict} from './decompressDict';
+import {decodeUtf8} from '../../../sdk/utf8';
 
 export type ParsedDict = {
   meta: IfoMeta;
@@ -58,6 +59,6 @@ export const lookupDict = (
     entry.offset,
     entry.offset + entry.length,
   );
-  const definition = new TextDecoder('utf-8').decode(slice);
+  const definition = decodeUtf8(slice);
   return {canonicalWord: entry.word, definition};
 };

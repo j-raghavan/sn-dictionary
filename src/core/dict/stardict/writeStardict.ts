@@ -7,6 +7,7 @@
 // our reader expects and what the build pipeline produces.
 
 import pako from 'pako';
+import {encodeUtf8} from '../../../sdk/utf8';
 
 const writeU32BE = (target: number[], value: number): void => {
   // Bitwise ops here are the natural way to pack a u32 big-endian.
@@ -42,12 +43,11 @@ export const writeStarDict = (
   const sortedWords = Object.keys(entries).sort();
   const dictParts: Uint8Array[] = [];
   const idxBuilder: number[] = [];
-  const encoder = new TextEncoder();
   let offset = 0;
   for (const word of sortedWords) {
     const def = entries[word];
-    const defBytes = encoder.encode(def);
-    const wordBytes = encoder.encode(word);
+    const defBytes = encodeUtf8(def);
+    const wordBytes = encodeUtf8(word);
     for (const b of wordBytes) {
       idxBuilder.push(b);
     }
@@ -74,6 +74,6 @@ export const writeStarDict = (
     `idxfilesize=${idx.length}\n` +
     'idxoffsetbits=32\n' +
     'sametypesequence=m\n';
-  const ifo = encoder.encode(ifoText);
+  const ifo = encodeUtf8(ifoText);
   return {ifo, idx, dict};
 };
