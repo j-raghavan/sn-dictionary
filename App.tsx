@@ -1,10 +1,6 @@
 import React from 'react';
-import {StyleSheet, View} from 'react-native';
+import DefinitionPopup from './src/ui/DefinitionPopup';
 
 export default function App(): React.JSX.Element {
-  return <View pointerEvents="none" style={styles.hidden} />;
+  return <DefinitionPopup />;
 }
-
-const styles = StyleSheet.create({
-  hidden: {width: 0, height: 0},
-});
