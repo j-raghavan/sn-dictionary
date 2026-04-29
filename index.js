@@ -12,7 +12,8 @@ import {registerNoteLassoButton} from './src/buttons/registerNoteLassoButton';
 import {registerDocSelectButton} from './src/buttons/registerDocSelectButton';
 import {onNoteLassoDefine} from './src/handlers/onNoteLassoDefine';
 import {onDocSelectDefine} from './src/handlers/onDocSelectDefine';
-import {mockLookup} from './src/core/lookup';
+import {createStardictLookup} from './src/core/dict/stardictLookup';
+import {loadPlaceholderBaseDict} from './src/core/dict/data/placeholderBaseDict';
 import {showDefinition} from './src/ui/popupController';
 
 AppRegistry.registerComponent(appName, () => App);
@@ -25,13 +26,21 @@ const logger = {
   error: msg => console.error(msg),
 };
 
-// Spike 1+2: real SDK calls + mock lookup. Spike 3 swaps `mockLookup`
-// for the js-mdict-backed reader; nothing else here changes.
+// Spike 3: vendored StarDict reader backed by an in-memory placeholder
+// dict so the runtime path is exercised end-to-end on-device. The
+// follow-up commit replaces `loadPlaceholderBaseDict` with a
+// build-time-emitted base64 module loading a real WordNet StarDict;
+// nothing else here changes.
+const lookup = createStardictLookup({
+  loadBase: loadPlaceholderBaseDict,
+  logger,
+});
+
 const noteHandlerDeps = {
   comm: PluginCommAPI,
   note: PluginNoteAPI,
   file: PluginFileAPI,
-  lookup: mockLookup,
+  lookup,
   showResult: showDefinition,
   logger,
 };
@@ -39,7 +48,7 @@ const noteHandlerDeps = {
 const docHandlerDeps = {
   doc: PluginDocAPI,
   comm: PluginCommAPI,
-  lookup: mockLookup,
+  lookup,
   showResult: showDefinition,
   logger,
 };

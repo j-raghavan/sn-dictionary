@@ -8,6 +8,7 @@ module.exports = {
     // Pure-types files have no executable code; istanbul reports
     // them as 0/0 but listing them still adds noise to the table.
     '!src/sdk/types.ts',
+    '!src/core/lookup.ts',
   ],
   coverageThreshold: {
     global: {
