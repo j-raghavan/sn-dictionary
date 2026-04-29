@@ -1,0 +1,214 @@
+name: Release
+
+# Manually-triggered release. The `version` input is optional:
+#   - Leave blank to auto-bump the latest `v*` tag by patch
+#     (e.g. v0.1.0 -> v0.1.1). If no tag exists yet, the first release
+#     is v0.1.0.
+#   - Or type a specific MAJOR.MINOR.PATCH (with or without leading `v`).
+#
+# The workflow:
+#   1. Runs lint + tests as gates.
+#   2. Determines the target version.
+#   3. Bumps package.json (in-place on the runner only).
+#   4. Builds the .snplg artifact.
+#   5. Only after the build succeeds: commits the bump to master,
+#      creates an annotated `vX.Y.Z` tag, pushes both.
+#   6. Generates release notes (changes + contributors, excluding
+#      GitHub Copilot and the github-actions release bot itself).
+#   7. Publishes a GitHub Release with the notes and the .snplg.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g. 0.1.1). Leave blank to auto-bump patch from the latest v* tag. First release is v0.1.0.'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build & Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout master
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: master
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npx eslint src/ App.tsx index.js __tests__/
+
+      - name: Test
+        run: npx jest
+
+      - name: Determine release version
+        id: ver
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          VERSION="${INPUT_VERSION//[[:space:]]/}"
+          VERSION="${VERSION#v}"
+
+          PREV_TAG=$(git tag --list 'v*' --sort=-v:refname | head -n1 || true)
+
+          if [ -z "$VERSION" ]; then
+            if [ -z "$PREV_TAG" ]; then
+              VERSION="0.1.0"
+              echo "No existing v* tag found; starting at v$VERSION."
+            else
+              BASE="${PREV_TAG#v}"
+              IFS='.' read -r MAJOR MINOR PATCH <<< "$BASE"
+              PATCH=$((PATCH + 1))
+              VERSION="${MAJOR}.${MINOR}.${PATCH}"
+              echo "Auto-bumping from $PREV_TAG -> v$VERSION"
+            fi
+          fi
+
+          if ! echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::Invalid version '$VERSION'. Expected MAJOR.MINOR.PATCH."
+            exit 1
+          fi
+
+          TAG="v$VERSION"
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            echo "::error::Tag $TAG already exists."
+            exit 1
+          fi
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "prev_tag=$PREV_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Bump package.json (runner only)
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: npm version "$VERSION" --no-git-tag-version
+
+      - name: Build plugin
+        # buildPlugin.sh runs `npm run prepare:dict` internally which
+        # fetches the WordNet StarDict (~10MB) before Metro bundles.
+        run: |
+          chmod +x buildPlugin.sh
+          ./buildPlugin.sh
+
+      - name: Commit version bump to master
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+          TAG: ${{ steps.ver.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json
+          if [ -f package-lock.json ]; then git add package-lock.json; fi
+          # buildPlugin.sh rewrites PluginConfig.json's versionName /
+          # versionCode from package.json on every build, so the file
+          # will already reflect the new version on the runner. Commit
+          # it too so the repo's PluginConfig.json doesn't drift out of
+          # sync with the git tag.
+          if [ -f PluginConfig.json ]; then git add PluginConfig.json; fi
+          git commit -m "chore(release): $TAG"
+          git push origin HEAD:master
+          git tag -a "$TAG" -m "$TAG"
+          git push origin "$TAG"
+
+      - name: Generate release notes
+        id: notes
+        env:
+          TAG: ${{ steps.ver.outputs.tag }}
+          PREV_TAG: ${{ steps.ver.outputs.prev_tag }}
+          REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Fetch just-pushed tag locally so git log can resolve it.
+          git fetch --tags --force origin
+
+          if [ -z "$PREV_TAG" ]; then
+            RANGE="$TAG"
+            COMPARE="Initial release."
+          else
+            RANGE="$PREV_TAG..$TAG"
+            COMPARE="**Full Changelog:** https://github.com/${REPO}/compare/${PREV_TAG}...${TAG}"
+          fi
+
+          # "What's Changed": all commits in range, excluding the release bump itself.
+          CHANGES=$(
+            git log --no-merges --pretty=format:"- %s (%h)" "$RANGE" \
+              | grep -v '^- chore(release):' \
+              || true
+          )
+
+          # Contributors: unique "Name|email" pairs in range.
+          # Exclude:
+          #   - GitHub Copilot (any name/email containing "copilot", case-insensitive)
+          #   - The release bot itself (github-actions[bot])
+          # Map GitHub noreply emails to @usernames when possible.
+          CONTRIBUTORS=$(
+            git log --pretty=format:"%an|%ae" "$RANGE" \
+              | sort -u \
+              | grep -viE 'copilot|github-actions\[bot\]' \
+              | while IFS='|' read -r name email; do
+                  [ -z "$name" ] && continue
+                  user=""
+                  if [[ "$email" =~ ^[0-9]+\+([^@]+)@users\.noreply\.github\.com$ ]]; then
+                    user="${BASH_REMATCH[1]}"
+                  elif [[ "$email" =~ ^([^@]+)@users\.noreply\.github\.com$ ]]; then
+                    user="${BASH_REMATCH[1]}"
+                  fi
+                  if [ -n "$user" ]; then
+                    echo "- $name (@$user)"
+                  else
+                    echo "- $name"
+                  fi
+                done \
+              | sort -u
+          )
+
+          {
+            echo "notes<<RELEASE_NOTES_EOF"
+            echo "## What's Changed"
+            echo ""
+            if [ -n "$CHANGES" ]; then
+              echo "$CHANGES"
+            else
+              echo "_No user-facing commits in this range._"
+            fi
+            echo ""
+            echo "## Contributors"
+            echo ""
+            if [ -n "$CONTRIBUTORS" ]; then
+              echo "$CONTRIBUTORS"
+            else
+              echo "_No contributors recorded for this range._"
+            fi
+            echo ""
+            echo "$COMPARE"
+            echo "RELEASE_NOTES_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: ${{ steps.ver.outputs.tag }}
+          body: ${{ steps.notes.outputs.notes }}
+          files: build/outputs/SnDict.snplg
