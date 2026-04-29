@@ -6,7 +6,6 @@ import {
   PluginDocAPI,
   PluginFileAPI,
   PluginManager,
-  PluginNoteAPI,
 } from 'sn-plugin-lib';
 import {registerNoteLassoButton} from './src/buttons/registerNoteLassoButton';
 import {registerDocSelectButton} from './src/buttons/registerDocSelectButton';
@@ -47,7 +46,6 @@ lookup
 
 const noteHandlerDeps = {
   comm: PluginCommAPI,
-  note: PluginNoteAPI,
   file: PluginFileAPI,
   lookup,
   showResult: showDefinition,

@@ -6,25 +6,25 @@ import {
 import type {ButtonEvent} from './buttonCommon';
 
 // SDK button-type and editDataTypes constants.
-// Per sn-plugin-lib: type 2 = lasso toolbar; editDataTypes 0=stroke, 3=text.
+// Per sn-plugin-lib: type 2 = lasso toolbar; editDataTypes 0=stroke,
+// 1=title, 2=image, 3=text-box, 4=link.
+//
+// Empirically (logcat 04-29 12:15:24, PluginButtonAdapter), the
+// firmware filters lasso buttons such that:
+//   - the Sticker plugin's [0, 5] button shows for a stroke lasso
+//   - our previous [0, 3] button hid for both stroke-only AND
+//     text-only lassos
+// The likely rule is "all of editDataTypes must be 'stroke-family'
+// or all must be 'text-family'; mixing the two hides the button on
+// every lasso." Sticking with type 0 (stroke) only — the dominant
+// note-taking case. If a future user need surfaces typed text-box
+// lookup, register a separate button with [3] then.
 const BUTTON_TYPE_LASSO_TOOLBAR = 2;
 const EDIT_DATA_TYPE_STROKE = 0;
-const EDIT_DATA_TYPE_TEXT = 3;
 const APP_TYPE_NOTE = 'NOTE';
 
-// Two button ids: the firmware appears to apply AND semantics on
-// `editDataTypes` (a button with [0, 3] only shows when the lasso
-// contains BOTH strokes and text — empirically confirmed on-device,
-// where a pure-text lasso of an "Anatomy" text box never surfaced
-// the Lookup option). To cover the three input modes from the
-// requirements doc — handwritten lasso, typed-text lasso, and the
-// rare both-in-one — I register two buttons that share a single
-// listener and dispatch into the same handler.
 export const NOTE_LASSO_DEFINE_BUTTON_ID = 100;
-export const NOTE_LASSO_DEFINE_TEXT_BUTTON_ID = 101;
 
-// Re-exported so existing tests / callers don't have to know about
-// the buttonCommon split.
 export type {ButtonEvent, ButtonListener, PluginManagerLike};
 
 export type RegisterDeps = {
@@ -32,27 +32,6 @@ export type RegisterDeps = {
   onPress: (event: ButtonEvent) => void;
   logger: {warn: (msg: string) => void};
 };
-
-const buildButton = (
-  id: number,
-  iconUri: string,
-  editDataTypes: number[],
-): object => ({
-  id,
-  name: 'Lookup',
-  icon: iconUri,
-  enable: true,
-  editDataTypes,
-  // UI display: center-dialog region holding the DefinitionPopup.
-  // Field name(s) here are unverified on SDK 0.1.34 — sn-shapes uses
-  // `showType` (proven on-device), the SDK JSDoc references
-  // `regionType`. Setting both is defensive; the native host reads
-  // one and ignores the other.
-  showType: 1,
-  regionType: 1,
-  regionWidth: 720,
-  regionHeight: 540,
-});
 
 export const registerNoteLassoButton = async (
   deps: RegisterDeps,
@@ -63,31 +42,33 @@ export const registerNoteLassoButton = async (
     'define',
   );
 
-  // Stroke lasso (handwritten content) — handler routes to OCR.
   await deps.pluginManager.registerButton(
     BUTTON_TYPE_LASSO_TOOLBAR,
     [APP_TYPE_NOTE],
-    buildButton(NOTE_LASSO_DEFINE_BUTTON_ID, iconUri, [
-      EDIT_DATA_TYPE_STROKE,
-    ]),
-  );
-
-  // Text-box lasso (typed content) — handler reads textContentFull
-  // directly, no OCR needed.
-  await deps.pluginManager.registerButton(
-    BUTTON_TYPE_LASSO_TOOLBAR,
-    [APP_TYPE_NOTE],
-    buildButton(NOTE_LASSO_DEFINE_TEXT_BUTTON_ID, iconUri, [
-      EDIT_DATA_TYPE_TEXT,
-    ]),
+    {
+      id: NOTE_LASSO_DEFINE_BUTTON_ID,
+      name: 'Lookup',
+      icon: iconUri,
+      enable: true,
+      // Single stroke-family entry — covers both freshly-written
+      // strokes (trailNum) and previously-recognised strokes
+      // (trailLinkNum / titleNum), which the handler funnels into
+      // the same recognizeElements OCR path.
+      editDataTypes: [EDIT_DATA_TYPE_STROKE],
+      // UI display: center-dialog region holding the DefinitionPopup.
+      // Field name(s) here are unverified on SDK 0.1.34 — sn-shapes
+      // uses `showType` (proven on-device), the SDK JSDoc references
+      // `regionType`. Setting both is defensive.
+      showType: 1,
+      regionType: 1,
+      regionWidth: 720,
+      regionHeight: 540,
+    },
   );
 
   deps.pluginManager.registerButtonListener({
     onButtonPress: event => {
-      if (
-        event.id !== NOTE_LASSO_DEFINE_BUTTON_ID &&
-        event.id !== NOTE_LASSO_DEFINE_TEXT_BUTTON_ID
-      ) {
+      if (event.id !== NOTE_LASSO_DEFINE_BUTTON_ID) {
         return;
       }
       deps.onPress(event);

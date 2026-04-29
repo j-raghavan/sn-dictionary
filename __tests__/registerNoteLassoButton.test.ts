@@ -1,7 +1,6 @@
 import {
   registerNoteLassoButton,
   NOTE_LASSO_DEFINE_BUTTON_ID,
-  NOTE_LASSO_DEFINE_TEXT_BUTTON_ID,
   type RegisterDeps,
   type ButtonListener,
 } from '../src/buttons/registerNoteLassoButton';
@@ -26,55 +25,43 @@ const buildDeps = (
   return Object.assign(deps, {capturedListener: () => captured});
 };
 
-const callsOf = (deps: RegisterDeps) =>
-  (deps.pluginManager.registerButton as jest.Mock).mock.calls;
-
 describe('registerNoteLassoButton', () => {
-  test('registers two lasso-toolbar buttons for NOTE: one stroke-only, one text-only', async () => {
+  test('registers a single lasso-toolbar button for NOTE with stroke-only editDataTypes', async () => {
     const deps = buildDeps();
     await registerNoteLassoButton(deps);
-    expect(deps.pluginManager.registerButton).toHaveBeenCalledTimes(2);
-    const [strokeCall, textCall] = callsOf(deps);
-    expect(strokeCall[0]).toBe(2);
-    expect(strokeCall[1]).toEqual(['NOTE']);
-    expect(strokeCall[2]).toMatchObject({
+    expect(deps.pluginManager.registerButton).toHaveBeenCalledTimes(1);
+    const [type, appTypes, button] = (
+      deps.pluginManager.registerButton as jest.Mock
+    ).mock.calls[0];
+    expect(type).toBe(2);
+    expect(appTypes).toEqual(['NOTE']);
+    expect(button).toMatchObject({
       id: NOTE_LASSO_DEFINE_BUTTON_ID,
       name: 'Lookup',
       enable: true,
+      // Stroke-family only; mixing 0 and 3 in editDataTypes hides
+      // the button on every lasso (firmware filter quirk).
       editDataTypes: [0],
     });
-    expect(textCall[0]).toBe(2);
-    expect(textCall[1]).toEqual(['NOTE']);
-    expect(textCall[2]).toMatchObject({
-      id: NOTE_LASSO_DEFINE_TEXT_BUTTON_ID,
-      name: 'Lookup',
-      enable: true,
-      editDataTypes: [3],
-    });
   });
 
-  test('the two button ids are distinct (firmware requires plugin-local uniqueness)', () => {
-    expect(NOTE_LASSO_DEFINE_BUTTON_ID).not.toBe(NOTE_LASSO_DEFINE_TEXT_BUTTON_ID);
-  });
-
-  test('both buttons declare the popup-region UI hints', async () => {
+  test('button declares the popup-region UI hints', async () => {
     const deps = buildDeps();
     await registerNoteLassoButton(deps);
-    for (const call of callsOf(deps)) {
-      const button = call[2];
-      expect(button.showType).toBe(1);
-      expect(button.regionType).toBe(1);
-      expect(button.regionWidth).toBeGreaterThan(0);
-      expect(button.regionHeight).toBeGreaterThan(0);
-    }
+    const button = (deps.pluginManager.registerButton as jest.Mock).mock
+      .calls[0][2];
+    expect(button.showType).toBe(1);
+    expect(button.regionType).toBe(1);
+    expect(button.regionWidth).toBeGreaterThan(0);
+    expect(button.regionHeight).toBeGreaterThan(0);
   });
 
-  test('both buttons share the same icon URI from getPluginDirPath()', async () => {
+  test('icon URI is built from getPluginDirPath()', async () => {
     const deps = buildDeps();
     await registerNoteLassoButton(deps);
-    const calls = callsOf(deps);
-    expect(calls[0][2].icon).toBe('file:///data/plugins/sn-dict/icon.png');
-    expect(calls[1][2].icon).toBe(calls[0][2].icon);
+    const button = (deps.pluginManager.registerButton as jest.Mock).mock
+      .calls[0][2];
+    expect(button.icon).toBe('file:///data/plugins/sn-dict/icon.png');
   });
 
   test('falls back to empty icon when plugin dir is unavailable', async () => {
@@ -85,27 +72,23 @@ describe('registerNoteLassoButton', () => {
       },
     });
     await registerNoteLassoButton(deps);
-    for (const call of callsOf(deps)) {
-      expect(call[2].icon).toBe('');
-    }
+    const button = (deps.pluginManager.registerButton as jest.Mock).mock
+      .calls[0][2];
+    expect(button.icon).toBe('');
     expect(deps.logger.warn).toHaveBeenCalled();
   });
 
-  test('listener forwards events for either Lookup button id, ignores anything else', async () => {
+  test('listener forwards events for the Lookup button only', async () => {
     const deps = buildDeps();
     await registerNoteLassoButton(deps);
     const listener = deps.capturedListener();
     expect(listener).toBeDefined();
     listener!.onButtonPress({id: NOTE_LASSO_DEFINE_BUTTON_ID});
-    listener!.onButtonPress({id: NOTE_LASSO_DEFINE_TEXT_BUTTON_ID});
     listener!.onButtonPress({id: 999});
     listener!.onButtonPress({id: 200}); // DOC button id — must be ignored
-    expect(deps.onPress).toHaveBeenCalledTimes(2);
-    expect(deps.onPress).toHaveBeenNthCalledWith(1, {
+    expect(deps.onPress).toHaveBeenCalledTimes(1);
+    expect(deps.onPress).toHaveBeenCalledWith({
       id: NOTE_LASSO_DEFINE_BUTTON_ID,
-    });
-    expect(deps.onPress).toHaveBeenNthCalledWith(2, {
-      id: NOTE_LASSO_DEFINE_TEXT_BUTTON_ID,
     });
   });
 });

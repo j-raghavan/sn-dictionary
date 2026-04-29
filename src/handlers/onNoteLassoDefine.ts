@@ -10,14 +10,21 @@ import {safeClosePluginView} from '../sdk/closeView';
 
 type Size = {width: number; height: number};
 
+// Subset of LassoElementTypeNum we depend on. The button registers
+// editDataTypes:[0] (stroke-family only), so we only see lassos
+// containing strokes / titles / trail-links — the firmware filters
+// out pure text-box lassos before our handler ever fires.
 type LassoCounts = {
+  // Freshly-drawn strokes that have not yet been linked to a
+  // recognition result.
   trailNum: number;
-  normalTextBoxNum: number;
-  digestTextBoxNum: number;
-  digestTextBoxEditableNum: number;
+  // Strokes that the firmware's background recognition has already
+  // promoted to a "trail link" (typical for handwritten content
+  // that has been on the page across saves / reloads).
+  trailLinkNum: number;
+  // Titles — strokes that the firmware recognised as a heading.
+  titleNum: number;
 };
-
-type TextBox = {textContentFull: string | null};
 
 export type CommAPILike = {
   getLassoElementTypeCounts: () => Promise<APIResponse<LassoCounts>>;
@@ -32,17 +39,12 @@ export type CommAPILike = {
   closePluginView: () => Promise<boolean>;
 };
 
-export type NoteAPILike = {
-  getLassoText: () => Promise<APIResponse<TextBox[]>>;
-};
-
 export type FileAPILike = {
   getPageSize: (notePath: string, page: number) => Promise<APIResponse<Size>>;
 };
 
 export type DefineDeps = {
   comm: CommAPILike;
-  note: NoteAPILike;
   file: FileAPILike;
   lookup: DictLookup;
   showResult: (result: LookupResult, ocrLabel?: string) => void;
@@ -85,14 +87,6 @@ const ocrLassoedStrokes = async (deps: DefineDeps): Promise<string> => {
   return recognized;
 };
 
-const readLassoedText = async (deps: DefineDeps): Promise<string> => {
-  const boxes = unwrap(await deps.note.getLassoText(), 'getLassoText');
-  return boxes
-    .map(b => b.textContentFull ?? '')
-    .join(' ')
-    .trim();
-};
-
 export const onNoteLassoDefine = async (
   deps: DefineDeps,
 ): Promise<DefineOutcome> => {
@@ -120,34 +114,23 @@ export const onNoteLassoDefine = async (
       'getLassoElementTypeCounts',
     );
 
-    // Strokes win over text boxes when both are lassoed: the user
-    // clearly wants OCR, otherwise they would have lassoed only text.
-    if (counts.trailNum > 0) {
-      const recognized = await ocrLassoedStrokes(deps);
-      if (recognized.length === 0) {
-        deps.logger.warn('[define:recognize] empty result');
-        return 'recognize-empty';
-      }
-      const result = await deps.lookup.lookup(recognized);
-      deps.showResult(result, `OCR: ${recognized}`);
-      popupShown = true;
-    } else if (
-      counts.normalTextBoxNum > 0 ||
-      counts.digestTextBoxNum > 0 ||
-      counts.digestTextBoxEditableNum > 0
-    ) {
-      const text = await readLassoedText(deps);
-      if (text.length === 0) {
-        deps.logger.warn('[define:text] empty result');
-        return 'recognize-empty';
-      }
-      const result = await deps.lookup.lookup(text);
-      deps.showResult(result);
-      popupShown = true;
-    } else {
-      deps.logger.warn('[define] empty lasso — nothing to define');
+    const strokeLikeCount =
+      counts.trailNum + counts.trailLinkNum + counts.titleNum;
+    if (strokeLikeCount === 0) {
+      deps.logger.warn(
+        `[define] empty lasso — nothing to define (counts: trail=${counts.trailNum}, trailLink=${counts.trailLinkNum}, title=${counts.titleNum})`,
+      );
       return 'empty-lasso';
     }
+
+    const recognized = await ocrLassoedStrokes(deps);
+    if (recognized.length === 0) {
+      deps.logger.warn('[define:recognize] empty result');
+      return 'recognize-empty';
+    }
+    const result = await deps.lookup.lookup(recognized);
+    deps.showResult(result, `OCR: ${recognized}`);
+    popupShown = true;
 
     // Release the lasso state inline on the success path. Skipping
     // this leaves the gesture chain dangling and the device hangs
