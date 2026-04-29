@@ -4,6 +4,7 @@ import {
   type PluginManagerLike,
 } from './buttonCommon';
 import type {ButtonEvent} from './buttonCommon';
+import {localizedButtonName} from '../i18n/i18n';
 
 // SDK button-type and editDataTypes constants.
 // Per sn-plugin-lib: type 2 = lasso toolbar; editDataTypes 0=stroke,
@@ -47,7 +48,9 @@ export const registerNoteLassoButton = async (
     [APP_TYPE_NOTE],
     {
       id: NOTE_LASSO_DEFINE_BUTTON_ID,
-      name: 'Lookup',
+      // JSON-encoded {locale: name} map; the firmware picks the row
+      // matching the device locale (sticker plugin's nameMap shape).
+      name: localizedButtonName(),
       icon: iconUri,
       enable: true,
       // Single stroke-family entry — covers both freshly-written

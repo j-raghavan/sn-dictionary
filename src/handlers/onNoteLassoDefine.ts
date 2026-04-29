@@ -3,6 +3,7 @@ import type {DictLookup, LookupResult} from '../core/lookup';
 import type {APIResponse, Logger} from '../sdk/types';
 import {unwrap} from '../sdk/unwrap';
 import {safeClosePluginView} from '../sdk/closeView';
+import {t} from '../i18n/i18n';
 
 // Narrow dependency interfaces (modeled after sn-formula/src/spike.ts).
 // Letting the handler take SDK calls as deps keeps the module pure
@@ -129,7 +130,7 @@ export const onNoteLassoDefine = async (
       return 'recognize-empty';
     }
     const result = await deps.lookup.lookup(recognized);
-    deps.showResult(result, `OCR: ${recognized}`);
+    deps.showResult(result, `${t('popup.ocr')}: ${recognized}`);
     popupShown = true;
 
     // Release the lasso state inline on the success path. Skipping

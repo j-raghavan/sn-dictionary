@@ -97,9 +97,12 @@ describe('onNoteLassoDefine', () => {
     ]);
     expect(deps.comm.closePluginView).not.toHaveBeenCalled();
     expect(deps.lookup.lookup).toHaveBeenCalledWith('hello');
+    // Tests run with the en locale, so the OCR-prefix label
+    // resolves to "OCR: hello"; in other locales the prefix is
+    // localised (e.g. zh_CN -> "识别: hello").
     expect(deps.showResult).toHaveBeenCalledWith(
       expect.objectContaining({found: true}),
-      'OCR: hello',
+      expect.stringMatching(/^.+: hello$/),
     );
   });
 

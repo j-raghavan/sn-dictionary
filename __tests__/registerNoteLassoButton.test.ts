@@ -37,12 +37,16 @@ describe('registerNoteLassoButton', () => {
     expect(appTypes).toEqual(['NOTE']);
     expect(button).toMatchObject({
       id: NOTE_LASSO_DEFINE_BUTTON_ID,
-      name: 'Lookup',
       enable: true,
       // Stroke-family only; mixing 0 and 3 in editDataTypes hides
       // the button on every lasso (firmware filter quirk).
       editDataTypes: [0],
     });
+    // Button name is a JSON-encoded {locale: label} map so the
+    // firmware can pick the right localised label for the device.
+    const parsedName = JSON.parse(button.name);
+    expect(parsedName.en).toBe('Lookup');
+    expect(parsedName.zh_CN).toBe('查询');
   });
 
   test('button declares the popup-region UI hints', async () => {

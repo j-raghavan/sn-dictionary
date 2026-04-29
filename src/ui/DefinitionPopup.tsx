@@ -12,6 +12,7 @@ import {
   parseWordNetEntry,
   type WordNetSense,
 } from './wordnetFormatter';
+import {t} from '../i18n/i18n';
 
 export default function DefinitionPopup(): React.JSX.Element {
   const [state, setState] = useState<PopupState>(getCurrentState);
@@ -70,7 +71,7 @@ export default function DefinitionPopup(): React.JSX.Element {
             )
           ) : (
             <Text style={styles.notFound}>
-              No definition found for "{state.result.queriedFor}".
+              {`${t('popup.notFoundFor')} "${state.result.queriedFor}".`}
             </Text>
           )}
         </ScrollView>
@@ -78,7 +79,7 @@ export default function DefinitionPopup(): React.JSX.Element {
           accessibilityRole="button"
           onPress={handleClose}
           style={styles.closeButton}>
-          <Text style={styles.closeLabel}>Close</Text>
+          <Text style={styles.closeLabel}>{t('popup.close')}</Text>
         </Pressable>
       </View>
     </View>
@@ -121,7 +122,7 @@ const SenseBlock = ({sense, showDivider}: SenseBlockProps): React.JSX.Element =>
     ) : null}
     {sense.synonyms.length > 0 ? (
       <Text style={styles.synonyms}>
-        <Text style={styles.synonymsLabel}>Synonyms: </Text>
+        <Text style={styles.synonymsLabel}>{`${t('popup.synonyms')}: `}</Text>
         {sense.synonyms.join(', ')}
       </Text>
     ) : null}

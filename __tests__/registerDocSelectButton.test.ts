@@ -37,9 +37,13 @@ describe('registerDocSelectButton', () => {
     expect(appTypes).toEqual(['DOC']);
     expect(button).toMatchObject({
       id: DOC_SELECT_DEFINE_BUTTON_ID,
-      name: 'Lookup',
       enable: true,
     });
+    // Button name is a JSON-encoded {locale: label} map (same
+    // shape as the NOTE lasso button).
+    const parsedName = JSON.parse(button.name);
+    expect(parsedName.en).toBe('Lookup');
+    expect(parsedName.zh_CN).toBe('查询');
   });
 
   test('does not include editDataTypes (those are a type:2/lasso concept only)', async () => {

@@ -4,6 +4,7 @@ import {
   type PluginManagerLike,
 } from './buttonCommon';
 import type {ButtonEvent} from './buttonCommon';
+import {localizedButtonName} from '../i18n/i18n';
 
 // SDK button-type and app-type constants.
 // type 3 = DOC text-selection toolbar (per sn-plugin-lib JSDoc on
@@ -44,7 +45,9 @@ export const registerDocSelectButton = async (
     [APP_TYPE_DOC],
     {
       id: DOC_SELECT_DEFINE_BUTTON_ID,
-      name: 'Lookup',
+      // JSON-encoded {locale: name} map — same shape as the NOTE
+      // lasso button. Firmware picks the row matching device locale.
+      name: localizedButtonName(),
       icon: iconUri,
       enable: true,
       // Defensive double-set across SDK versions; see
