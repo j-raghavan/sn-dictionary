@@ -37,7 +37,7 @@ describe('registerDocSelectButton', () => {
     expect(appTypes).toEqual(['DOC']);
     expect(button).toMatchObject({
       id: DOC_SELECT_DEFINE_BUTTON_ID,
-      name: 'Define',
+      name: 'Lookup',
       enable: true,
     });
   });

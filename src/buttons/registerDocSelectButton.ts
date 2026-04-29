@@ -44,7 +44,7 @@ export const registerDocSelectButton = async (
     [APP_TYPE_DOC],
     {
       id: DOC_SELECT_DEFINE_BUTTON_ID,
-      name: 'Define',
+      name: 'Lookup',
       icon: iconUri,
       enable: true,
       // Defensive double-set across SDK versions; see

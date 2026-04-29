@@ -41,7 +41,7 @@ export const registerNoteLassoButton = async (
     [APP_TYPE_NOTE],
     {
       id: NOTE_LASSO_DEFINE_BUTTON_ID,
-      name: 'Define',
+      name: 'Lookup',
       icon: iconUri,
       enable: true,
       // Strokes (handwritten) and text boxes (typed). The handler

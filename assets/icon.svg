@@ -1,0 +1,33 @@
+<svg width="96" height="96" viewBox="0 0 96 96" xmlns="http://www.w3.org/2000/svg">
+  <g fill="none" stroke="#000000" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Open book: two pages forming a shallow V, spine at center -->
+    <!-- Left page outline -->
+    <path d="M 8 22
+             Q 26 18 44 24
+             L 44 64
+             Q 26 60 8 64
+             Z" fill="#ffffff"/>
+    <!-- Right page outline -->
+    <path d="M 44 24
+             Q 62 18 80 22
+             L 80 64
+             Q 62 60 44 64
+             Z" fill="#ffffff"/>
+    <!-- Spine highlight (subtle) -->
+    <line x1="44" y1="24" x2="44" y2="64"/>
+    <!-- Left page text lines -->
+    <line x1="14" y1="34" x2="38" y2="33" stroke-width="2"/>
+    <line x1="14" y1="42" x2="38" y2="41" stroke-width="2"/>
+    <line x1="14" y1="50" x2="38" y2="49" stroke-width="2"/>
+    <!-- Right page text lines -->
+    <line x1="50" y1="33" x2="74" y2="34" stroke-width="2"/>
+    <line x1="50" y1="41" x2="74" y2="42" stroke-width="2"/>
+    <line x1="50" y1="49" x2="74" y2="50" stroke-width="2"/>
+
+    <!-- Magnifying glass overlapping the bottom-right page -->
+    <!-- White-fill lens to create clean separation from page text -->
+    <circle cx="66" cy="62" r="14" fill="#ffffff"/>
+    <!-- Handle -->
+    <line x1="76" y1="72" x2="86" y2="84" stroke-width="5"/>
+  </g>
+</svg>

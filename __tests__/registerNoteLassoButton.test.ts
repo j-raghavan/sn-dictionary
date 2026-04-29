@@ -37,7 +37,7 @@ describe('registerNoteLassoButton', () => {
     expect(appTypes).toEqual(['NOTE']);
     expect(button).toMatchObject({
       id: NOTE_LASSO_DEFINE_BUTTON_ID,
-      name: 'Define',
+      name: 'Lookup',
       enable: true,
       editDataTypes: [0, 3],
     });
