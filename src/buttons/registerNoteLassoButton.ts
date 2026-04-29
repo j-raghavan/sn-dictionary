@@ -1,3 +1,10 @@
+import {
+  resolveIconUri,
+  type ButtonListener,
+  type PluginManagerLike,
+} from './buttonCommon';
+import type {ButtonEvent} from './buttonCommon';
+
 // SDK button-type and editDataTypes constants.
 // Per sn-plugin-lib: type 2 = lasso toolbar; editDataTypes 0=stroke, 3=text.
 const BUTTON_TYPE_LASSO_TOOLBAR = 2;
@@ -10,21 +17,9 @@ const APP_TYPE_NOTE = 'NOTE';
 // listener filtering identify our events without ambiguity.
 export const NOTE_LASSO_DEFINE_BUTTON_ID = 100;
 
-export type ButtonEvent = {id: number};
-
-export type ButtonListener = {
-  onButtonPress: (event: ButtonEvent) => void;
-};
-
-export type PluginManagerLike = {
-  registerButton: (
-    type: number,
-    appTypes: string[],
-    button: object,
-  ) => Promise<boolean>;
-  registerButtonListener: (listener: ButtonListener) => unknown;
-  getPluginDirPath: () => Promise<string | null | undefined>;
-};
+// Re-exported so existing tests / callers don't have to know about
+// the buttonCommon split.
+export type {ButtonEvent, ButtonListener, PluginManagerLike};
 
 export type RegisterDeps = {
   pluginManager: PluginManagerLike;
@@ -32,29 +27,14 @@ export type RegisterDeps = {
   logger: {warn: (msg: string) => void};
 };
 
-const ICON_FILENAME = 'icon.png';
-
-const buildIconUri = (pluginDir: string | null | undefined): string =>
-  pluginDir ? `file://${pluginDir}/${ICON_FILENAME}` : '';
-
 export const registerNoteLassoButton = async (
   deps: RegisterDeps,
 ): Promise<void> => {
-  let pluginDir: string | null | undefined;
-  try {
-    pluginDir = await deps.pluginManager.getPluginDirPath();
-  } catch (e) {
-    deps.logger.warn(
-      `[define:icon] getPluginDirPath threw: ${(e as Error).message} — registering without icon`,
-    );
-    pluginDir = null;
-  }
-  const iconUri = buildIconUri(pluginDir);
-  if (!iconUri) {
-    deps.logger.warn(
-      '[define:icon] no plugin dir available — button will render without icon',
-    );
-  }
+  const iconUri = await resolveIconUri(
+    deps.pluginManager,
+    deps.logger,
+    'define',
+  );
 
   await deps.pluginManager.registerButton(
     BUTTON_TYPE_LASSO_TOOLBAR,

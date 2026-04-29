@@ -177,6 +177,81 @@ describe('onNoteLassoDefine', () => {
     expect(deps.lookup.lookup).not.toHaveBeenCalled();
   });
 
+  test('stroke path: returns recognize-empty when OCR yields an empty string', async () => {
+    const deps = buildDeps({
+      comm: {
+        ...buildDeps().comm,
+        recognizeElements: jest.fn(async () => ok('')),
+      } as DefineDeps['comm'],
+    });
+    const outcome = await onNoteLassoDefine(deps);
+    expect(outcome).toBe('recognize-empty');
+    expect(deps.lookup.lookup).not.toHaveBeenCalled();
+    expect(deps.showResult).not.toHaveBeenCalled();
+    expect(deps.comm.closePluginView).toHaveBeenCalled();
+  });
+
+  test('text path: returns recognize-empty when textBox content is blank', async () => {
+    const deps = buildDeps({
+      comm: {
+        ...buildDeps().comm,
+        getLassoElementTypeCounts: jest.fn(async () =>
+          ok(counts({normalTextBoxNum: 1})),
+        ),
+      } as DefineDeps['comm'],
+      note: {
+        getLassoText: jest.fn(async () => ok([{textContentFull: '   '}])),
+      },
+    });
+    const outcome = await onNoteLassoDefine(deps);
+    expect(outcome).toBe('recognize-empty');
+    expect(deps.lookup.lookup).not.toHaveBeenCalled();
+    expect(deps.showResult).not.toHaveBeenCalled();
+    expect(deps.comm.closePluginView).toHaveBeenCalled();
+  });
+
+  test('text path: textContentFull=null is treated as empty', async () => {
+    const deps = buildDeps({
+      comm: {
+        ...buildDeps().comm,
+        getLassoElementTypeCounts: jest.fn(async () =>
+          ok(counts({normalTextBoxNum: 1})),
+        ),
+      } as DefineDeps['comm'],
+      note: {
+        getLassoText: jest.fn(async () => ok([{textContentFull: null}])),
+      },
+    });
+    const outcome = await onNoteLassoDefine(deps);
+    expect(outcome).toBe('recognize-empty');
+  });
+
+  test('text path: digestTextBoxNum > 0 also routes to text branch', async () => {
+    const deps = buildDeps({
+      comm: {
+        ...buildDeps().comm,
+        getLassoElementTypeCounts: jest.fn(async () =>
+          ok(counts({digestTextBoxNum: 1})),
+        ),
+      } as DefineDeps['comm'],
+    });
+    await onNoteLassoDefine(deps);
+    expect(deps.note.getLassoText).toHaveBeenCalled();
+  });
+
+  test('text path: digestTextBoxEditableNum > 0 also routes to text branch', async () => {
+    const deps = buildDeps({
+      comm: {
+        ...buildDeps().comm,
+        getLassoElementTypeCounts: jest.fn(async () =>
+          ok(counts({digestTextBoxEditableNum: 1})),
+        ),
+      } as DefineDeps['comm'],
+    });
+    await onNoteLassoDefine(deps);
+    expect(deps.note.getLassoText).toHaveBeenCalled();
+  });
+
   test('reentrancy flag is released even on pipeline crash', async () => {
     const deps = buildDeps({
       comm: {

@@ -1,15 +1,12 @@
 import {tryAcquire, release} from '../core/reentrancyGuard';
 import type {DictLookup, LookupResult} from '../core/lookup';
+import type {APIResponse, Logger} from '../sdk/types';
+import {unwrap} from '../sdk/unwrap';
+import {safeClosePluginView} from '../sdk/closeView';
 
 // Narrow dependency interfaces (modeled after sn-formula/src/spike.ts).
 // Letting the handler take SDK calls as deps keeps the module pure
 // JS — testable without RN, without booting any turbomodule.
-
-type APIResponse<T> = {
-  success: boolean;
-  result?: T;
-  error?: {code: number; message: string};
-};
 
 type Size = {width: number; height: number};
 
@@ -43,12 +40,6 @@ export type FileAPILike = {
   getPageSize: (notePath: string, page: number) => Promise<APIResponse<Size>>;
 };
 
-export type Logger = {
-  log: (msg: string) => void;
-  warn: (msg: string) => void;
-  error: (msg: string) => void;
-};
-
 export type DefineDeps = {
   comm: CommAPILike;
   note: NoteAPILike;
@@ -64,14 +55,6 @@ export type DefineOutcome =
   | 'empty-lasso'
   | 'recognize-empty'
   | 'failed';
-
-const unwrap = <T>(res: APIResponse<T> | null | undefined, name: string): T => {
-  if (!res || !res.success || res.result === undefined) {
-    const msg = res?.error?.message ?? 'no error message';
-    throw new Error(`${name} failed: ${msg}`);
-  }
-  return res.result;
-};
 
 const ocrLassoedStrokes = async (deps: DefineDeps): Promise<string> => {
   const elements = unwrap(
@@ -110,16 +93,6 @@ const readLassoedText = async (deps: DefineDeps): Promise<string> => {
     .trim();
 };
 
-const closeView = async (deps: DefineDeps): Promise<void> => {
-  try {
-    await deps.comm.closePluginView();
-  } catch (e) {
-    deps.logger.warn(
-      `closePluginView threw: ${(e as Error).message}`,
-    );
-  }
-};
-
 export const onNoteLassoDefine = async (
   deps: DefineDeps,
 ): Promise<DefineOutcome> => {
@@ -128,7 +101,7 @@ export const onNoteLassoDefine = async (
   // (sn-formula/src/spike.ts:419-426).
   if (!tryAcquire()) {
     deps.logger.warn('[define] pipeline already running — ignoring re-entry');
-    await closeView(deps);
+    await safeClosePluginView(deps.comm, deps.logger);
     return 'busy';
   }
 
@@ -179,6 +152,6 @@ export const onNoteLassoDefine = async (
     // state:stop transition can suspend the JS context and the
     // assignment may never run — see sn-formula/src/spike.ts:438-446.
     release();
-    await closeView(deps);
+    await safeClosePluginView(deps.comm, deps.logger);
   }
 };

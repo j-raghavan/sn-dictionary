@@ -47,5 +47,4 @@ export const __testing__ = {
     listeners.clear();
     currentState = {visible: false};
   },
-  getState: (): PopupState => currentState,
 };
