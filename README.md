@@ -19,7 +19,7 @@ A Supernote plugin that adds offline English-word lookup to handwritten notes an
 - **Case- and whitespace-insensitive.** "Anatomy", "anatomy", and "  ANATOMY  " all hit the same entry.
 - **Bring-your-own dictionary** *(future)* — the architecture splits cleanly into a base `.snplg` and a user-bundled `SnDict_Custom.snplg` produced by an in-browser converter (Prong B). Same plugin code, different content, same popup. Custom dict precedes base on lookup so user terms shadow generic ones.
 
-## Demo 
+## Demo
 
 ### v1.0.1
 
@@ -61,7 +61,7 @@ The first lookup after the plugin process spins up takes ~30–60 seconds (Herme
 
 ## Adding your own dictionary
 
-The plugin scans `/storage/emulated/0/MyStyle/SnDict/` on every launch and registers any dictionaries it finds there. User dicts appear as separate sections in the popup, ahead of the bundled WordNet base — so a domain glossary like "medical" supplements the general definition rather than replacing it.
+The plugin scans `MyStyle/SnDict/` on every launch and registers any dictionaries it finds there. User dicts appear as separate sections in the popup, ahead of the bundled WordNet base — so a domain glossary like "medical" supplements the general definition rather than replacing it.
 
 ### Layout
 
