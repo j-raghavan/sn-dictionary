@@ -7,7 +7,7 @@
 // Mirrors the writer logic in src/core/dict/stardict/writeStardict.ts —
 // kept self-contained here so this script doesn't need a TS toolchain.
 
-import {writeFile, mkdir, readdir, readFile} from 'node:fs/promises';
+import {writeFile, mkdir} from 'node:fs/promises';
 import {gzipSync} from 'node:zlib';
 import {join, dirname} from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -122,30 +122,7 @@ const techJargon = {
 
 await writeSampleFolder('sn-tech-jargon', techJargon, 'Tech Jargon');
 
-// Discoverability: emit an index README at assets/sample-dicts/ so a
-// user browsing the repo knows what each subfolder contains.
-const subdirs = (await readdir(SAMPLES_DIR, {withFileTypes: true}))
-  .filter(d => d.isDirectory())
-  .map(d => d.name)
-  .sort();
-const indexLines = ['# Sample dictionaries', ''];
-for (const sub of subdirs) {
-  const metaPath = join(SAMPLES_DIR, sub, 'meta.json');
-  let display = sub;
-  try {
-    const meta = JSON.parse(await readFile(metaPath, 'utf-8'));
-    if (typeof meta.name === 'string' && meta.name.length > 0) {
-      display = meta.name;
-    }
-  } catch {
-    /* ignore */
-  }
-  indexLines.push(`- **${sub}/** — ${display}`);
-}
-indexLines.push('');
-indexLines.push(
-  'Drop any of these folders into `MyStyle/SnDict/` on your Supernote and the plugin will discover it on next launch.',
-);
-indexLines.push('');
-await writeFile(join(SAMPLES_DIR, 'README.md'), indexLines.join('\n'));
-console.log(`wrote ${join(SAMPLES_DIR, 'README.md')}`);
+// The index README at assets/sample-dicts/README.md is hand-authored
+// (covers all three formats — flat CSV, flat JSON, and the StarDict
+// subfolder this script produces) and intentionally not regenerated
+// here.

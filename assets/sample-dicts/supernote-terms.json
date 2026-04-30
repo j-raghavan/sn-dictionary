@@ -1,0 +1,18 @@
+{
+  "EPD": "Electrophoretic Paper Display — the e-ink panel technology used in Supernote devices.",
+  "lasso": "A freeform selection tool: enclose strokes or elements with a hand-drawn loop to act on them as a group.",
+  "pluginhost": "The firmware component that runs third-party plugin code. Lives at /data/user/0/com.ratta.supernote.pluginhost/.",
+  "trail": "A freshly-drawn ink stroke that has not yet been linked to any recognition result.",
+  "trailLink": "A stroke the firmware's background recogniser has promoted to a recognised handwriting unit, typical for content that has survived a save / reload cycle.",
+  "MyStyle": "The user-writable folder at /storage/emulated/0/MyStyle/ for templates, custom assets, and (for this plugin) sideloaded user dictionaries.",
+  "INBOX": "A user-writable staging folder at /storage/emulated/0/INBOX/ that the firmware presents as a destination for incoming files (Cloud, AirDrop, USB drops).",
+  "Chauvet": "The codename for one of the Supernote firmware revisions; logcats and SDK release notes use codenames to track behaviour-bearing changes.",
+  "trail-link": "Hyphenated alternate spelling of trailLink — see that entry.",
+  "RattaSnNoteLib": "The firmware module responsible for note rendering, stroke handling, and the lasso UI. Logcat lines tagged 'RattaSnNoteLib' come from this layer.",
+  "PluginCommAPI": "The plugin SDK surface for talking to the host's note context — lasso state, OCR, page info, plugin-view lifecycle.",
+  "PluginNoteAPI": "The plugin SDK surface for inspecting and modifying note files: page elements, layers, text-boxes, geometries.",
+  "PluginDocAPI": "The plugin SDK surface for the Document app: text selection, page text, current page tracking.",
+  "FileUtils": "The plugin SDK's filesystem turbomodule (RTNFileUtils). Provides exists/listFiles/copyFile/etc.; notably does not expose writeFile.",
+  ".snplg": "The Supernote plugin distribution format — an APK or JS-bundle package the firmware installs via the plugin manager UI.",
+  ".dict.dz": "A gzipped StarDict definitions file. The .dz indicates dictzip — gzip with a random-access extra field; standard gzip readers handle it transparently."
+}

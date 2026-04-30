@@ -102,6 +102,42 @@ Without `meta.json`, the display name falls back to the folder name.
 
 A folder with no recognised files, a partial StarDict triple, or multiple format markers is logged and skipped — discovery is fault-isolated, so one bad folder doesn't break the rest.
 
+#### What CSV and JSON should look like
+
+The simplest CSV — headword in column 0, definition in column 1, no header row:
+
+```csv
+braise,a slow cooking method that combines searing with simmering in a covered pot
+deglaze,"to add liquid to a hot pan to dissolve and lift caramelised browned bits stuck to the bottom"
+emulsify,"to combine two liquids that don't normally mix, such as oil and vinegar, into a stable suspension"
+julienne,to cut food into long thin strips of roughly equal size
+```
+
+Quote a field if its content contains commas, newlines, or `"` (double quotes inside a quoted field are escaped as `""`). UTF-8 BOM at the file start is tolerated. The lookup is case-insensitive — `Braise`, `BRAISE`, and `braise` all hit the same entry.
+
+JSON, "object-map" shape — the simplest case:
+
+```json
+{
+  "EPD": "Electrophoretic Paper Display — the e-ink panel technology used in Supernote devices.",
+  "lasso": "A freeform selection tool: enclose strokes or elements with a hand-drawn loop to act on them as a group.",
+  "trail": "A freshly-drawn ink stroke that has not yet been linked to any recognition result."
+}
+```
+
+JSON, "array of entries" shape — useful when you want to keep extra fields per entry without breaking lookup:
+
+```json
+[
+  { "word": "EPD",   "definition": "Electrophoretic Paper Display — the e-ink panel technology used in Supernote devices." },
+  { "word": "lasso", "definition": "A freeform selection tool: enclose strokes or elements with a hand-drawn loop." }
+]
+```
+
+Recognised aliases for the array shape: the headword side accepts `word` / `headword` / `term` / `key`; the definition side accepts `definition` / `def` / `meaning` / `value`. Entries that don't match any shape (missing fields, wrong types, scalar rows) are skipped silently — your other entries still load.
+
+Concrete copy-pasteable starting points live at [`assets/sample-dicts/`](assets/sample-dicts/) — one CSV, one JSON, and one StarDict folder.
+
 ### File-size caps
 
 CSV and JSON dictionaries are capped at 10 MB each; bigger files are refused with a logged warning. StarDict has no explicit cap (the format streams via index + on-demand block decompression). The `fetch(file://...)` bridge throughput is around 0.85 MB/s — a 10 MB CSV loads in ~12 s on first lookup, then stays in memory for the session.
