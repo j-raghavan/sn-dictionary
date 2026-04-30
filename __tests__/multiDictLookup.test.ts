@@ -146,4 +146,38 @@ describe('createMultiDictLookup', () => {
     await lookup.lookup('  apple  ');
     expect(a.lookup).toHaveBeenCalledWith('apple');
   });
+
+  test('survives mid-flight mutation of the sources array (snapshot semantics)', async () => {
+    // Repro: index.js shares the sources array with the registry and
+    // mutates it (sources.unshift(...userDicts)) after discovery
+    // completes. If a lookup is in flight when discovery resolves, a
+    // naive implementation would index past the resolved entries and
+    // push undefined as a "hit", breaking the popup downstream.
+    const base = stubSource('Base', {apple: 'fruit (base)'});
+    const sources: DictSource[] = [base];
+    const lookup = createMultiDictLookup(sources);
+
+    // Kick off a lookup, then prepend new sources before it resolves.
+    const inFlight = lookup.lookup('apple');
+    sources.unshift(stubSource('UserA', {apple: 'fruit (userA)'}));
+    sources.unshift(stubSource('UserB', {apple: 'fruit (userB)'}));
+
+    const result = await inFlight;
+    // The in-flight lookup must observe ONLY the sources present at
+    // its start (the base), not the late-arriving prepends. Hits and
+    // sources.length stay aligned; no undefined entries leak through.
+    expect(result.hits).toEqual([
+      {source: 'Base', entry: {word: 'apple', definition: 'fruit (base)'}},
+    ]);
+    for (const hit of result.hits) {
+      expect(hit.entry).toBeDefined();
+      expect(hit.entry.definition).toEqual(expect.any(String));
+    }
+
+    // Subsequent lookups DO see the new sources — the registry uses
+    // the live array, just snapshots per-call so each lookup is
+    // internally consistent.
+    const next = await lookup.lookup('apple');
+    expect(next.hits.map(h => h.source)).toEqual(['UserB', 'UserA', 'Base']);
+  });
 });

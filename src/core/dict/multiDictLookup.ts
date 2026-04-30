@@ -40,17 +40,25 @@ export const createMultiDictLookup = (
       if (!trimmed) {
         return {queriedFor: text, hits: []};
       }
-      // Concurrent fan-out, then walk in source-array order so the
-      // popup section ordering is deterministic regardless of which
-      // source resolved first.
+      // Snapshot the sources array at lookup start. The caller (index.js)
+      // is allowed to mutate the shared `sources` array after discovery
+      // completes (sources.unshift(...userDicts)). Without a snapshot, a
+      // mutation in flight would desync sources.length from entries.length
+      // post-Promise.all, leaving us indexing past the resolved values
+      // and pushing { entry: undefined } as a hit — breaking the popup
+      // which expects entry.definition to exist.
+      const snapshot = sources.slice();
+      // Concurrent fan-out, then walk in snapshot order so the popup
+      // section ordering is deterministic regardless of which source
+      // resolved first.
       const entries = await Promise.all(
-        sources.map(s => safeLookup(s, trimmed, warn)),
+        snapshot.map(s => safeLookup(s, trimmed, warn)),
       );
       const hits: SourceHit[] = [];
-      for (let i = 0; i < sources.length; i++) {
+      for (let i = 0; i < snapshot.length; i++) {
         const entry = entries[i];
-        if (entry !== null) {
-          hits.push({source: sources[i].name, entry});
+        if (entry != null) {
+          hits.push({source: snapshot[i].name, entry});
         }
       }
       return {queriedFor: text, hits};
