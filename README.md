@@ -138,6 +138,36 @@ Recognised aliases for the array shape: the headword side accepts `word` / `head
 
 Concrete copy-pasteable starting points live at [`assets/sample-dicts/`](assets/sample-dicts/) — one CSV, one JSON, and one StarDict folder.
 
+### Where to find dictionaries
+
+Most users won't author a StarDict from scratch — there are huge corpora of pre-built dicts in the wild. Three sources cover the long tail:
+
+- **[FreeDict](https://freedict.org/)** — open-source bilingual dictionaries, native StarDict format, MIT/CC-licensed. Direct downloads at [freedict.org/freedict-database.json](https://freedict.org/freedict-database.json) (machine-readable) or browse the per-language pages. Covers German, French, Italian, Spanish, Portuguese, Dutch, Russian, Japanese, Czech, Polish, Hungarian, Swedish, Turkish, Arabic, Hebrew, and more.
+- **[Wiktionary-Dictionaries (Vuizur)](https://github.com/Vuizur/Wiktionary-Dictionaries)** — actively-maintained Wiktionary dumps converted to StarDict, ~100+ language pairs including monolingual entries. CC-BY-SA. The most comprehensive single source for non-English content.
+- **[huzheng.org](http://download.huzheng.org/)** — the historical StarDict archive. Heavy on Chinese and Japanese options; mixed licensing (check each entry). Site is occasionally slow or down — Wiktionary-Dictionaries is the modern alternative for most languages.
+
+#### Quick pointers per language
+
+| Language | Reasonable starting points |
+|---|---|
+| **Chinese (zh)** | CC-CEDICT (Chinese ↔ English) via [Vuizur](https://github.com/Vuizur/Wiktionary-Dictionaries) or huzheng. For monolingual zh, Wiktionary zh on Vuizur. |
+| **Japanese (ja)** | JMdict / EDICT (Japanese ↔ English) on huzheng or Vuizur. KANJIDIC for kanji-specific lookups. |
+| **Italian (it)** | FreeDict `eng-ita` and `ita-eng` for bilingual; Wiktionary it on Vuizur for monolingual definitions. |
+| **Dutch (nl)** | FreeDict `eng-nld` and `nld-eng`; Wiktionary nl on Vuizur. |
+| **German (de)** | FreeDict `eng-deu` and `deu-eng` for bilingual; Wiktionary de on Vuizur for monolingual. |
+| **French (fr)** | FreeDict `eng-fra` and `fra-eng`; Wiktionary fr on Vuizur. |
+| **Spanish (es)** | FreeDict `eng-spa` and `spa-eng`; Wiktionary es on Vuizur. |
+| **Russian (ru)** | FreeDict `eng-rus` and `rus-eng`; Wiktionary ru on Vuizur. |
+| **Korean (ko)** | Wiktionary ko on Vuizur. |
+| **Polish, Czech, Hungarian, Swedish, Portuguese, Turkish, Arabic, Hebrew, …** | FreeDict has bilingual pairs against English; Wiktionary-Dictionaries has monolingual + many cross-language pairs. |
+
+#### A few notes worth knowing before you grab one
+
+- **Most downloads ship as `.tar.bz2` or `.zip`.** Extract first, then drop the resulting folder (or its files) into `MyStyle/SnDict/`. A typical extracted layout matches the organised layout described above — `.ifo` + `.idx` + `.dict.dz` together.
+- **Licensing.** For personal use on your own device, every source above is fine. If you plan to redistribute (e.g., bundle into a custom `.snplg`), check the per-dict license — FreeDict is permissive, Wiktionary-derived dicts are CC-BY-SA, huzheng entries vary.
+- **Morphology / inflected forms.** Highly inflected languages (German declensions, Italian conjugations) are only as good as the dict's headword coverage. Wiktionary-derived dicts generally include inflected forms; FreeDict's coverage varies. If lassoing `Häuser` returns "no entry," try lassoing the lemma `Haus` to confirm the dict simply lacks form folding rather than your sideloading being broken.
+- **If you have a dict in a different format** (MDX, EPUB-based, SDictionary, Babylon, …), [`pyglossary`](https://github.com/ilius/pyglossary) is the gold-standard CLI converter — it reads ~50 formats and writes StarDict. One-line install via `pip install pyglossary`, then `pyglossary --read-format=mdx --write-format=stardict input.mdx`.
+
 ### File-size caps
 
 CSV and JSON dictionaries are capped at 10 MB each; bigger files are refused with a logged warning. StarDict has no explicit cap (the format streams via index + on-demand block decompression). The `fetch(file://...)` bridge throughput is around 0.85 MB/s — a 10 MB CSV loads in ~12 s on first lookup, then stays in memory for the session.
