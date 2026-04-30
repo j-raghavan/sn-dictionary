@@ -24,8 +24,23 @@ import {
   hideDefinition,
   __testing__,
 } from '../src/ui/popupController';
+import type {LookupResult} from '../src/core/lookup';
 
 const closePluginView = PluginManager.closePluginView as jest.Mock;
+
+const found = (
+  source: string,
+  word: string,
+  definition: string,
+): LookupResult => ({
+  queriedFor: word,
+  hits: [{source, entry: {word, definition}}],
+});
+
+const notFound = (queriedFor: string): LookupResult => ({
+  queriedFor,
+  hits: [],
+});
 
 beforeEach(() => {
   __testing__.reset();
@@ -42,10 +57,10 @@ const renderPopup = (): ReactTestRenderer => {
 };
 
 const collectText = (tree: ReactTestRenderer): string => {
-  const found: string[] = [];
+  const acc: string[] = [];
   const visit = (node: unknown): void => {
     if (typeof node === 'string') {
-      found.push(node);
+      acc.push(node);
       return;
     }
     if (Array.isArray(node)) {
@@ -57,7 +72,7 @@ const collectText = (tree: ReactTestRenderer): string => {
     }
   };
   visit(tree.toJSON());
-  return found.join(' | ');
+  return acc.join(' | ');
 };
 
 describe('DefinitionPopup', () => {
@@ -65,13 +80,10 @@ describe('DefinitionPopup', () => {
     expect(collectText(renderPopup())).toBe('');
   });
 
-  test('renders word and definition when state is visible (found)', () => {
+  test('renders headword and definition for a single-source hit', () => {
     const tree = renderPopup();
     act(() => {
-      showDefinition(
-        {found: true, entry: {word: 'hello', definition: 'a greeting'}},
-        'OCR: hello',
-      );
+      showDefinition(found('WordNet', 'hello', 'a greeting'), 'OCR: hello');
     });
     const text = collectText(tree);
     expect(text).toContain('hello');
@@ -80,10 +92,18 @@ describe('DefinitionPopup', () => {
     expect(text).toContain('Close');
   });
 
-  test('renders not-found message when state is visible but lookup failed', () => {
+  test('does NOT render a source badge when there is only one hit', () => {
     const tree = renderPopup();
     act(() => {
-      showDefinition({found: false, queriedFor: 'xenoglossy'});
+      showDefinition(found('WordNet', 'hello', 'a greeting'));
+    });
+    expect(collectText(tree)).not.toContain('WordNet');
+  });
+
+  test('renders not-found message when the result has zero hits', () => {
+    const tree = renderPopup();
+    act(() => {
+      showDefinition(notFound('xenoglossy'));
     });
     const text = collectText(tree);
     expect(text).toContain('xenoglossy');
@@ -93,7 +113,7 @@ describe('DefinitionPopup', () => {
   test('reverts to invisible after hideDefinition', () => {
     const tree = renderPopup();
     act(() => {
-      showDefinition({found: false, queriedFor: 'foo'});
+      showDefinition(notFound('foo'));
     });
     expect(collectText(tree)).toContain('foo');
     act(() => {
@@ -105,17 +125,14 @@ describe('DefinitionPopup', () => {
   test('Close button calls PluginManager.closePluginView and hides locally', () => {
     const tree = renderPopup();
     act(() => {
-      showDefinition({found: false, queriedFor: 'foo'});
+      showDefinition(notFound('foo'));
     });
     expect(collectText(tree)).toContain('foo');
     const closeBtn = tree.root.findByProps({accessibilityRole: 'button'});
     act(() => {
       closeBtn.props.onPress();
     });
-    // Local state is hidden immediately so a subsequent lookup
-    // doesn't briefly flash the previous content.
     expect(collectText(tree)).toBe('');
-    // Firmware overlay close is requested fire-and-forget.
     expect(closePluginView).toHaveBeenCalledTimes(1);
   });
 
@@ -130,38 +147,25 @@ describe('DefinitionPopup', () => {
       '"workers in AI hope to imitate intelligence" ' +
       '[syn: {artificial intelligence}]';
     act(() => {
-      showDefinition(
-        {found: true, entry: {word: 'AI', definition: aiEntry}},
-        'OCR: AI',
-      );
+      showDefinition(found('WordNet', 'AI', aiEntry), 'OCR: AI');
     });
     const text = collectText(tree);
-    // Both senses should be visible in the rendered tree, with the
-    // CS sense reachable to the eye even though it's sense #2.
     expect(text).toContain('Army Intelligence');
     expect(text).toContain('artificial intelligence');
     expect(text).toContain('branch of computer science');
-    // POS label rendered as the long form
     expect(text).toContain('noun');
-    // Numbered senses
     expect(text).toContain('1.');
     expect(text).toContain('2.');
-    // Example from sense 2 should be quoted with curly quotes
     expect(text).toContain('workers in AI hope to imitate intelligence');
-    // Synonyms label appears
     expect(text).toMatch(/Synonyms/i);
   });
 
   test('falls back to raw text when the entry does not parse as WordNet format', () => {
     const tree = renderPopup();
     act(() => {
-      showDefinition({
-        found: true,
-        entry: {
-          word: 'unstructured',
-          definition: 'a single line with no WordNet structure',
-        },
-      });
+      showDefinition(
+        found('WordNet', 'unstructured', 'a single line with no WordNet structure'),
+      );
     });
     const text = collectText(tree);
     expect(text).toContain('a single line with no WordNet structure');
@@ -173,7 +177,7 @@ describe('DefinitionPopup', () => {
     );
     const tree = renderPopup();
     act(() => {
-      showDefinition({found: false, queriedFor: 'foo'});
+      showDefinition(notFound('foo'));
     });
     const closeBtn = tree.root.findByProps({accessibilityRole: 'button'});
     expect(() => {
@@ -181,5 +185,66 @@ describe('DefinitionPopup', () => {
         closeBtn.props.onPress();
       });
     }).not.toThrow();
+  });
+
+  test('renders one section per hit and a source badge when there are ≥2 hits', () => {
+    const tree = renderPopup();
+    act(() => {
+      showDefinition(
+        {
+          queriedFor: 'apple',
+          hits: [
+            {
+              source: 'medical-en',
+              entry: {word: 'apple', definition: 'a pomaceous fruit (medical)'},
+            },
+            {
+              source: 'WordNet',
+              entry: {word: 'apple', definition: 'an edible fruit (WordNet)'},
+            },
+          ],
+        },
+        'OCR: apple',
+      );
+    });
+    const text = collectText(tree);
+    // Both source labels appear.
+    expect(text).toContain('medical-en');
+    expect(text).toContain('WordNet');
+    // Both definitions appear.
+    expect(text).toContain('a pomaceous fruit (medical)');
+    expect(text).toContain('an edible fruit (WordNet)');
+    // Headword shown once at the top, taken from the first hit.
+    expect(text).toContain('apple');
+  });
+
+  test('uses the first hit\'s entry word as the popup headword', () => {
+    const tree = renderPopup();
+    act(() => {
+      showDefinition({
+        queriedFor: 'apple',
+        hits: [
+          {
+            source: 'a',
+            entry: {word: 'CustomCanonical', definition: 'def-a'},
+          },
+          {
+            source: 'b',
+            entry: {word: 'WordNetCanonical', definition: 'def-b'},
+          },
+        ],
+      });
+    });
+    const text = collectText(tree);
+    expect(text).toContain('CustomCanonical');
+    // Second source's canonical word still appears? It's not rendered
+    // as a header — only the first hit's word goes at the top.
+    // But individual section bodies don't render a per-section
+    // headword, so 'WordNetCanonical' won't appear in the body either
+    // (only in tests where parsedHit.parsed.parseFailed renders the
+    // raw entry word would it leak — which our raw renderer doesn't).
+    // We assert the first canonical leads.
+    const firstIdx = text.indexOf('CustomCanonical');
+    expect(firstIdx).toBeGreaterThanOrEqual(0);
   });
 });

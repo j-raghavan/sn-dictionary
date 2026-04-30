@@ -13,6 +13,12 @@ import {
   type WordNetSense,
 } from './wordnetFormatter';
 import {t} from '../i18n/i18n';
+import type {SourceHit} from '../core/lookup';
+
+type ParsedHit = {
+  hit: SourceHit;
+  parsed: ReturnType<typeof parseWordNetEntry>;
+};
 
 export default function DefinitionPopup(): React.JSX.Element {
   const [state, setState] = useState<PopupState>(getCurrentState);
@@ -33,14 +39,18 @@ export default function DefinitionPopup(): React.JSX.Element {
     });
   }, []);
 
-  // Parse the WordNet entry once per definition change. Memoise so
-  // subsequent re-renders (e.g. from popupController state echoes)
-  // don't re-tokenise.
-  const parsed = useMemo(() => {
-    if (!state.visible || !state.result.found) {
-      return null;
+  // Parse each hit's WordNet entry once per definition change. Memoise
+  // so subsequent re-renders (e.g. from popupController state echoes)
+  // don't re-tokenise. CSV/JSON/MDX dicts in Step 3 will go through
+  // the same parser; non-WordNet shapes fall back to raw text below.
+  const parsedHits = useMemo<ParsedHit[]>(() => {
+    if (!state.visible || state.result.hits.length === 0) {
+      return [];
     }
-    return parseWordNetEntry(state.result.entry.definition);
+    return state.result.hits.map(hit => ({
+      hit,
+      parsed: parseWordNetEntry(hit.entry.definition),
+    }));
   }, [state]);
 
   if (!state.visible) {
@@ -49,9 +59,10 @@ export default function DefinitionPopup(): React.JSX.Element {
     return <View pointerEvents="none" style={styles.hidden} />;
   }
 
-  const headerWord = state.result.found
-    ? state.result.entry.word
-    : state.result.queriedFor;
+  const hits = state.result.hits;
+  const headerWord =
+    hits.length > 0 ? hits[0].entry.word : state.result.queriedFor;
+  const showSourceBadges = hits.length >= 2;
 
   return (
     <View style={styles.backdrop}>
@@ -61,18 +72,20 @@ export default function DefinitionPopup(): React.JSX.Element {
           <Text style={styles.ocrLabel}>{state.ocrLabel}</Text>
         ) : null}
         <ScrollView style={styles.body}>
-          {state.result.found ? (
-            parsed && !parsed.parseFailed ? (
-              <SenseList senses={parsed.senses} />
-            ) : (
-              <Text style={styles.definition}>
-                {state.result.entry.definition}
-              </Text>
-            )
-          ) : (
+          {hits.length === 0 ? (
             <Text style={styles.notFound}>
               {`${t('popup.notFoundFor')} "${state.result.queriedFor}".`}
             </Text>
+          ) : (
+            parsedHits.map((ph, i) => (
+              <SourceSection
+                key={`${ph.hit.source}-${i}`}
+                hit={ph.hit}
+                parsed={ph.parsed}
+                showBadge={showSourceBadges}
+                showDivider={i > 0}
+              />
+            ))
           )}
         </ScrollView>
         <Pressable
@@ -85,6 +98,33 @@ export default function DefinitionPopup(): React.JSX.Element {
     </View>
   );
 }
+
+type SourceSectionProps = {
+  hit: SourceHit;
+  parsed: ReturnType<typeof parseWordNetEntry>;
+  showBadge: boolean;
+  showDivider: boolean;
+};
+
+const SourceSection = ({
+  hit,
+  parsed,
+  showBadge,
+  showDivider,
+}: SourceSectionProps): React.JSX.Element => (
+  <View style={[styles.section, showDivider && styles.sectionDivider]}>
+    {showBadge ? (
+      <View style={styles.sectionHeader}>
+        <Text style={styles.sourceBadge}>{hit.source}</Text>
+      </View>
+    ) : null}
+    {parsed && !parsed.parseFailed ? (
+      <SenseList senses={parsed.senses} />
+    ) : (
+      <Text style={styles.definition}>{hit.entry.definition}</Text>
+    )}
+  </View>
+);
 
 type SenseListProps = {senses: WordNetSense[]};
 
@@ -160,6 +200,30 @@ const styles = StyleSheet.create({
   body: {
     marginTop: 12,
     marginBottom: 16,
+  },
+  section: {
+    paddingTop: 4,
+  },
+  sectionDivider: {
+    marginTop: 14,
+    paddingTop: 14,
+    borderTopWidth: 1,
+    borderTopColor: '#bbbbbb',
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  sourceBadge: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#000000',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderWidth: 1,
+    borderColor: '#000000',
+    borderRadius: 3,
   },
   definition: {
     fontSize: 17,

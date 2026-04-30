@@ -25,20 +25,23 @@ describe('popupController', () => {
     const seen: unknown[] = [];
     subscribe(s => seen.push(s));
     showDefinition(
-      {found: true, entry: {word: 'hello', definition: 'greeting'}},
+      {queriedFor: 'hello', hits: [{source: 'WordNet', entry: {word: 'hello', definition: 'greeting'}}]},
       'OCR: hello',
     );
     expect(seen).toHaveLength(1);
     expect(seen[0]).toEqual({
       visible: true,
       ocrLabel: 'OCR: hello',
-      result: {found: true, entry: {word: 'hello', definition: 'greeting'}},
+      result: {queriedFor: 'hello', hits: [{source: 'WordNet', entry: {word: 'hello', definition: 'greeting'}}]},
     });
     expect(getCurrentState()).toEqual(seen[0]);
   });
 
   test('hideDefinition broadcasts not-visible state', () => {
-    showDefinition({found: true, entry: {word: 'a', definition: 'b'}});
+    showDefinition({
+      queriedFor: 'a',
+      hits: [{source: 'WordNet', entry: {word: 'a', definition: 'b'}}],
+    });
     const seen: unknown[] = [];
     subscribe(s => seen.push(s));
     hideDefinition();
@@ -49,7 +52,7 @@ describe('popupController', () => {
     const seen: unknown[] = [];
     const unsub = subscribe(s => seen.push(s));
     unsub();
-    showDefinition({found: false, queriedFor: 'x'});
+    showDefinition({queriedFor: 'x', hits: []});
     expect(seen).toEqual([]);
   });
 });

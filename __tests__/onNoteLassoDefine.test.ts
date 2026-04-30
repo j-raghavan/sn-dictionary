@@ -21,8 +21,8 @@ const counts = (overrides: Partial<Record<string, number>> = {}) => ({
 const buildDeps = (overrides: Partial<DefineDeps> = {}): DefineDeps => {
   const calls: string[] = [];
   const lookupResult: LookupResult = {
-    found: true,
-    entry: {word: 'hello', definition: 'a greeting'},
+    queriedFor: 'hello',
+    hits: [{source: 'WordNet', entry: {word: 'hello', definition: 'a greeting'}}],
   };
   const showResult = jest.fn();
 
@@ -102,7 +102,7 @@ describe('onNoteLassoDefine', () => {
     // resolves to "OCR: hello"; in other locales the prefix is
     // localised (e.g. zh_CN -> "识别: hello").
     expect(deps.showResult).toHaveBeenCalledWith(
-      expect.objectContaining({found: true}),
+      expect.objectContaining({hits: expect.arrayContaining([expect.anything()])}),
       expect.stringMatching(/^.+: hello$/),
     );
   });
