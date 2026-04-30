@@ -5,6 +5,25 @@ import {unwrap} from '../sdk/unwrap';
 import {safeClosePluginView} from '../sdk/closeView';
 import {t} from '../i18n/i18n';
 
+const LASSO_BOX_STATE_RELEASED = 2;
+
+const safeReleaseLassoBox = async (
+  comm: {setLassoBoxState: (state: number) => Promise<APIResponse<boolean>>},
+  logger: Logger,
+): Promise<void> => {
+  try {
+    const res = await comm.setLassoBoxState(LASSO_BOX_STATE_RELEASED);
+    if (!res || !res.success) {
+      const msg = res?.error?.message ?? 'no error message';
+      logger.warn(`[define:lasso-box] setLassoBoxState(2) success=false: ${msg}`);
+    }
+  } catch (e) {
+    logger.warn(
+      `[define:lasso-box] setLassoBoxState(2) threw: ${(e as Error).message}`,
+    );
+  }
+};
+
 // Narrow dependency interfaces (modeled after sn-formula/src/spike.ts).
 // Letting the handler take SDK calls as deps keeps the module pure
 // JS — testable without RN, without booting any turbomodule.
@@ -134,11 +153,6 @@ export const onNoteLassoDefine = async (
     const result = await deps.lookup.lookup(recognized);
     deps.showResult(result, `${t('popup.ocr')}: ${recognized}`);
     popupShown = true;
-
-    // Release the lasso state inline on the success path. Skipping
-    // this leaves the gesture chain dangling and the device hangs
-    // (sn-formula/src/spike.ts:329-335).
-    await deps.comm.setLassoBoxState(2);
     return 'ok';
   } catch (e) {
     deps.logger.error(`[define] pipeline crashed: ${(e as Error).message}`);
@@ -149,6 +163,12 @@ export const onNoteLassoDefine = async (
     // state:stop transition can suspend the JS context and the
     // assignment may never run — see sn-formula/src/spike.ts:438-446.
     release();
+    // Release the lasso state on EVERY path that owns it. Skipping
+    // it leaves the lasso toolbar stuck on-screen and the host's
+    // gesture chain dangling — pen taps stop landing until the user
+    // exits the note (sn-formula/src/spike.ts:329-335). This must
+    // run for empty-lasso, recognize-empty, failed, AND ok.
+    await safeReleaseLassoBox(deps.comm, deps.logger);
     if (!popupShown) {
       await safeClosePluginView(deps.comm, deps.logger);
     }
