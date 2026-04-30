@@ -59,9 +59,56 @@ By design, **the plugin is pure read** — it never modifies the page, never del
 
 The first lookup after the plugin process spins up takes ~30–60 seconds (Hermes/JSC parses the bundle, decodes the base64, gunzips the StarDict, builds the index). After that, every subsequent lookup is instant for the rest of the session — the index lives in JS heap memory until the plugin host is killed.
 
+## Adding your own dictionary
+
+The plugin scans `/storage/emulated/0/MyStyle/SnDict/` on every launch and registers any dictionaries it finds there. User dicts appear as separate sections in the popup, ahead of the bundled WordNet base — so a domain glossary like "medical" supplements the general definition rather than replacing it.
+
+### Folder layout
+
+One dictionary per subfolder:
+
+```
+MyStyle/
+└── SnDict/
+    ├── medical-en/
+    │   ├── meta.json                    (optional)
+    │   ├── medical.ifo
+    │   ├── medical.idx
+    │   └── medical.dict.dz
+    ├── my-glossary/
+    │   └── words.csv
+    └── japanese-en/
+        └── data.json
+```
+
+The folder name is the section label in the popup unless `meta.json` overrides it:
+
+```json
+{ "name": "Medical en→en" }
+```
+
+### Supported formats
+
+| Format | Files | Notes |
+|---|---|---|
+| **StarDict** | `*.ifo` + `*.idx` + (`*.dict.dz` or `*.dict`) | The native format. Free dictionaries available at [FreeDict](https://freedict.org) and [dict.org](http://dict.org). |
+| **CSV** | one `*.csv` | Headword in column 0, definition in column 1, by default. Quoted fields with embedded commas / newlines / escaped quotes are handled per RFC 4180. UTF-8 BOM is tolerated. |
+| **JSON** | one `*.json` | Two shapes accepted: `{"word": "definition", ...}` or `[{"word": "...", "definition": "..."}, ...]`. Field aliases recognised: `headword`/`term`/`key` and `def`/`meaning`/`value`. |
+| MDX | *(deferred)* | Not yet supported. Folder is logged and skipped — convert to StarDict via [`mdict-utils`](https://pypi.org/project/mdict-utils/) or [`pyglossary`](https://github.com/ilius/pyglossary) until then. |
+
+A folder with no recognised files, a partial StarDict triple, or multiple format markers is logged and skipped — discovery is fault-isolated, so one bad folder doesn't break the rest.
+
+### File-size caps
+
+CSV and JSON dictionaries are capped at 10 MB each; bigger files are refused with a logged warning. StarDict has no explicit cap (the format streams via index + on-demand block decompression). The `fetch(file://...)` bridge throughput is around 0.85 MB/s — a 10 MB CSV loads in ~12 s on first lookup, then stays in memory for the session.
+
+### Try the bundled sample
+
+A small, hand-curated tech-jargon dictionary lives at [`assets/sample-dicts/sn-tech-jargon/`](assets/sample-dicts/sn-tech-jargon/). Copy that folder into `MyStyle/SnDict/` on your device, restart the plugin, and you'll see a `Tech Jargon` section appear in the popup whenever a lassoed word matches one of the ~30 entries. To regenerate the sample after editing entries: `npm run build:sample-dicts`.
+
 ## Limits
 
-- **English only** for the bundled dictionary content. Other languages are explicitly out of scope for the base — see *Bring-your-own dictionary* above for the planned converter that lets users supply any StarDict / MDX / CSV / JSON pack.
+- **English only** for the bundled dictionary content. Other languages are out of scope for the base; see *Adding your own dictionary* above for sideloading user dicts in StarDict / CSV / JSON formats.
 - **Tap-on-existing-word** (no lasso, just tap a written word) is **not currently supported by the SDK** — there is no spatial-query API to ask "what stroke is under this point?". A pen/touch event API is on Dunn-sn's roadmap; tap-to-define is tracked for v1.x.
 - **`PEN_UP` auto-define** — explicitly *not* a feature. The "OCR every stroke as you write" UX is intrusive without a clean word-boundary signal; lookups are user-initiated only.
 - **Bundle size:** ~17MB (~16MB of base64-encoded WordNet plus the JS bundle). The Supernote firmware confirmed no `.snplg` size limit, but the bundle parse on first plugin-host spin-up is the main rough edge today (~30–60s on a Nomad). Once parsed, lookups are instant.
