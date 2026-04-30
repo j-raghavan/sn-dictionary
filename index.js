@@ -12,6 +12,7 @@ import {registerDocSelectButton} from './src/buttons/registerDocSelectButton';
 import {onNoteLassoDefine} from './src/handlers/onNoteLassoDefine';
 import {onDocSelectDefine} from './src/handlers/onDocSelectDefine';
 import {createStardictLookup} from './src/core/dict/stardictLookup';
+import {createMultiDictLookup} from './src/core/dict/multiDictLookup';
 import {loadBaseDictFromGenerated} from './src/core/dict/data/baseDictData';
 import {showDefinition} from './src/ui/popupController';
 
@@ -29,10 +30,16 @@ const logger = {
   error: msg => console.log(`[ERROR] ${msg}`),
 };
 
-const lookup = createStardictLookup({
+// The base dict source. Bundled into the JS at build time. Step 4
+// will discover and prepend user dicts ahead of this one in the
+// registry list.
+const baseSource = createStardictLookup({
+  name: 'WordNet',
   loadBase: loadBaseDictFromGenerated,
   logger,
 });
+
+const lookup = createMultiDictLookup([baseSource], logger);
 
 // Eager-load the dict at plugin start so any build error is visible
 // immediately in logcat rather than at first lookup. The dict is
