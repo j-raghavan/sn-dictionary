@@ -15,8 +15,8 @@ const buildDeps = (
   overrides: Partial<DocDefineDeps> = {},
 ): DocDefineDeps => {
   const lookupResult: LookupResult = {
-    found: true,
-    entry: {word: 'hello', definition: 'a greeting'},
+    queriedFor: 'hello',
+    hits: [{source: 'WordNet', entry: {word: 'hello', definition: 'a greeting'}}],
   };
   return {
     doc: {
@@ -48,7 +48,7 @@ describe('onDocSelectDefine', () => {
     expect(deps.lookup.lookup).toHaveBeenCalledWith('hello');
     expect(deps.showResult).toHaveBeenCalledTimes(1);
     expect(deps.showResult).toHaveBeenCalledWith(
-      expect.objectContaining({found: true}),
+      expect.objectContaining({hits: expect.arrayContaining([expect.anything()])}),
     );
     expect(deps.comm.closePluginView).not.toHaveBeenCalled();
   });

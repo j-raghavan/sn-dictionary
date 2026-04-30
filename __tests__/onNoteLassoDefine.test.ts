@@ -21,8 +21,8 @@ const counts = (overrides: Partial<Record<string, number>> = {}) => ({
 const buildDeps = (overrides: Partial<DefineDeps> = {}): DefineDeps => {
   const calls: string[] = [];
   const lookupResult: LookupResult = {
-    found: true,
-    entry: {word: 'hello', definition: 'a greeting'},
+    queriedFor: 'hello',
+    hits: [{source: 'WordNet', entry: {word: 'hello', definition: 'a greeting'}}],
   };
   const showResult = jest.fn();
 
@@ -95,13 +95,14 @@ describe('onNoteLassoDefine', () => {
       'recognizeElements',
       'setLassoBoxState',
     ]);
+    expect(deps.comm.setLassoBoxState).toHaveBeenCalledWith(2);
     expect(deps.comm.closePluginView).not.toHaveBeenCalled();
     expect(deps.lookup.lookup).toHaveBeenCalledWith('hello');
     // Tests run with the en locale, so the OCR-prefix label
     // resolves to "OCR: hello"; in other locales the prefix is
     // localised (e.g. zh_CN -> "识别: hello").
     expect(deps.showResult).toHaveBeenCalledWith(
-      expect.objectContaining({found: true}),
+      expect.objectContaining({hits: expect.arrayContaining([expect.anything()])}),
       expect.stringMatching(/^.+: hello$/),
     );
   });
@@ -154,7 +155,7 @@ describe('onNoteLassoDefine', () => {
     expect(deps.comm.recognizeElements).toHaveBeenCalledTimes(1);
   });
 
-  test('empty lasso (all stroke-family counts = 0): returns empty-lasso and still closes plugin view', async () => {
+  test('empty lasso (all stroke-family counts = 0): returns empty-lasso, releases lasso box, and closes plugin view', async () => {
     const deps = buildDeps({
       comm: {
         ...buildDeps().comm,
@@ -163,21 +164,26 @@ describe('onNoteLassoDefine', () => {
     });
     const outcome = await onNoteLassoDefine(deps);
     expect(outcome).toBe('empty-lasso');
+    expect(deps.comm.setLassoBoxState).toHaveBeenCalledWith(2);
     expect(deps.comm.closePluginView).toHaveBeenCalled();
     expect(deps.lookup.lookup).not.toHaveBeenCalled();
   });
 
-  test('reentrancy: when guard is busy, returns busy and closes view without running pipeline', async () => {
+  test('reentrancy: when guard is busy, returns busy and closes view without running pipeline or touching lasso state', async () => {
     expect(tryAcquire()).toBe(true);
     const deps = buildDeps();
     const outcome = await onNoteLassoDefine(deps);
     expect(outcome).toBe('busy');
     expect(deps.comm.closePluginView).toHaveBeenCalled();
+    // The first (in-flight) invocation owns the lasso state and will
+    // release it in its own finally. The reentrant tap must not
+    // race-release on top of that.
+    expect(deps.comm.setLassoBoxState).not.toHaveBeenCalled();
     expect(deps.comm.getLassoElementTypeCounts).not.toHaveBeenCalled();
     expect(deps.lookup.lookup).not.toHaveBeenCalled();
   });
 
-  test('returns recognize-empty when OCR yields an empty string', async () => {
+  test('returns recognize-empty when OCR yields an empty string and releases lasso box', async () => {
     const deps = buildDeps({
       comm: {
         ...buildDeps().comm,
@@ -188,10 +194,11 @@ describe('onNoteLassoDefine', () => {
     expect(outcome).toBe('recognize-empty');
     expect(deps.lookup.lookup).not.toHaveBeenCalled();
     expect(deps.showResult).not.toHaveBeenCalled();
+    expect(deps.comm.setLassoBoxState).toHaveBeenCalledWith(2);
     expect(deps.comm.closePluginView).toHaveBeenCalled();
   });
 
-  test('returns recognize-empty when OCR yields whitespace only ("  \\n  ")', async () => {
+  test('returns recognize-empty when OCR yields whitespace only ("  \\n  ") and releases lasso box', async () => {
     // Regression: previously `.length === 0` only caught the literal
     // empty string and let " \n " through to lookup, which trimmed
     // it internally and surfaced a misleading "not found" popup.
@@ -205,6 +212,7 @@ describe('onNoteLassoDefine', () => {
     expect(outcome).toBe('recognize-empty');
     expect(deps.lookup.lookup).not.toHaveBeenCalled();
     expect(deps.showResult).not.toHaveBeenCalled();
+    expect(deps.comm.setLassoBoxState).toHaveBeenCalledWith(2);
     expect(deps.comm.closePluginView).toHaveBeenCalled();
   });
 
@@ -225,7 +233,7 @@ describe('onNoteLassoDefine', () => {
     );
   });
 
-  test('reentrancy flag is released even on pipeline crash', async () => {
+  test('reentrancy flag is released even on pipeline crash, and lasso box is released', async () => {
     const deps = buildDeps({
       comm: {
         ...buildDeps().comm,
@@ -236,9 +244,38 @@ describe('onNoteLassoDefine', () => {
     });
     const outcome = await onNoteLassoDefine(deps);
     expect(outcome).toBe('failed');
+    expect(deps.comm.setLassoBoxState).toHaveBeenCalledWith(2);
     expect(deps.comm.closePluginView).toHaveBeenCalled();
 
     const next = buildDeps();
     expect(await onNoteLassoDefine(next)).toBe('ok');
+  });
+
+  test('lasso box release tolerates setLassoBoxState throwing — outcome is preserved and view still closes', async () => {
+    const deps = buildDeps({
+      comm: {
+        ...buildDeps().comm,
+        recognizeElements: jest.fn(async () => ok('')),
+        setLassoBoxState: jest.fn(async () => {
+          throw new Error('host bridge gone');
+        }),
+      } as DefineDeps['comm'],
+    });
+    const outcome = await onNoteLassoDefine(deps);
+    expect(outcome).toBe('recognize-empty');
+    expect(deps.comm.setLassoBoxState).toHaveBeenCalledWith(2);
+    expect(deps.comm.closePluginView).toHaveBeenCalled();
+  });
+
+  test('lasso box release tolerates setLassoBoxState returning success=false', async () => {
+    const deps = buildDeps({
+      comm: {
+        ...buildDeps().comm,
+        setLassoBoxState: jest.fn(async () => fail('already cleared')),
+      } as DefineDeps['comm'],
+    });
+    const outcome = await onNoteLassoDefine(deps);
+    expect(outcome).toBe('ok');
+    expect(deps.comm.setLassoBoxState).toHaveBeenCalledWith(2);
   });
 });

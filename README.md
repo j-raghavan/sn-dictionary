@@ -19,7 +19,7 @@ A Supernote plugin that adds offline English-word lookup to handwritten notes an
 - **Case- and whitespace-insensitive.** "Anatomy", "anatomy", and "  ANATOMY  " all hit the same entry.
 - **Bring-your-own dictionary** *(future)* — the architecture splits cleanly into a base `.snplg` and a user-bundled `SnDict_Custom.snplg` produced by an in-browser converter (Prong B). Same plugin code, different content, same popup. Custom dict precedes base on lookup so user terms shadow generic ones.
 
-## Demo 
+## Demo
 
 ### v1.0.1
 
@@ -59,9 +59,197 @@ By design, **the plugin is pure read** — it never modifies the page, never del
 
 The first lookup after the plugin process spins up takes ~30–60 seconds (Hermes/JSC parses the bundle, decodes the base64, gunzips the StarDict, builds the index). After that, every subsequent lookup is instant for the rest of the session — the index lives in JS heap memory until the plugin host is killed.
 
+## Adding your own dictionary
+
+The plugin scans `MyStyle/SnDict/` on every launch and registers any dictionaries it finds there. User dicts appear as separate sections in the popup, ahead of the bundled WordNet base — so a domain glossary like "medical" supplements the general definition rather than replacing it.
+
+### Layout
+
+Two layouts are accepted, mix freely:
+
+```
+MyStyle/
+└── SnDict/
+    ├── medical.csv                  ← flat: a single CSV at the root IS a complete dict
+    ├── japanese.json                ← flat: a single JSON at the root IS a complete dict
+    ├── medical-en/                  ← organised: subfolder per dict (REQUIRED for StarDict)
+    │   ├── meta.json                  (optional)
+    │   ├── medical.ifo
+    │   ├── medical.idx
+    │   └── medical.dict.dz
+    └── my-glossary/                 ← organised: subfolder works for any format
+        └── words.csv
+```
+
+**Flat layout** is the path of least resistance for a single CSV or JSON file — the filename (without extension) becomes the popup section label. Drop `medical.csv` directly into `MyStyle/SnDict/`, done.
+
+**Organised layout** (one subfolder per dict) is required for StarDict (it's three files that need to live together) and lets you supply a friendlier display name via an optional `meta.json` inside the folder:
+
+```json
+{ "name": "Medical en→en" }
+```
+
+Without `meta.json`, the display name falls back to the folder name.
+
+### Supported formats
+
+| Format | Files | Notes |
+|---|---|---|
+| **StarDict** | `*.ifo` + `*.idx` + (`*.dict.dz` or `*.dict`) | The native format. Free dictionaries available at [FreeDict](https://freedict.org) and [dict.org](http://dict.org). |
+| **CSV** | one `*.csv` | Headword in column 0, definition in column 1, by default. Quoted fields with embedded commas / newlines / escaped quotes are handled per RFC 4180. UTF-8 BOM is tolerated. |
+| **JSON** | one `*.json` | Two shapes accepted: `{"word": "definition", ...}` or `[{"word": "...", "definition": "..."}, ...]`. Field aliases recognised: `headword`/`term`/`key` and `def`/`meaning`/`value`. |
+| MDX | *(deferred)* | Not yet supported. Folder is logged and skipped — convert to StarDict via [`mdict-utils`](https://pypi.org/project/mdict-utils/) or [`pyglossary`](https://github.com/ilius/pyglossary) until then. |
+
+A folder with no recognised files, a partial StarDict triple, or multiple format markers is logged and skipped — discovery is fault-isolated, so one bad folder doesn't break the rest.
+
+#### What CSV and JSON should look like
+
+The simplest CSV — headword in column 0, definition in column 1, no header row:
+
+```csv
+braise,a slow cooking method that combines searing with simmering in a covered pot
+deglaze,"to add liquid to a hot pan to dissolve and lift caramelised browned bits stuck to the bottom"
+emulsify,"to combine two liquids that don't normally mix, such as oil and vinegar, into a stable suspension"
+julienne,to cut food into long thin strips of roughly equal size
+```
+
+Quote a field if its content contains commas, newlines, or `"` (double quotes inside a quoted field are escaped as `""`). UTF-8 BOM at the file start is tolerated. The lookup is case-insensitive — `Braise`, `BRAISE`, and `braise` all hit the same entry.
+
+JSON, "object-map" shape — the simplest case:
+
+```json
+{
+  "EPD": "Electrophoretic Paper Display — the e-ink panel technology used in Supernote devices.",
+  "lasso": "A freeform selection tool: enclose strokes or elements with a hand-drawn loop to act on them as a group.",
+  "trail": "A freshly-drawn ink stroke that has not yet been linked to any recognition result."
+}
+```
+
+JSON, "array of entries" shape — useful when you want to keep extra fields per entry without breaking lookup:
+
+```json
+[
+  { "word": "EPD",   "definition": "Electrophoretic Paper Display — the e-ink panel technology used in Supernote devices." },
+  { "word": "lasso", "definition": "A freeform selection tool: enclose strokes or elements with a hand-drawn loop." }
+]
+```
+
+Recognised aliases for the array shape: the headword side accepts `word` / `headword` / `term` / `key`; the definition side accepts `definition` / `def` / `meaning` / `value`. Entries that don't match any shape (missing fields, wrong types, scalar rows) are skipped silently — your other entries still load.
+
+Concrete copy-pasteable starting points live at [`assets/sample-dicts/`](assets/sample-dicts/) — one CSV, one JSON, and one StarDict folder.
+
+### Where to find dictionaries
+
+Most users won't author a StarDict from scratch — there are huge corpora of pre-built dicts in the wild. Three sources cover the long tail:
+
+- **[FreeDict](https://freedict.org/)** — open-source bilingual dictionaries, native StarDict format, MIT/CC-licensed. Direct downloads at [freedict.org/freedict-database.json](https://freedict.org/freedict-database.json) (machine-readable) or browse the per-language pages. Covers German, French, Italian, Spanish, Portuguese, Dutch, Russian, Japanese, Czech, Polish, Hungarian, Swedish, Turkish, Arabic, Hebrew, and more.
+- **[Wiktionary-Dictionaries (Vuizur)](https://github.com/Vuizur/Wiktionary-Dictionaries)** — actively-maintained Wiktionary dumps converted to StarDict, ~100+ language pairs including monolingual entries. CC-BY-SA. The most comprehensive single source for non-English content.
+- **[huzheng.org](http://download.huzheng.org/)** — the historical StarDict archive. Heavy on Chinese and Japanese options; mixed licensing (check each entry). Site is occasionally slow or down — Wiktionary-Dictionaries is the modern alternative for most languages.
+
+#### Quick pointers per language
+
+| Language | Reasonable starting points |
+|---|---|
+| **Chinese (zh)** | CC-CEDICT (Chinese ↔ English) via [Vuizur](https://github.com/Vuizur/Wiktionary-Dictionaries) or huzheng. For monolingual zh, Wiktionary zh on Vuizur. |
+| **Japanese (ja)** | JMdict / EDICT (Japanese ↔ English) on huzheng or Vuizur. KANJIDIC for kanji-specific lookups. |
+| **Italian (it)** | FreeDict `eng-ita` and `ita-eng` for bilingual; Wiktionary it on Vuizur for monolingual definitions. |
+| **Dutch (nl)** | FreeDict `eng-nld` and `nld-eng`; Wiktionary nl on Vuizur. |
+| **German (de)** | FreeDict `eng-deu` and `deu-eng` for bilingual; Wiktionary de on Vuizur for monolingual. |
+| **French (fr)** | FreeDict `eng-fra` and `fra-eng`; Wiktionary fr on Vuizur. |
+| **Spanish (es)** | FreeDict `eng-spa` and `spa-eng`; Wiktionary es on Vuizur. |
+| **Russian (ru)** | FreeDict `eng-rus` and `rus-eng`; Wiktionary ru on Vuizur. |
+| **Korean (ko)** | Wiktionary ko on Vuizur. |
+| **Polish, Czech, Hungarian, Swedish, Portuguese, Turkish, Arabic, Hebrew, …** | FreeDict has bilingual pairs against English; Wiktionary-Dictionaries has monolingual + many cross-language pairs. |
+
+#### A few notes worth knowing before you grab one
+
+- **Most downloads ship as `.tar.bz2` or `.zip`.** Extract first, then drop the resulting folder (or its files) into `MyStyle/SnDict/`. A typical extracted layout matches the organised layout described above — `.ifo` + `.idx` + `.dict.dz` together.
+- **Licensing.** For personal use on your own device, every source above is fine. If you plan to redistribute (e.g., bundle into a custom `.snplg`), check the per-dict license — FreeDict is permissive, Wiktionary-derived dicts are CC-BY-SA, huzheng entries vary.
+- **Morphology / inflected forms.** Highly inflected languages (German declensions, Italian conjugations) are only as good as the dict's headword coverage. Wiktionary-derived dicts generally include inflected forms; FreeDict's coverage varies. If lassoing `Häuser` returns "no entry," try lassoing the lemma `Haus` to confirm the dict simply lacks form folding rather than your sideloading being broken.
+- **If you have a dict in a different format** (MDX, EPUB-based, SDictionary, Babylon, …), [`pyglossary`](https://github.com/ilius/pyglossary) is the gold-standard CLI converter — it reads ~50 formats and writes StarDict. One-line install via `pip install pyglossary`, then `pyglossary --read-format=mdx --write-format=stardict input.mdx`.
+
+### File-size limits
+
+| Format | Hard cap | Notes |
+|---|---|---|
+| **CSV** | **10 MB** | Refused with a `[WARN]` log; the source returns "not found" for every lookup. |
+| **JSON** | **10 MB** | Same as CSV. |
+| **StarDict** | **no explicit cap** | Bound by device RAM. The bundled WordNet at ~16 MB works fine; 50 MB+ dicts (e.g. JMdict, Wiktionary-derived) should also work but are untested on-device — file an issue if you hit a hang. |
+| MDX | n/a — deferred | Format not yet supported. |
+
+The cap is per file, so you can have many dictionaries side by side without their sizes adding up against any combined limit.
+
+### How long before a new dictionary is ready?
+
+After you drop a dict into `MyStyle/SnDict/` and restart the plugin: discovery itself completes in **under a second** for any number of dicts. The visible wait is on the *first lookup* that touches the new dict — that's when the file gets read and parsed into memory. Every subsequent lookup against the same dict in the same session is instant (the index is a hash map living in JS heap).
+
+Rough timings, anchored on the one measured number we have (`fetch(file://...)` bridge throughput ≈ 0.85 MB/s on a Nomad) and the existing WordNet baseline of ~30–60 s for the bundled 16 MB dictionary. **These are extrapolated, not benchmarked across the whole grid** — file an issue if your real-world numbers diverge meaningfully:
+
+| File size | StarDict (first lookup) | CSV / JSON (first lookup) |
+|---|---|---|
+| **100 KB** | ~1 s | <1 s |
+| **500 KB** | ~2 s | ~1 s |
+| **1 MB** | ~3–5 s | ~2 s |
+| **5 MB** | ~10–20 s | ~8–15 s |
+| **10 MB** | ~20–40 s | ~15–25 s *(at the cap)* |
+| **16 MB** (= bundled WordNet) | ~30–60 s *(measured baseline)* | — |
+| **50 MB** | ~90–180 s *(extrapolated)* | — |
+
+Notes:
+
+- The wide ranges reflect device variance (Nomad vs A6X vs Manta — different CPU and RAM) and content variance (a CSV with millions of short entries parses faster per MB than one with fewer-but-longer entries).
+- Discovery is *non-blocking* — the **Lookup** button is enabled immediately after plugin start. If you tap it before the user dict has finished its first parse, that lookup hits the base WordNet only; the next lookup picks up the user dict once parsed.
+- For dicts at the upper end (StarDict 30–60 MB+), expect the first lookup of the session to take a noticeable amount of time. Plan to do that lookup once and then enjoy fast lookups for the rest of the session.
+
+### Verifying it works (with the bundled sample)
+
+A small, hand-curated tech-jargon dictionary lives at [`assets/sample-dicts/sn-tech-jargon/`](assets/sample-dicts/sn-tech-jargon/). Use it to verify your device picks up sideloaded dicts before you commit to producing your own.
+
+**1. Build and install the plugin** as described in [Building](#building) and [Installing on the device](#installing-on-the-device). User-dict discovery is part of v1.x — confirm you're running a build from this branch (or any commit including this section's history), not the published v1.0.1.
+
+**2. Transfer the sample folder to your Supernote.** Pick whichever of these you already use:
+
+- **USB:** plug the device in, it mounts as a USB drive. Navigate to `MyStyle/`, create a folder named `SnDict` if it doesn't exist, and copy `assets/sample-dicts/sn-tech-jargon/` into it. Eject the device.
+- **WebDAV:** in the Supernote settings, enable WebDAV and note the IP/port. From a desktop, connect (Finder on macOS via "Connect to Server", Windows via "Map Network Drive", Linux via `davfs2`), navigate to `MyStyle/SnDict/` (create `SnDict` if absent), and drop the folder in.
+- **Supernote Cloud / sync:** put the folder under `MyStyle/SnDict/` in your synced workspace and let the device pull it down.
+
+The end-state on the device should be:
+```
+MyStyle/SnDict/sn-tech-jargon/
+├── meta.json
+├── sn-tech-jargon.ifo
+├── sn-tech-jargon.idx
+└── sn-tech-jargon.dict.dz
+```
+
+**3. Re-trigger plugin discovery.** Discovery runs once per plugin process at startup. The simplest way to force a fresh run is to leave-and-reenter a note: navigate out of the note app entirely (back to the launcher), then open a note again. If you've just installed the plugin in the same session, it'll already be a fresh process.
+
+**4. Test a lookup against an entry only the sample dict has.** The sample contains ~30 tech-jargon terms that WordNet does *not* — pick any of these, write or print it on a note page, lasso it, and tap **Lookup**:
+
+- `API`, `REST`, `CRUD`, `GraphQL`, `WebSocket`, `idempotent`, `monorepo`, `microservice`
+- `embedding`, `tokenizer`, `inference`, `finetune`, `RAG`
+- `observability`, `CDN`, `TTL`, `digitizer`, `EPD`, `ghosting`
+- `middleware`, `shim`, `polyfill`, `webhook`, `pagination`, `postmortem`
+- `YAGNI`, `bikeshedding`, `yakshave`
+
+The popup should show a single **Tech Jargon** section with the entry's definition. Because the bundled WordNet doesn't have these, only one section appears (no source-badge clutter).
+
+**5. Test multi-source rendering.** Look up a word that exists in *both* dicts — for example, `embedding` (sample) and a common English word like `language` (WordNet). Lasso a word that hits both: try the headword `inference` (in the sample) — WordNet also defines "inference". You should see two sections in the popup, each with a bordered source badge: `Tech Jargon` first, then `WordNet` below.
+
+**6. Verify via logcat (optional).** Capture a logcat from your device after plugin start. Look for lines like:
+
+```
+ReactNativeJS: [discovery] discovered 1 user dict(s): [Tech Jargon]
+ReactNativeJS: [startup] registry now has 2 source(s): [Tech Jargon, WordNet]
+```
+
+If you see `[discovery] root "/storage/emulated/0/MyStyle/SnDict" not listable …` the folder isn't on the device yet — re-check step 2. If you see `folder "sn-tech-jargon" has no recognised dict files — skipped` the file names didn't transfer cleanly (some sync tools rename or strip extensions); re-copy the originals from this repo.
+
+To regenerate the sample after editing entries in `scripts/buildSampleDicts.mjs`: `npm run build:sample-dicts`.
+
 ## Limits
 
-- **English only** for the bundled dictionary content. Other languages are explicitly out of scope for the base — see *Bring-your-own dictionary* above for the planned converter that lets users supply any StarDict / MDX / CSV / JSON pack.
+- **English only** for the bundled dictionary content. Other languages are out of scope for the base; see *Adding your own dictionary* above for sideloading user dicts in StarDict / CSV / JSON formats.
 - **Tap-on-existing-word** (no lasso, just tap a written word) is **not currently supported by the SDK** — there is no spatial-query API to ask "what stroke is under this point?". A pen/touch event API is on Dunn-sn's roadmap; tap-to-define is tracked for v1.x.
 - **`PEN_UP` auto-define** — explicitly *not* a feature. The "OCR every stroke as you write" UX is intrusive without a clean word-boundary signal; lookups are user-initiated only.
 - **Bundle size:** ~17MB (~16MB of base64-encoded WordNet plus the JS bundle). The Supernote firmware confirmed no `.snplg` size limit, but the bundle parse on first plugin-host spin-up is the main rough edge today (~30–60s on a Nomad). Once parsed, lookups are instant.

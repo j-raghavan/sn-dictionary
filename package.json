@@ -12,7 +12,8 @@
     "coverage": "jest --coverage",
     "fetch:dict": "bash scripts/fetchBaseDict.sh",
     "build:dict": "node scripts/buildBaseDict.mjs",
-    "prepare:dict": "npm run --silent fetch:dict && npm run --silent build:dict"
+    "prepare:dict": "npm run --silent fetch:dict && npm run --silent build:dict",
+    "build:sample-dicts": "node scripts/buildSampleDicts.mjs"
   },
   "dependencies": {
     "pako": "^2.1.0",
