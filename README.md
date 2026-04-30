@@ -102,9 +102,51 @@ A folder with no recognised files, a partial StarDict triple, or multiple format
 
 CSV and JSON dictionaries are capped at 10 MB each; bigger files are refused with a logged warning. StarDict has no explicit cap (the format streams via index + on-demand block decompression). The `fetch(file://...)` bridge throughput is around 0.85 MB/s — a 10 MB CSV loads in ~12 s on first lookup, then stays in memory for the session.
 
-### Try the bundled sample
+### Verifying it works (with the bundled sample)
 
-A small, hand-curated tech-jargon dictionary lives at [`assets/sample-dicts/sn-tech-jargon/`](assets/sample-dicts/sn-tech-jargon/). Copy that folder into `MyStyle/SnDict/` on your device, restart the plugin, and you'll see a `Tech Jargon` section appear in the popup whenever a lassoed word matches one of the ~30 entries. To regenerate the sample after editing entries: `npm run build:sample-dicts`.
+A small, hand-curated tech-jargon dictionary lives at [`assets/sample-dicts/sn-tech-jargon/`](assets/sample-dicts/sn-tech-jargon/). Use it to verify your device picks up sideloaded dicts before you commit to producing your own.
+
+**1. Build and install the plugin** as described in [Building](#building) and [Installing on the device](#installing-on-the-device). User-dict discovery is part of v1.x — confirm you're running a build from this branch (or any commit including this section's history), not the published v1.0.1.
+
+**2. Transfer the sample folder to your Supernote.** Pick whichever of these you already use:
+
+- **USB:** plug the device in, it mounts as a USB drive. Navigate to `MyStyle/`, create a folder named `SnDict` if it doesn't exist, and copy `assets/sample-dicts/sn-tech-jargon/` into it. Eject the device.
+- **WebDAV:** in the Supernote settings, enable WebDAV and note the IP/port. From a desktop, connect (Finder on macOS via "Connect to Server", Windows via "Map Network Drive", Linux via `davfs2`), navigate to `MyStyle/SnDict/` (create `SnDict` if absent), and drop the folder in.
+- **Supernote Cloud / sync:** put the folder under `MyStyle/SnDict/` in your synced workspace and let the device pull it down.
+
+The end-state on the device should be:
+```
+MyStyle/SnDict/sn-tech-jargon/
+├── meta.json
+├── sn-tech-jargon.ifo
+├── sn-tech-jargon.idx
+└── sn-tech-jargon.dict.dz
+```
+
+**3. Re-trigger plugin discovery.** Discovery runs once per plugin process at startup. The simplest way to force a fresh run is to leave-and-reenter a note: navigate out of the note app entirely (back to the launcher), then open a note again. If you've just installed the plugin in the same session, it'll already be a fresh process.
+
+**4. Test a lookup against an entry only the sample dict has.** The sample contains ~30 tech-jargon terms that WordNet does *not* — pick any of these, write or print it on a note page, lasso it, and tap **Lookup**:
+
+- `API`, `REST`, `CRUD`, `GraphQL`, `WebSocket`, `idempotent`, `monorepo`, `microservice`
+- `embedding`, `tokenizer`, `inference`, `finetune`, `RAG`
+- `observability`, `CDN`, `TTL`, `digitizer`, `EPD`, `ghosting`
+- `middleware`, `shim`, `polyfill`, `webhook`, `pagination`, `postmortem`
+- `YAGNI`, `bikeshedding`, `yakshave`
+
+The popup should show a single **Tech Jargon** section with the entry's definition. Because the bundled WordNet doesn't have these, only one section appears (no source-badge clutter).
+
+**5. Test multi-source rendering.** Look up a word that exists in *both* dicts — for example, `embedding` (sample) and a common English word like `language` (WordNet). Lasso a word that hits both: try the headword `inference` (in the sample) — WordNet also defines "inference". You should see two sections in the popup, each with a bordered source badge: `Tech Jargon` first, then `WordNet` below.
+
+**6. Verify via logcat (optional).** Capture a logcat from your device after plugin start. Look for lines like:
+
+```
+ReactNativeJS: [discovery] discovered 1 user dict(s): [Tech Jargon]
+ReactNativeJS: [startup] registry now has 2 source(s): [Tech Jargon, WordNet]
+```
+
+If you see `[discovery] root "/storage/emulated/0/MyStyle/SnDict" not listable …` the folder isn't on the device yet — re-check step 2. If you see `folder "sn-tech-jargon" has no recognised dict files — skipped` the file names didn't transfer cleanly (some sync tools rename or strip extensions); re-copy the originals from this repo.
+
+To regenerate the sample after editing entries in `scripts/buildSampleDicts.mjs`: `npm run build:sample-dicts`.
 
 ## Limits
 
