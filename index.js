@@ -2,6 +2,7 @@ import {AppRegistry} from 'react-native';
 import App from './App';
 import {name as appName} from './app.json';
 import {
+  FileUtils,
   PluginCommAPI,
   PluginDocAPI,
   PluginFileAPI,
@@ -13,6 +14,7 @@ import {onNoteLassoDefine} from './src/handlers/onNoteLassoDefine';
 import {onDocSelectDefine} from './src/handlers/onDocSelectDefine';
 import {createStardictLookup} from './src/core/dict/stardictLookup';
 import {createMultiDictLookup} from './src/core/dict/multiDictLookup';
+import {discoverUserDicts} from './src/core/dict/userDictDiscovery';
 import {loadBaseDictFromGenerated} from './src/core/dict/data/baseDictData';
 import {showDefinition} from './src/ui/popupController';
 
@@ -39,17 +41,43 @@ const baseSource = createStardictLookup({
   logger,
 });
 
-const lookup = createMultiDictLookup([baseSource], logger);
+// Mutable source list, captured by closure inside createMultiDictLookup
+// so user dicts discovered at runtime are picked up by lookups without
+// rebuilding the registry. Order: discovered user dicts first (they're
+// shown above the base in the popup section list), base dict last.
+const sources = [baseSource];
 
-// Eager-load the dict at plugin start so any build error is visible
-// immediately in logcat rather than at first lookup. The dict is
-// memoised inside the loader, so this doesn't add per-lookup cost.
+const lookup = createMultiDictLookup(sources, logger);
+
+// Eager-load the base dict at plugin start so any build error is
+// visible immediately in logcat rather than at first lookup. The
+// dict is memoised inside the loader, so this doesn't add per-lookup
+// cost.
 lookup
   .lookup('__sndict_init__')
   .then(() =>
     logger.log('[stardict] base dict loaded ok (init probe complete)'),
   )
   .catch(e => logger.error(`[stardict] init probe threw: ${e.message}`));
+
+// Discover sideloaded user dicts under /storage/emulated/0/MyStyle/SnDict.
+// Fire-and-forget at startup: the Lookup button is always enabled
+// (users can hit the base dict immediately) and discovery prepends
+// any found dicts into the registry as they become available. Each
+// individual user dict still parses lazily on its first lookup.
+discoverUserDicts({fileUtils: FileUtils, logger})
+  .then(userDicts => {
+    if (userDicts.length === 0) {
+      return;
+    }
+    sources.unshift(...userDicts);
+    logger.log(
+      `[startup] registry now has ${sources.length} source(s): [${sources
+        .map(s => s.name)
+        .join(', ')}]`,
+    );
+  })
+  .catch(e => logger.error(`[discovery] dispatch crashed: ${e.message}`));
 
 const noteHandlerDeps = {
   comm: PluginCommAPI,
