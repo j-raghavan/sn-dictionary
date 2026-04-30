@@ -63,29 +63,33 @@ The first lookup after the plugin process spins up takes ~30–60 seconds (Herme
 
 The plugin scans `/storage/emulated/0/MyStyle/SnDict/` on every launch and registers any dictionaries it finds there. User dicts appear as separate sections in the popup, ahead of the bundled WordNet base — so a domain glossary like "medical" supplements the general definition rather than replacing it.
 
-### Folder layout
+### Layout
 
-One dictionary per subfolder:
+Two layouts are accepted, mix freely:
 
 ```
 MyStyle/
 └── SnDict/
-    ├── medical-en/
-    │   ├── meta.json                    (optional)
+    ├── medical.csv                  ← flat: a single CSV at the root IS a complete dict
+    ├── japanese.json                ← flat: a single JSON at the root IS a complete dict
+    ├── medical-en/                  ← organised: subfolder per dict (REQUIRED for StarDict)
+    │   ├── meta.json                  (optional)
     │   ├── medical.ifo
     │   ├── medical.idx
     │   └── medical.dict.dz
-    ├── my-glossary/
-    │   └── words.csv
-    └── japanese-en/
-        └── data.json
+    └── my-glossary/                 ← organised: subfolder works for any format
+        └── words.csv
 ```
 
-The folder name is the section label in the popup unless `meta.json` overrides it:
+**Flat layout** is the path of least resistance for a single CSV or JSON file — the filename (without extension) becomes the popup section label. Drop `medical.csv` directly into `MyStyle/SnDict/`, done.
+
+**Organised layout** (one subfolder per dict) is required for StarDict (it's three files that need to live together) and lets you supply a friendlier display name via an optional `meta.json` inside the folder:
 
 ```json
 { "name": "Medical en→en" }
 ```
+
+Without `meta.json`, the display name falls back to the folder name.
 
 ### Supported formats
 

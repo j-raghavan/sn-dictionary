@@ -240,6 +240,62 @@ const buildSourceForFolder = async (
   });
 };
 
+// Strip the trailing extension to derive a display name from a flat
+// file: "medical.csv" -> "medical".
+const nameFromFile = (filePath: string): string => {
+  const base = basenameOf(filePath);
+  const dot = base.lastIndexOf('.');
+  return dot < 0 ? base : base.slice(0, dot);
+};
+
+// Build a source for a single dict file living directly in the root
+// (no surrounding folder). StarDict is multi-file and never qualifies
+// here — it must be in a subfolder. CSV and JSON are single-file and
+// stand on their own. MDX is logged as deferred.
+const buildSourceForRootFile = (
+  file: FileEntry,
+  fetchFn: typeof fetch,
+  logger: Logger,
+): DictSource | null => {
+  const ext = extOf(file.path);
+  const baseName = basenameOf(file.path);
+  const displayName = nameFromFile(file.path);
+  if (ext === '.csv') {
+    return createCsvDictSource({
+      name: displayName,
+      loadBytes: () => fetchAsArrayBuffer(file.path, fetchFn),
+      logger,
+    });
+  }
+  if (ext === '.json' && baseName !== 'meta.json') {
+    return createJsonDictSource({
+      name: displayName,
+      loadBytes: () => fetchAsArrayBuffer(file.path, fetchFn),
+      logger,
+    });
+  }
+  if (ext === '.mdx') {
+    logger.warn(
+      `${TAG} root file "${baseName}" is MDX which is not yet supported — skipped`,
+    );
+    return null;
+  }
+  if (
+    ext === '.ifo' ||
+    ext === '.idx' ||
+    ext === '.dict.dz' ||
+    ext === '.dict'
+  ) {
+    logger.warn(
+      `${TAG} root file "${baseName}" looks like StarDict — put it in a subfolder with its sibling files`,
+    );
+    return null;
+  }
+  // Anything else (README.md, .DS_Store, meta.json at root, …) is
+  // silently ignored.
+  return null;
+};
+
 export const discoverUserDicts = async (
   deps: DiscoveryDeps,
 ): Promise<DictSource[]> => {
@@ -266,10 +322,7 @@ export const discoverUserDicts = async (
   }
 
   const folders = entries.filter(e => e.type === 0);
-  if (folders.length === 0) {
-    logger.log(`${TAG} root "${root}" has files but no subfolders — no user dicts`);
-    return [];
-  }
+  const rootFiles = entries.filter(e => e.type === 1);
 
   if (typeof fetchFn !== 'function') {
     logger.warn(`${TAG} no fetch implementation — cannot read user dict files`);
@@ -277,6 +330,26 @@ export const discoverUserDicts = async (
   }
 
   const sources: DictSource[] = [];
+
+  // Root-level files (flat layout): each .csv / .json IS a complete
+  // dict on its own — no subfolder wrapper needed. StarDict triples
+  // can't live here; they require a subfolder.
+  for (const file of rootFiles) {
+    try {
+      const source = buildSourceForRootFile(file, fetchFn, logger);
+      if (source !== null) {
+        sources.push(source);
+      }
+    } catch (e) {
+      logger.warn(
+        `${TAG} root file "${basenameOf(file.path)}" build threw: ${(e as Error).message} — skipped`,
+      );
+    }
+  }
+
+  // Subfolders (organised layout): each subfolder is one dict, in any
+  // supported format. meta.json inside the folder may override the
+  // display name.
   for (const folder of folders) {
     let folderFiles: FileEntry[] | null | undefined;
     try {

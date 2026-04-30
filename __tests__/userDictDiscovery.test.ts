@@ -123,10 +123,83 @@ describe('discoverUserDicts', () => {
     expect(await discoverUserDicts(deps)).toEqual([]);
   });
 
-  test('returns [] when the root has only files, no subfolders', async () => {
+  test('returns [] when the root has only unrecognised files at root', async () => {
     const deps = baseDeps({
       [ROOT]: 'dir',
       [`${ROOT}/loose-file.txt`]: enc('hi'),
+    });
+    expect(await discoverUserDicts(deps)).toEqual([]);
+  });
+
+  test('discovers a single CSV directly at the root (no subfolder needed)', async () => {
+    const deps = baseDeps({
+      [`${ROOT}/medical.csv`]: enc('apple,fruit\nbanana,yellow\n'),
+    });
+    const sources = await discoverUserDicts(deps);
+    expect(sources.length).toBe(1);
+    expect(sources[0].name).toBe('medical');
+    expect((await sources[0].lookup('apple'))?.definition).toBe('fruit');
+  });
+
+  test('discovers a single JSON directly at the root', async () => {
+    const deps = baseDeps({
+      [`${ROOT}/glossary.json`]: enc(JSON.stringify({hello: 'a greeting'})),
+    });
+    const sources = await discoverUserDicts(deps);
+    expect(sources.length).toBe(1);
+    expect(sources[0].name).toBe('glossary');
+    expect((await sources[0].lookup('hello'))?.definition).toBe('a greeting');
+  });
+
+  test('mixes flat-file dicts at root with subfolder dicts', async () => {
+    const triple = stardictBytes({apple: 'fruit (sd)'});
+    const deps = baseDeps({
+      [`${ROOT}/medical.csv`]: enc('apple,fruit (csv)\n'),
+      [`${ROOT}/japanese.json`]: enc(JSON.stringify({apple: 'fruit (json)'})),
+      [`${ROOT}/wordnet/wn.ifo`]: triple.ifo,
+      [`${ROOT}/wordnet/wn.idx`]: triple.idx,
+      [`${ROOT}/wordnet/wn.dict.dz`]: triple.dict,
+    });
+    const sources = await discoverUserDicts(deps);
+    // Sorted alphabetically by display name across both layouts.
+    expect(sources.map(s => s.name)).toEqual([
+      'japanese',
+      'medical',
+      'wordnet',
+    ]);
+  });
+
+  test('logs and skips a root MDX file as deferred', async () => {
+    const deps = baseDeps({
+      [`${ROOT}/dict.mdx`]: enc('binary'),
+    });
+    expect(await discoverUserDicts(deps)).toEqual([]);
+    expect(
+      (deps.logger?.warn as jest.Mock).mock.calls.flat().join(' '),
+    ).toMatch(/root file "dict\.mdx" is MDX which is not yet supported/);
+  });
+
+  test('logs a hint when StarDict files are dropped at root level (need a subfolder)', async () => {
+    const deps = baseDeps({
+      [`${ROOT}/loose.ifo`]: enc('bookname=test\n'),
+    });
+    expect(await discoverUserDicts(deps)).toEqual([]);
+    expect(
+      (deps.logger?.warn as jest.Mock).mock.calls.flat().join(' '),
+    ).toMatch(/looks like StarDict — put it in a subfolder/);
+  });
+
+  test('ignores meta.json at the root (only meaningful inside a folder)', async () => {
+    const deps = baseDeps({
+      [`${ROOT}/meta.json`]: enc(JSON.stringify({name: 'Stray'})),
+    });
+    expect(await discoverUserDicts(deps)).toEqual([]);
+  });
+
+  test('ignores unrecognised root files silently (e.g. README.md)', async () => {
+    const deps = baseDeps({
+      [`${ROOT}/README.md`]: enc('# notes'),
+      [`${ROOT}/.DS_Store`]: enc('garbage'),
     });
     expect(await discoverUserDicts(deps)).toEqual([]);
   });
