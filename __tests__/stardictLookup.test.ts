@@ -1,7 +1,7 @@
 import {createStardictLookup} from '../src/core/dict/stardictLookup';
 import {buildSyntheticStarDict} from './_helpers/buildSyntheticStarDict';
 
-const baseBytes = () =>
+const baseBytes = async () =>
   buildSyntheticStarDict({
     apple: 'a fruit (base)',
     banana: 'a yellow fruit (base)',
@@ -41,7 +41,7 @@ describe('createStardictLookup (DictSource)', () => {
   test('returns null when the loader returns null (no-dict slot)', async () => {
     const source = createStardictLookup({
       name: 'WordNet',
-      loadBase: () => null,
+      loadBase: async () => null,
     });
     expect(await source.lookup('apple')).toBeNull();
   });
@@ -50,7 +50,7 @@ describe('createStardictLookup (DictSource)', () => {
     const warn = jest.fn();
     const source = createStardictLookup({
       name: 'WordNet',
-      loadBase: () => {
+      loadBase: async () => {
         throw new Error('boom');
       },
       logger: {warn},
@@ -65,7 +65,7 @@ describe('createStardictLookup (DictSource)', () => {
     const warn = jest.fn();
     const source = createStardictLookup({
       name: 'WordNet',
-      loadBase: () => ({
+      loadBase: async () => ({
         ifo: new TextEncoder().encode('bookname=Broken\n'), // missing wordcount
         idx: new Uint8Array(0),
         dict: new Uint8Array(0),
@@ -81,7 +81,7 @@ describe('createStardictLookup (DictSource)', () => {
   test('survives a load failure silently when no logger is provided', async () => {
     const source = createStardictLookup({
       name: 'WordNet',
-      loadBase: () => {
+      loadBase: async () => {
         throw new Error('silent fail');
       },
     });
@@ -90,7 +90,7 @@ describe('createStardictLookup (DictSource)', () => {
 
   test('retries the loader on next lookup if the first attempt threw', async () => {
     let calls = 0;
-    const flaky = jest.fn(() => {
+    const flaky = jest.fn(async () => {
       calls++;
       if (calls === 1) {
         throw new Error('flaky-once');
@@ -110,7 +110,7 @@ describe('createStardictLookup (DictSource)', () => {
 
   test('retries when buildDict throws on the first attempt', async () => {
     let calls = 0;
-    const flaky = jest.fn(() => {
+    const flaky = jest.fn(async () => {
       calls++;
       if (calls === 1) {
         return {
@@ -126,8 +126,27 @@ describe('createStardictLookup (DictSource)', () => {
     expect(await source.lookup('apple')).not.toBeNull();
   });
 
+  test('concurrent first lookups share one underlying load+parse pass', async () => {
+    let calls = 0;
+    const slow = jest.fn(async () => {
+      calls++;
+      await new Promise(r => setTimeout(r, 10));
+      return baseBytes();
+    });
+    const source = createStardictLookup({name: 'WordNet', loadBase: slow});
+    const [a, b, c] = await Promise.all([
+      source.lookup('apple'),
+      source.lookup('banana'),
+      source.lookup('apple'),
+    ]);
+    expect(a?.definition).toBe('a fruit (base)');
+    expect(b?.definition).toBe('a yellow fruit (base)');
+    expect(c?.definition).toBe('a fruit (base)');
+    expect(calls).toBe(1);
+  });
+
   test('does NOT retry when the loader intentionally returns null', async () => {
-    const loader = jest.fn(() => null);
+    const loader = jest.fn(async () => null);
     const source = createStardictLookup({name: 'WordNet', loadBase: loader});
     await source.lookup('apple');
     await source.lookup('banana');

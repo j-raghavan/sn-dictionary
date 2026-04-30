@@ -1,6 +1,10 @@
 // StarDict-backed DictSource. Lazy-initialises the parsed dict on the
 // first lookup so plugin startup stays cheap (no eager base64 decode +
 // gunzip + index build before the user does anything).
+//
+// loadBase is async so the same factory works for both the bundled
+// base dict (sync bytes wrapped in async) and runtime-discovered user
+// dicts (three files fetched from external storage).
 
 import type {DictEntry, DictSource} from '../lookup';
 import {buildDict, lookupDict, type ParsedDict} from './stardict/stardictDict';
@@ -11,53 +15,12 @@ export type DictBytes = {
   dict: Uint8Array;
 };
 
-// Loaders are functions so the data source (build-time base64 blob,
-// runtime fetch from external storage, etc.) can be swapped without
-// touching this file.
-export type LoadDictBytes = () => DictBytes | null;
+export type LoadDictBytes = () => Promise<DictBytes | null>;
 
 export type StardictLookupDeps = {
   name: string;
   loadBase: LoadDictBytes;
   logger?: {warn: (msg: string) => void};
-};
-
-// Internal load outcome.
-//   - 'success' -> dict is non-null
-//   - 'absent'  -> loader intentionally returned null (no dict for
-//                  this slot — sticky, do not retry)
-//   - 'failed'  -> loader or buildDict threw — leave loaded=false so
-//                  the next lookup retries (transient errors must
-//                  not permanently dead-end the session)
-type BuildOutcome =
-  | {kind: 'success'; dict: ParsedDict}
-  | {kind: 'absent'}
-  | {kind: 'failed'};
-
-const safeBuild = (
-  loader: LoadDictBytes,
-  tag: string,
-  warn: (msg: string) => void,
-): BuildOutcome => {
-  let bytes: DictBytes | null;
-  try {
-    bytes = loader();
-  } catch (e) {
-    warn(`[${tag}] loader threw: ${(e as Error).message}`);
-    return {kind: 'failed'};
-  }
-  if (!bytes) {
-    return {kind: 'absent'};
-  }
-  try {
-    return {
-      kind: 'success',
-      dict: buildDict(bytes.ifo, bytes.idx, bytes.dict),
-    };
-  } catch (e) {
-    warn(`[${tag}] buildDict threw: ${(e as Error).message}`);
-    return {kind: 'failed'};
-  }
 };
 
 export const createStardictLookup = (
@@ -66,36 +29,63 @@ export const createStardictLookup = (
   const warn = deps.logger?.warn ?? (() => {});
   const tag = `stardict:${deps.name}`;
   let dict: ParsedDict | null = null;
-  let loaded = false;
+  let absent = false;
+  let inFlight: Promise<void> | null = null;
 
-  const ensureLoaded = (): void => {
-    if (loaded) {
+  const doLoad = async (): Promise<void> => {
+    let bytes: DictBytes | null;
+    try {
+      bytes = await deps.loadBase();
+    } catch (e) {
+      warn(`[${tag}] loader threw: ${(e as Error).message}`);
+      throw e;
+    }
+    if (bytes === null) {
+      // Intentional opt-out — stick so we don't burn loader calls.
+      absent = true;
       return;
     }
-    const outcome = safeBuild(deps.loadBase, tag, warn);
-    if (outcome.kind === 'success') {
-      dict = outcome.dict;
-      loaded = true;
-    } else if (outcome.kind === 'absent') {
-      // Intentional opt-out — stick so we don't burn loader calls.
-      loaded = true;
+    try {
+      dict = buildDict(bytes.ifo, bytes.idx, bytes.dict);
+    } catch (e) {
+      warn(`[${tag}] buildDict threw: ${(e as Error).message}`);
+      throw e;
     }
-    // 'failed' leaves loaded=false; next lookup retries.
+  };
+
+  const ensureLoaded = async (): Promise<void> => {
+    if (dict !== null || absent) {
+      return;
+    }
+    // Memoise the in-flight promise so concurrent first lookups share
+    // one underlying load+parse pass. Clear on settle so a failed
+    // attempt can be retried by the NEXT lookup (not by the racing
+    // concurrent ones — they all observe the same failure here).
+    if (inFlight === null) {
+      inFlight = doLoad().finally(() => {
+        inFlight = null;
+      });
+    }
+    try {
+      await inFlight;
+    } catch {
+      // observe via dict===null below
+    }
   };
 
   return {
     name: deps.name,
     async lookup(word: string): Promise<DictEntry | null> {
-      ensureLoaded();
       const trimmed = word.trim();
-      if (!trimmed || dict === null) {
+      if (!trimmed) {
+        return null;
+      }
+      await ensureLoaded();
+      if (dict === null) {
         return null;
       }
       const hit = lookupDict(dict, trimmed);
-      if (!hit) {
-        return null;
-      }
-      return {word: hit.canonicalWord, definition: hit.definition};
+      return hit ? {word: hit.canonicalWord, definition: hit.definition} : null;
     },
   };
 };

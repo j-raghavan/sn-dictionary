@@ -30,12 +30,12 @@ const logger = {
   error: msg => console.log(`[ERROR] ${msg}`),
 };
 
-// The base dict source. Bundled into the JS at build time. Step 4
-// will discover and prepend user dicts ahead of this one in the
-// registry list.
+// The base dict source. Bundled into the JS at build time, so the
+// loader is sync underneath; we wrap it in async to fit the shared
+// loadBase contract used by runtime-discovered user dicts.
 const baseSource = createStardictLookup({
   name: 'WordNet',
-  loadBase: loadBaseDictFromGenerated,
+  loadBase: async () => loadBaseDictFromGenerated(),
   logger,
 });
 
