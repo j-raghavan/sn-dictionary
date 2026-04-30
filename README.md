@@ -168,9 +168,38 @@ Most users won't author a StarDict from scratch — there are huge corpora of pr
 - **Morphology / inflected forms.** Highly inflected languages (German declensions, Italian conjugations) are only as good as the dict's headword coverage. Wiktionary-derived dicts generally include inflected forms; FreeDict's coverage varies. If lassoing `Häuser` returns "no entry," try lassoing the lemma `Haus` to confirm the dict simply lacks form folding rather than your sideloading being broken.
 - **If you have a dict in a different format** (MDX, EPUB-based, SDictionary, Babylon, …), [`pyglossary`](https://github.com/ilius/pyglossary) is the gold-standard CLI converter — it reads ~50 formats and writes StarDict. One-line install via `pip install pyglossary`, then `pyglossary --read-format=mdx --write-format=stardict input.mdx`.
 
-### File-size caps
+### File-size limits
 
-CSV and JSON dictionaries are capped at 10 MB each; bigger files are refused with a logged warning. StarDict has no explicit cap (the format streams via index + on-demand block decompression). The `fetch(file://...)` bridge throughput is around 0.85 MB/s — a 10 MB CSV loads in ~12 s on first lookup, then stays in memory for the session.
+| Format | Hard cap | Notes |
+|---|---|---|
+| **CSV** | **10 MB** | Refused with a `[WARN]` log; the source returns "not found" for every lookup. |
+| **JSON** | **10 MB** | Same as CSV. |
+| **StarDict** | **no explicit cap** | Bound by device RAM. The bundled WordNet at ~16 MB works fine; 50 MB+ dicts (e.g. JMdict, Wiktionary-derived) should also work but are untested on-device — file an issue if you hit a hang. |
+| MDX | n/a — deferred | Format not yet supported. |
+
+The cap is per file, so you can have many dictionaries side by side without their sizes adding up against any combined limit.
+
+### How long before a new dictionary is ready?
+
+After you drop a dict into `MyStyle/SnDict/` and restart the plugin: discovery itself completes in **under a second** for any number of dicts. The visible wait is on the *first lookup* that touches the new dict — that's when the file gets read and parsed into memory. Every subsequent lookup against the same dict in the same session is instant (the index is a hash map living in JS heap).
+
+Rough timings, anchored on the one measured number we have (`fetch(file://...)` bridge throughput ≈ 0.85 MB/s on a Nomad) and the existing WordNet baseline of ~30–60 s for the bundled 16 MB dictionary. **These are extrapolated, not benchmarked across the whole grid** — file an issue if your real-world numbers diverge meaningfully:
+
+| File size | StarDict (first lookup) | CSV / JSON (first lookup) |
+|---|---|---|
+| **100 KB** | ~1 s | <1 s |
+| **500 KB** | ~2 s | ~1 s |
+| **1 MB** | ~3–5 s | ~2 s |
+| **5 MB** | ~10–20 s | ~8–15 s |
+| **10 MB** | ~20–40 s | ~15–25 s *(at the cap)* |
+| **16 MB** (= bundled WordNet) | ~30–60 s *(measured baseline)* | — |
+| **50 MB** | ~90–180 s *(extrapolated)* | — |
+
+Notes:
+
+- The wide ranges reflect device variance (Nomad vs A6X vs Manta — different CPU and RAM) and content variance (a CSV with millions of short entries parses faster per MB than one with fewer-but-longer entries).
+- Discovery is *non-blocking* — the **Lookup** button is enabled immediately after plugin start. If you tap it before the user dict has finished its first parse, that lookup hits the base WordNet only; the next lookup picks up the user dict once parsed.
+- For dicts at the upper end (StarDict 30–60 MB+), expect the first lookup of the session to take a noticeable amount of time. Plan to do that lookup once and then enjoy fast lookups for the rest of the session.
 
 ### Verifying it works (with the bundled sample)
 
