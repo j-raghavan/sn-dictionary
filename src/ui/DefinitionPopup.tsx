@@ -1,4 +1,4 @@
-import React, {useCallback, useEffect, useMemo, useState} from 'react';
+import React, {useCallback, useEffect, useState} from 'react';
 import {Pressable, ScrollView, Text, View} from 'react-native';
 import {PluginManager} from 'sn-plugin-lib';
 import {
@@ -7,16 +7,9 @@ import {
   subscribe,
   type PopupState,
 } from './popupController';
-import {parseWordNetEntry} from './wordnetFormatter';
 import {SourceSection} from './SourceSection';
 import {popupStyles as styles} from './popupStyles';
 import {t} from '../i18n/i18n';
-import type {SourceHit} from '../core/lookup';
-
-type ParsedHit = {
-  hit: SourceHit;
-  parsed: ReturnType<typeof parseWordNetEntry>;
-};
 
 export default function DefinitionPopup(): React.JSX.Element {
   const [state, setState] = useState<PopupState>(getCurrentState);
@@ -36,20 +29,6 @@ export default function DefinitionPopup(): React.JSX.Element {
       /* ignore — overlay is going away regardless */
     });
   }, []);
-
-  // Parse each hit's WordNet entry once per definition change. Memoise
-  // so subsequent re-renders (e.g. from popupController state echoes)
-  // don't re-tokenise. Non-WordNet shapes fall back to the
-  // HTML-strip / plain-text path inside SourceSection.
-  const parsedHits = useMemo<ParsedHit[]>(() => {
-    if (!state.visible || state.result.hits.length === 0) {
-      return [];
-    }
-    return state.result.hits.map(hit => ({
-      hit,
-      parsed: parseWordNetEntry(hit.entry.definition),
-    }));
-  }, [state]);
 
   if (!state.visible) {
     // Zero-size, non-interactive when nothing to show — matches the
@@ -75,11 +54,10 @@ export default function DefinitionPopup(): React.JSX.Element {
               {`${t('popup.notFoundFor')} "${state.result.queriedFor}".`}
             </Text>
           ) : (
-            parsedHits.map((ph, i) => (
+            hits.map((hit, i) => (
               <SourceSection
-                key={`${ph.hit.source}-${i}`}
-                hit={ph.hit}
-                parsed={ph.parsed}
+                key={`${hit.source}-${i}`}
+                hit={hit}
                 showBadge={showSourceBadges}
                 showDivider={i > 0}
               />

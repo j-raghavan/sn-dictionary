@@ -34,10 +34,13 @@ const logger = {
 
 // The base dict source. Bundled into the JS at build time, so the
 // loader is sync underneath; we wrap it in async to fit the shared
-// loadBase contract used by runtime-discovered user dicts.
+// loadBase contract used by runtime-discovered user dicts. Explicit
+// format='wordnet' so the popup uses the structured-sense renderer
+// for entries from this source.
 const baseSource = createStardictLookup({
   name: 'WordNet',
   loadBase: async () => loadBaseDictFromGenerated(),
+  format: 'wordnet',
   logger,
 });
 

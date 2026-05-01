@@ -13,10 +13,12 @@ describe('createJsonDictSource', () => {
     expect(await src.lookup('apple')).toEqual({
       word: 'apple',
       definition: 'a fruit',
+      format: 'plain',
     });
     expect(await src.lookup('banana')).toEqual({
       word: 'banana',
       definition: 'a yellow fruit',
+      format: 'plain',
     });
   });
 
@@ -49,6 +51,7 @@ describe('createJsonDictSource', () => {
     expect(await src.lookup('banana')).toEqual({
       word: 'Banana',
       definition: 'a yellow fruit',
+      format: 'plain',
     });
   });
 

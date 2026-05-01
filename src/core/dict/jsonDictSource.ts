@@ -96,7 +96,9 @@ const buildJson = (bytes: Uint8Array): ParsedJson => {
 
 const lookupJson = (parsed: ParsedJson, word: string): DictEntry | null => {
   const hit = parsed.index.get(word.toLowerCase());
-  return hit ? {word: hit.word, definition: hit.definition} : null;
+  return hit
+    ? {word: hit.word, definition: hit.definition, format: 'plain'}
+    : null;
 };
 
 export const createJsonDictSource = (deps: JsonDictDeps): DictSource => {

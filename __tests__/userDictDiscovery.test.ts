@@ -214,6 +214,7 @@ describe('discoverUserDicts', () => {
     expect(await sources[0].lookup('apple')).toEqual({
       word: 'apple',
       definition: 'a fruit',
+      format: 'plain',
     });
   });
 

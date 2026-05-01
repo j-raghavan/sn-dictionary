@@ -131,7 +131,9 @@ const buildCsv = (
 
 const lookupCsv = (parsed: ParsedCsv, word: string): DictEntry | null => {
   const hit = parsed.index.get(word.toLowerCase());
-  return hit ? {word: hit.word, definition: hit.definition} : null;
+  return hit
+    ? {word: hit.word, definition: hit.definition, format: 'plain'}
+    : null;
 };
 
 export const createCsvDictSource = (deps: CsvDictDeps): DictSource => {

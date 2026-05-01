@@ -15,14 +15,17 @@ describe('createCsvDictSource', () => {
     expect(await src.lookup('apple')).toEqual({
       word: 'apple',
       definition: 'a fruit',
+      format: 'plain',
     });
     expect(await src.lookup('banana')).toEqual({
       word: 'Banana',
       definition: 'a yellow fruit',
+      format: 'plain',
     });
     expect(await src.lookup('BANANA')).toEqual({
       word: 'Banana',
       definition: 'a yellow fruit',
+      format: 'plain',
     });
   });
 
@@ -93,7 +96,7 @@ describe('createCsvDictSource', () => {
   test('missing definition column yields empty string', async () => {
     const src = fromCsv('apple\n');
     const hit = await src.lookup('apple');
-    expect(hit).toEqual({word: 'apple', definition: ''});
+    expect(hit).toEqual({word: 'apple', definition: '', format: 'plain'});
   });
 
   test('returns null on empty input', async () => {

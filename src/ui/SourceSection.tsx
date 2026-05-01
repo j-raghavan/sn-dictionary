@@ -1,49 +1,62 @@
 // Per-hit popup section. Renders the bordered source badge (only
 // when the parent decides ≥2 hits warrant disambiguation) followed
-// by either the parsed-WordNet view or the HTML-stripped fallback.
+// by the format-appropriate body renderer.
 //
-// Decision of which renderer to use today is heuristic — based on
-// whether parseWordNetEntry succeeded. Issue #6 will move this to an
-// explicit format hint on the hit.
+// The render mode is now driven by `hit.entry.format` set explicitly
+// by the source factory at lookup time — no per-render heuristic
+// detection. Three modes:
+//
+//   'wordnet' — parse with parseWordNetEntry + render SenseList
+//   'html'    — strip tags via htmlToPlainText and render as text
+//   'plain'   — render the definition string verbatim
 
-import React from 'react';
+import React, {useMemo} from 'react';
 import {Text, View} from 'react-native';
 import type {SourceHit} from '../core/lookup';
-import type {parseWordNetEntry} from './wordnetFormatter';
+import {parseWordNetEntry} from './wordnetFormatter';
 import {SenseList} from './senseBlocks';
 import {htmlToPlainText} from './htmlToPlainText';
 import {popupStyles as styles} from './popupStyles';
 
 type SourceSectionProps = {
   hit: SourceHit;
-  parsed: ReturnType<typeof parseWordNetEntry>;
   showBadge: boolean;
   showDivider: boolean;
 };
 
 export const SourceSection = ({
   hit,
-  parsed,
   showBadge,
   showDivider,
-}: SourceSectionProps): React.JSX.Element => (
-  <View style={[styles.section, showDivider && styles.sectionDivider]}>
-    {showBadge ? (
-      <View style={styles.sectionHeader}>
-        <Text style={styles.sourceBadge}>{hit.source}</Text>
-      </View>
-    ) : null}
-    {parsed && !parsed.parseFailed ? (
-      <SenseList senses={parsed.senses} />
-    ) : (
-      // Fallback for non-WordNet content. Run through the HTML
-      // stripper so dicts with sametypesequence=h (Wiktionary-derived
-      // StarDicts and similar) render as readable plain text instead
-      // of leaking <i>/<br>/<ol>/<li> tags into the popup. No-op for
-      // genuinely plain text (no `<` or `&`).
-      <Text style={styles.definition}>
-        {htmlToPlainText(hit.entry.definition)}
-      </Text>
-    )}
-  </View>
-);
+}: SourceSectionProps): React.JSX.Element => {
+  // Memoise the format-specific transformation. Re-runs only when
+  // the entry's content changes, not on every popup re-render.
+  const body = useMemo(() => {
+    const {definition, format} = hit.entry;
+    if (format === 'wordnet') {
+      const parsed = parseWordNetEntry(definition);
+      if (parsed && !parsed.parseFailed) {
+        return <SenseList senses={parsed.senses} />;
+      }
+      // The source declared WordNet but the body didn't parse as one.
+      // Fall back to plain rendering rather than dropping content.
+      return <Text style={styles.definition}>{definition}</Text>;
+    }
+    if (format === 'html') {
+      return <Text style={styles.definition}>{htmlToPlainText(definition)}</Text>;
+    }
+    // 'plain'
+    return <Text style={styles.definition}>{definition}</Text>;
+  }, [hit.entry]);
+
+  return (
+    <View style={[styles.section, showDivider && styles.sectionDivider]}>
+      {showBadge ? (
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sourceBadge}>{hit.source}</Text>
+        </View>
+      ) : null}
+      {body}
+    </View>
+  );
+};

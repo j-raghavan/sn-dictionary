@@ -6,7 +6,7 @@
 // base dict (sync bytes wrapped in async) and runtime-discovered user
 // dicts (three files fetched from external storage).
 
-import type {DictEntry, DictSource} from '../lookup';
+import type {DefinitionFormat, DictEntry, DictSource} from '../lookup';
 import {createLazyAsyncSource} from './lazyAsyncSource';
 import {buildDict, lookupDict, type ParsedDict} from './stardict/stardictDict';
 
@@ -25,15 +25,23 @@ export type LoadDictBytes = () => Promise<DictBytes | null>;
 export type StardictLookupDeps = {
   name: string;
   loadBase: LoadDictBytes;
+  // Explicit format override. Used by the bundled WordNet base dict
+  // (passes 'wordnet') so the popup parses senses. If omitted, the
+  // format is auto-derived from the .ifo's sametypesequence.
+  format?: DefinitionFormat;
   logger?: {warn: (msg: string) => void};
 };
 
-const lookupParsed = (
-  parsed: ParsedDict,
-  word: string,
-): DictEntry | null => {
-  const hit = lookupDict(parsed, word);
-  return hit ? {word: hit.canonicalWord, definition: hit.definition} : null;
+// StarDict spec: `sametypesequence=m` is plain UTF-8 text, `=h` is
+// HTML, and several others (`x`, `y`, `n`, …) are dict-specific
+// formats we don't currently render. Anything other than `h` falls
+// back to plain text — the strings still display, just without
+// structure.
+const formatFromMeta = (meta: ParsedDict['meta']): DefinitionFormat => {
+  if (meta.sametypesequence === 'h') {
+    return 'html';
+  }
+  return 'plain';
 };
 
 export const createStardictLookup = (
@@ -46,6 +54,13 @@ export const createStardictLookup = (
     logTag: `stardict:${deps.name}`,
     load: deps.loadBase,
     parse: bytes => buildDict(bytes.ifo, bytes.idx, bytes.dict, bytes.syn),
-    lookup: lookupParsed,
+    lookup: (parsed, word): DictEntry | null => {
+      const hit = lookupDict(parsed, word);
+      if (!hit) {
+        return null;
+      }
+      const format = deps.format ?? formatFromMeta(parsed.meta);
+      return {word: hit.canonicalWord, definition: hit.definition, format};
+    },
     logger: deps.logger,
   });
