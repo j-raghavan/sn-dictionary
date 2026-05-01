@@ -128,7 +128,7 @@ The vendored StarDict reader exists because `js-mdict` is **AGPL-3.0** and bundl
 
 ## Build and CI
 
-- `buildPlugin.sh` is the single entry point; it transitively runs `npm run prepare:dict` to fetch + emit the WordNet data module before Metro bundles. Flag PRs that bypass this (e.g. `npx react-native bundle` directly).
+- `buildPlugin.sh` (macOS/Linux) and `buildPlugin.ps1` (Windows) are the two parallel entry points; both run the same logical pipeline and must stay in lockstep. Each transitively runs `npm run prepare:dict` to fetch + emit the WordNet data module before Metro bundles. Flag PRs that bypass this (e.g. `npx react-native bundle` directly) or that update one script without updating the other.
 - `dict/wordnet/*` (binary input) and `src/core/dict/data/baseDictData.ts` (~16MB generated artefact) are gitignored. Flag PRs that commit either.
 - `.github/workflows/release.yml` rewrites `package.json` and `PluginConfig.json` versions on the runner. Flag PRs that hand-edit those version fields outside a release.
 
