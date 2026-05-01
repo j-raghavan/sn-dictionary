@@ -18,8 +18,9 @@
 // any use including redistribution). See:
 //   https://wordnet.princeton.edu/license-and-commercial-use
 
-import {mkdir, rm, rename, stat} from 'node:fs/promises';
+import {mkdir, rm, rename, stat, readFile} from 'node:fs/promises';
 import {createWriteStream} from 'node:fs';
+import {createHash} from 'node:crypto';
 import {dirname, join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {spawn} from 'node:child_process';
@@ -29,8 +30,14 @@ import {pipeline} from 'node:stream/promises';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = join(__dirname, '..');
 const DICT_DIR = join(PROJECT_ROOT, 'dict', 'wordnet');
+// dict.org community mirror does not serve HTTPS, so the integrity
+// guarantee is the pinned SHA-256 below (verified before extraction).
+// To rotate the archive: download once, run `shasum -a 256` on it,
+// and update both URL and EXPECTED_SHA256.
 const URL =
   'http://download.huzheng.org/dict.org/stardict-dictd_www.dict.org_wn-2.4.2.tar.bz2';
+const EXPECTED_SHA256 =
+  '27dfc985076b4b70706bfc50172f2645bb8371f61ad6fc3c08ed093ef2bdb2ef';
 const ARCHIVE_NAME = 'stardict-wordnet.tar.bz2';
 const EXPECTED_SUBDIR = 'stardict-dictd_www.dict.org_wn-2.4.2';
 
@@ -68,6 +75,19 @@ const download = async (url, dest) => {
   await pipeline(Readable.fromWeb(res.body), createWriteStream(dest));
 };
 
+const verifyDigest = async (path, expected) => {
+  const bytes = await readFile(path);
+  const actual = createHash('sha256').update(bytes).digest('hex');
+  if (actual !== expected) {
+    throw new Error(
+      `Archive integrity check failed at ${path}\n` +
+        `  expected sha256: ${expected}\n` +
+        `  actual sha256:   ${actual}\n` +
+        'Aborting to avoid extracting an untrusted bundle.',
+    );
+  }
+};
+
 const runTar = (cwd, archive) =>
   new Promise((resolve, reject) => {
     const child = spawn('tar', ['-xjf', archive], {cwd, stdio: 'inherit'});
@@ -96,6 +116,9 @@ const main = async () => {
   const archivePath = join(DICT_DIR, ARCHIVE_NAME);
   writeColor(`Downloading WordNet StarDict from ${URL} ...`, 'Blue');
   await download(URL, archivePath);
+
+  writeColor(`Verifying SHA-256 against pinned digest ...`, 'Blue');
+  await verifyDigest(archivePath, EXPECTED_SHA256);
 
   writeColor('Extracting ...', 'Blue');
   await runTar(DICT_DIR, ARCHIVE_NAME);

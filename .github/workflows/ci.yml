@@ -32,9 +32,23 @@ jobs:
       - run: npx jest --coverage
 
   build:
-    name: Build
+    name: Build (${{ matrix.os }})
     needs: [lint, test]
-    runs-on: ubuntu-latest
+    strategy:
+      # Both legs run independently: a PowerShell-only break on Windows
+      # must not be hidden by a passing Ubuntu run, and vice versa.
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            shell: bash
+            build_cmd: chmod +x buildPlugin.sh && ./buildPlugin.sh
+            artifact_suffix: linux
+          - os: windows-latest
+            shell: pwsh
+            build_cmd: powershell -ExecutionPolicy Bypass -File .\buildPlugin.ps1
+            artifact_suffix: windows
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -42,14 +56,18 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
-      # buildPlugin.sh internally calls `npm run prepare:dict` which
-      # fetches the WordNet StarDict from the dict.org mirror (~10MB)
-      # and emits src/core/dict/data/baseDictData.ts before Metro
-      # bundles. CI runners have network access; the fetch is
-      # idempotent, so re-runs reuse the cached files in dict/wordnet/.
-      - run: chmod +x buildPlugin.sh && ./buildPlugin.sh
+      # buildPlugin.{sh,ps1} internally call `npm run prepare:dict` which
+      # fetches the WordNet StarDict from the dict.org mirror (~10MB),
+      # verifies its pinned SHA-256, and emits
+      # src/core/dict/data/baseDictData.ts before Metro bundles. The
+      # Windows leg is what catches PowerShell-specific regressions in
+      # buildPlugin.ps1 — if you only care about Linux, fail-fast won't
+      # save you from a broken Windows contributor experience.
+      - name: Build plugin
+        shell: ${{ matrix.shell }}
+        run: ${{ matrix.build_cmd }}
       - uses: actions/upload-artifact@v4
         with:
-          name: plugin-${{ github.sha }}
+          name: plugin-${{ matrix.artifact_suffix }}-${{ github.sha }}
           path: build/outputs/SnDict.snplg
           retention-days: 30
