@@ -12,6 +12,7 @@ import {
   parseWordNetEntry,
   type WordNetSense,
 } from './wordnetFormatter';
+import {htmlToPlainText} from './htmlToPlainText';
 import {t} from '../i18n/i18n';
 import type {SourceHit} from '../core/lookup';
 
@@ -121,7 +122,14 @@ const SourceSection = ({
     {parsed && !parsed.parseFailed ? (
       <SenseList senses={parsed.senses} />
     ) : (
-      <Text style={styles.definition}>{hit.entry.definition}</Text>
+      // Fallback for non-WordNet content. Run through the HTML
+      // stripper so dicts with sametypesequence=h (Wiktionary-derived
+      // StarDicts and similar) render as readable plain text instead
+      // of leaking <i>/<br>/<ol>/<li> tags into the popup. No-op for
+      // genuinely plain text (no `<` or `&`).
+      <Text style={styles.definition}>
+        {htmlToPlainText(hit.entry.definition)}
+      </Text>
     )}
   </View>
 );
