@@ -263,10 +263,12 @@ Make sure you have Node.js 18+ installed, then:
 
 ```sh
 npm install
-./buildPlugin.sh
+./buildPlugin.sh         # macOS / Linux
+# or
+powershell -ExecutionPolicy Bypass -File .\buildPlugin.ps1   # Windows
 ```
 
-This produces `build/outputs/SnDict.snplg`. The build script automatically runs `npm run prepare:dict` first, which:
+Both scripts produce `build/outputs/SnDict.snplg` and run the same logical pipeline. They each automatically run `npm run prepare:dict` first, which:
 
 1. Fetches the WordNet StarDict bundle (~10MB tar.bz2) from the dict.org community mirror to `dict/wordnet/` if not already present.
 2. Base64-encodes the three files (`.ifo`, `.idx`, `.dict.dz`) and emits `src/core/dict/data/baseDictData.ts`.
@@ -275,7 +277,7 @@ Both `dict/wordnet/*` and `src/core/dict/data/baseDictData.ts` are git-ignored �
 
 ## Installing on the device
 
-1. Build the plugin (`./buildPlugin.sh`) or download `SnDict.snplg` from the [latest release](https://github.com/j-raghavan/sn-dictionary/releases).
+1. Build the plugin (`./buildPlugin.sh` on macOS/Linux, `.\buildPlugin.ps1` on Windows) or download `SnDict.snplg` from the [latest release](https://github.com/j-raghavan/sn-dictionary/releases).
 2. Use the Supernote Partner App to copy `build/outputs/SnDict.snplg` to the `MyStyles` folder on your device.
 3. On the Supernote, navigate to **Settings → Apps → Plugins → Add Plugin** and select the file.
 4. Plugin appears as **Dictionary** (or 词典 / 詞典 / 辞書 / พจนานุกรม / Woordenboek depending on your device locale).
@@ -342,7 +344,7 @@ src/
                                  for initial value (avoids React commit-phase warn)
     wordnetFormatter.ts          parses raw WordNet entry → senses[]; labelForPos
 scripts/
-  fetchBaseDict.sh               idempotent download from dict.org mirror
+  fetchBaseDict.mjs              idempotent download from dict.org mirror
   buildBaseDict.mjs              base64-encode → emit baseDictData.ts
 .github/workflows/
   ci.yml                         lint + test + build .snplg artifact per push
@@ -353,7 +355,8 @@ index.js                         plugin entry: PluginManager.init, button + hand
                                  wiring, eager-load probe for diagnostics
 App.tsx                          React Native root: renders DefinitionPopup
 PluginConfig.json                plugin metadata (id, version, locale-aware name)
-buildPlugin.sh                   build: prepare:dict + Metro bundle + .snplg zip
+buildPlugin.sh                   build (macOS/Linux): prepare:dict + bundle + .snplg
+buildPlugin.ps1                  build (Windows): same pipeline as buildPlugin.sh
 ```
 
 ## Architecture notes

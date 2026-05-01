@@ -10,7 +10,7 @@
     "start": "react-native start",
     "test": "jest",
     "coverage": "jest --coverage",
-    "fetch:dict": "bash scripts/fetchBaseDict.sh",
+    "fetch:dict": "node scripts/fetchBaseDict.mjs",
     "build:dict": "node scripts/buildBaseDict.mjs",
     "prepare:dict": "npm run --silent fetch:dict && npm run --silent build:dict",
     "build:sample-dicts": "node scripts/buildSampleDicts.mjs"
