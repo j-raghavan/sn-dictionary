@@ -16,7 +16,11 @@ describe('createStardictLookup (DictSource)', () => {
   test('finds words from the loaded dict (returns DictEntry)', async () => {
     const source = createStardictLookup({name: 'WordNet', loadBase: baseBytes});
     const entry = await source.lookup('apple');
-    expect(entry).toEqual({word: 'apple', definition: 'a fruit (base)'});
+    expect(entry).toEqual({
+      word: 'apple',
+      definition: 'a fruit (base)',
+      format: 'plain',
+    });
   });
 
   test('returns null for an unknown word', async () => {
@@ -74,7 +78,7 @@ describe('createStardictLookup (DictSource)', () => {
     });
     expect(await source.lookup('apple')).toBeNull();
     expect(warn).toHaveBeenCalledWith(
-      expect.stringMatching(/stardict:WordNet.*buildDict threw/),
+      expect.stringMatching(/stardict:WordNet.*parse threw/),
     );
   });
 
@@ -104,6 +108,7 @@ describe('createStardictLookup (DictSource)', () => {
     expect(await source.lookup('apple')).toEqual({
       word: 'apple',
       definition: 'a fruit (base)',
+      format: 'plain',
     });
     expect(flaky).toHaveBeenCalledTimes(2);
   });
@@ -143,6 +148,36 @@ describe('createStardictLookup (DictSource)', () => {
     expect(b?.definition).toBe('a yellow fruit (base)');
     expect(c?.definition).toBe('a fruit (base)');
     expect(calls).toBe(1);
+  });
+
+  test('derives format=html from .ifo sametypesequence=h', async () => {
+    const htmlBytes = async () =>
+      buildSyntheticStarDict(
+        {apple: '<i>n</i> a fruit'},
+        {sametypesequence: 'h'},
+      );
+    const source = createStardictLookup({
+      name: 'WordNet',
+      loadBase: htmlBytes,
+    });
+    const entry = await source.lookup('apple');
+    expect(entry).toEqual({
+      word: 'apple',
+      definition: '<i>n</i> a fruit',
+      format: 'html',
+    });
+  });
+
+  test('explicit format option overrides the auto-derived one', async () => {
+    // The bundled WordNet base uses this so the popup runs the
+    // structured-sense renderer regardless of what the .ifo says.
+    const source = createStardictLookup({
+      name: 'WordNet',
+      loadBase: baseBytes,
+      format: 'wordnet',
+    });
+    const entry = await source.lookup('apple');
+    expect(entry?.format).toBe('wordnet');
   });
 
   test('does NOT retry when the loader intentionally returns null', async () => {

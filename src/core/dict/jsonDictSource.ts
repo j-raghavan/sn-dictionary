@@ -7,9 +7,10 @@
 //
 // Lookup is case-insensitive. First occurrence of a key wins.
 
-import {decodeUtf8} from '../../sdk/utf8';
+import {decodeUtf8, stripBom} from '../../sdk/utf8';
 import type {DictEntry, DictSource} from '../lookup';
-import {createLazyAsyncSource, type LoadBytes} from './lazyAsyncSource';
+import {createLazyAsyncSource} from './lazyAsyncSource';
+import type {LoadBytes} from './csvDictSource';
 
 export type JsonDictDeps = {
   name: string;
@@ -24,9 +25,6 @@ const DEFAULT_MAX_BYTES = 10 * 1024 * 1024;
 type ParsedJson = {
   index: Map<string, {word: string; definition: string}>;
 };
-
-const stripBom = (s: string): string =>
-  s.charCodeAt(0) === 0xfeff ? s.slice(1) : s;
 
 const pickHeadword = (row: Record<string, unknown>): string | undefined => {
   const candidates = ['word', 'headword', 'term', 'key'];
@@ -95,15 +93,31 @@ const buildJson = (bytes: Uint8Array): ParsedJson => {
 
 const lookupJson = (parsed: ParsedJson, word: string): DictEntry | null => {
   const hit = parsed.index.get(word.toLowerCase());
-  return hit ? {word: hit.word, definition: hit.definition} : null;
+  return hit
+    ? {word: hit.word, definition: hit.definition, format: 'plain'}
+    : null;
 };
 
-export const createJsonDictSource = (deps: JsonDictDeps): DictSource =>
-  createLazyAsyncSource<ParsedJson>({
+export const createJsonDictSource = (deps: JsonDictDeps): DictSource => {
+  const maxBytes = deps.maxBytes ?? DEFAULT_MAX_BYTES;
+  return createLazyAsyncSource<Uint8Array, ParsedJson>({
     name: deps.name,
-    loadBytes: deps.loadBytes,
+    load: async () => {
+      const buf = await deps.loadBytes();
+      if (buf === null) {
+        return null;
+      }
+      // Size cap is per-format (10 MB for JSON). The unified lazy
+      // helper is format-agnostic; the check belongs here.
+      if (buf.byteLength > maxBytes) {
+        throw new Error(
+          `file too large: ${buf.byteLength} bytes > ${maxBytes} cap`,
+        );
+      }
+      return new Uint8Array(buf);
+    },
     parse: buildJson,
     lookup: lookupJson,
-    maxBytes: deps.maxBytes ?? DEFAULT_MAX_BYTES,
     logger: deps.logger,
   });
+};

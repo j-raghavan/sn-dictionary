@@ -108,6 +108,13 @@ export const decodeUtf8 = (bytes: Uint8Array): string => {
   return manualDecodeUtf8(bytes);
 };
 
+// Strip a leading UTF-8 byte-order mark if present. The sequence is
+// EF BB BF in raw bytes, which decodes to U+FEFF as the first
+// character of the resulting string. Many text-editor saves and
+// some sync tools insert a BOM that callers don't want to see.
+export const stripBom = (s: string): string =>
+  s.charCodeAt(0) === 0xfeff ? s.slice(1) : s;
+
 // Test-only escape hatch so we can exercise the manual path even when
 // TextEncoder/TextDecoder ARE available in the host.
 export const __testing__ = {manualEncodeUtf8, manualDecodeUtf8};

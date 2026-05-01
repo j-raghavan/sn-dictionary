@@ -6,7 +6,8 @@
 // base dict (sync bytes wrapped in async) and runtime-discovered user
 // dicts (three files fetched from external storage).
 
-import type {DictEntry, DictSource} from '../lookup';
+import type {DefinitionFormat, DictEntry, DictSource} from '../lookup';
+import {createLazyAsyncSource} from './lazyAsyncSource';
 import {buildDict, lookupDict, type ParsedDict} from './stardict/stardictDict';
 
 export type DictBytes = {
@@ -24,72 +25,42 @@ export type LoadDictBytes = () => Promise<DictBytes | null>;
 export type StardictLookupDeps = {
   name: string;
   loadBase: LoadDictBytes;
+  // Explicit format override. Used by the bundled WordNet base dict
+  // (passes 'wordnet') so the popup parses senses. If omitted, the
+  // format is auto-derived from the .ifo's sametypesequence.
+  format?: DefinitionFormat;
   logger?: {warn: (msg: string) => void};
+};
+
+// StarDict spec: `sametypesequence=m` is plain UTF-8 text, `=h` is
+// HTML, and several others (`x`, `y`, `n`, …) are dict-specific
+// formats we don't currently render. Anything other than `h` falls
+// back to plain text — the strings still display, just without
+// structure.
+const formatFromMeta = (meta: ParsedDict['meta']): DefinitionFormat => {
+  if (meta.sametypesequence === 'h') {
+    return 'html';
+  }
+  return 'plain';
 };
 
 export const createStardictLookup = (
   deps: StardictLookupDeps,
-): DictSource => {
-  const warn = deps.logger?.warn ?? (() => {});
-  const tag = `stardict:${deps.name}`;
-  let dict: ParsedDict | null = null;
-  let absent = false;
-  let inFlight: Promise<void> | null = null;
-
-  const doLoad = async (): Promise<void> => {
-    let bytes: DictBytes | null;
-    try {
-      bytes = await deps.loadBase();
-    } catch (e) {
-      warn(`[${tag}] loader threw: ${(e as Error).message}`);
-      throw e;
-    }
-    if (bytes === null) {
-      // Intentional opt-out — stick so we don't burn loader calls.
-      absent = true;
-      return;
-    }
-    try {
-      dict = buildDict(bytes.ifo, bytes.idx, bytes.dict, bytes.syn);
-    } catch (e) {
-      warn(`[${tag}] buildDict threw: ${(e as Error).message}`);
-      throw e;
-    }
-  };
-
-  const ensureLoaded = async (): Promise<void> => {
-    if (dict !== null || absent) {
-      return;
-    }
-    // Memoise the in-flight promise so concurrent first lookups share
-    // one underlying load+parse pass. Clear on settle so a failed
-    // attempt can be retried by the NEXT lookup (not by the racing
-    // concurrent ones — they all observe the same failure here).
-    if (inFlight === null) {
-      inFlight = doLoad().finally(() => {
-        inFlight = null;
-      });
-    }
-    try {
-      await inFlight;
-    } catch {
-      // observe via dict===null below
-    }
-  };
-
-  return {
+): DictSource =>
+  createLazyAsyncSource<DictBytes, ParsedDict>({
     name: deps.name,
-    async lookup(word: string): Promise<DictEntry | null> {
-      const trimmed = word.trim();
-      if (!trimmed) {
+    // Preserve the long-standing "[stardict:<name>] ..." log prefix
+    // so existing on-device logcat searches and tests keep working.
+    logTag: `stardict:${deps.name}`,
+    load: deps.loadBase,
+    parse: bytes => buildDict(bytes.ifo, bytes.idx, bytes.dict, bytes.syn),
+    lookup: (parsed, word): DictEntry | null => {
+      const hit = lookupDict(parsed, word);
+      if (!hit) {
         return null;
       }
-      await ensureLoaded();
-      if (dict === null) {
-        return null;
-      }
-      const hit = lookupDict(dict, trimmed);
-      return hit ? {word: hit.canonicalWord, definition: hit.definition} : null;
+      const format = deps.format ?? formatFromMeta(parsed.meta);
+      return {word: hit.canonicalWord, definition: hit.definition, format};
     },
-  };
-};
+    logger: deps.logger,
+  });

@@ -5,72 +5,9 @@ import {
   type FileUtilsLike,
 } from '../src/core/dict/userDictDiscovery';
 import {buildSyntheticStarDict} from './_helpers/buildSyntheticStarDict';
-
-const enc = (s: string) => new TextEncoder().encode(s).buffer as ArrayBuffer;
+import {enc, makeVfs, type Vfs} from './_helpers/inMemoryVfs';
 
 const fileEntry = (path: string, type: 0 | 1): FileEntry => ({path, type});
-
-// In-memory virtual filesystem for the test. listFiles returns the
-// children of any directory; fetch resolves file:// URIs against the
-// same map.
-type Vfs = Record<string, ArrayBuffer | 'dir'>;
-
-const makeVfs = (entries: Vfs): {
-  fileUtils: FileUtilsLike;
-  fetchFn: typeof fetch;
-} => {
-  const childrenOf = (dir: string): FileEntry[] => {
-    const prefix = dir.endsWith('/') ? dir : dir + '/';
-    const seen = new Set<string>();
-    const out: FileEntry[] = [];
-    for (const path of Object.keys(entries)) {
-      if (!path.startsWith(prefix)) {
-        continue;
-      }
-      const tail = path.slice(prefix.length);
-      const slash = tail.indexOf('/');
-      const childName = slash < 0 ? tail : tail.slice(0, slash);
-      if (childName.length === 0 || seen.has(childName)) {
-        continue;
-      }
-      seen.add(childName);
-      const childPath = prefix + childName;
-      const isDir =
-        entries[childPath] === 'dir' ||
-        Object.keys(entries).some(p =>
-          p !== childPath && p.startsWith(childPath + '/'),
-        );
-      out.push(fileEntry(childPath, isDir ? 0 : 1));
-    }
-    return out;
-  };
-  const fileUtils: FileUtilsLike = {
-    exists: jest.fn(async path => path in entries),
-    listFiles: jest.fn(async path => {
-      if (!(path in entries) && !Object.keys(entries).some(p => p.startsWith(path + '/'))) {
-        throw new Error('Dir is not exists');
-      }
-      return childrenOf(path);
-    }),
-  };
-  const fetchFn = jest.fn(async (url: string) => {
-    const path = url.replace(/^file:\/\//, '');
-    const data = entries[path];
-    if (data === undefined || data === 'dir') {
-      return {
-        ok: false,
-        status: 404,
-        arrayBuffer: async () => new ArrayBuffer(0),
-      } as unknown as Response;
-    }
-    return {
-      ok: true,
-      status: 200,
-      arrayBuffer: async () => data,
-    } as unknown as Response;
-  });
-  return {fileUtils, fetchFn: fetchFn as unknown as typeof fetch};
-};
 
 const buildLogger = () => ({log: jest.fn(), warn: jest.fn()});
 
@@ -214,6 +151,7 @@ describe('discoverUserDicts', () => {
     expect(await sources[0].lookup('apple')).toEqual({
       word: 'apple',
       definition: 'a fruit',
+      format: 'plain',
     });
   });
 

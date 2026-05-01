@@ -1,38 +1,38 @@
 import {createLazyAsyncSource} from '../src/core/dict/lazyAsyncSource';
 import type {DictEntry} from '../src/core/lookup';
 
-const enc = (s: string) => new TextEncoder().encode(s).buffer;
+const enc = (s: string) => new TextEncoder().encode(s);
+
+const decodeMap = (bytes: Uint8Array): Map<string, string> => {
+  const m = new Map<string, string>();
+  new TextDecoder().decode(bytes).split('\n').forEach(line => {
+    const [w, d] = line.split('|');
+    if (w && d) {
+      m.set(w.toLowerCase(), d);
+    }
+  });
+  return m;
+};
 
 const buildDeps = (overrides: {
-  loadBytes?: () => Promise<ArrayBuffer | null>;
+  load?: () => Promise<Uint8Array | null>;
   parse?: (bytes: Uint8Array) => Map<string, string>;
   lookup?: (parsed: Map<string, string>, word: string) => DictEntry | null;
-  maxBytes?: number;
+  logTag?: string;
   logger?: {warn: jest.Mock};
 } = {}) => {
   const logger = overrides.logger ?? {warn: jest.fn()};
   return {
     name: 'test',
-    loadBytes: overrides.loadBytes ?? (async () => enc('apple|fruit\nbanana|yellow')),
-    parse:
-      overrides.parse ??
-      ((bytes: Uint8Array) => {
-        const m = new Map<string, string>();
-        new TextDecoder().decode(bytes).split('\n').forEach(line => {
-          const [w, d] = line.split('|');
-          if (w && d) {
-            m.set(w.toLowerCase(), d);
-          }
-        });
-        return m;
-      }),
+    logTag: overrides.logTag,
+    load: overrides.load ?? (async () => enc('apple|fruit\nbanana|yellow')),
+    parse: overrides.parse ?? decodeMap,
     lookup:
       overrides.lookup ??
       ((parsed: Map<string, string>, word: string) => {
         const def = parsed.get(word.toLowerCase());
         return def ? {word, definition: def} : null;
       }),
-    maxBytes: overrides.maxBytes,
     logger,
   };
 };
@@ -40,7 +40,7 @@ const buildDeps = (overrides: {
 describe('createLazyAsyncSource', () => {
   test('lazy-loads on first lookup; further lookups reuse the parsed dict', async () => {
     const deps = buildDeps();
-    const loadSpy = jest.spyOn(deps, 'loadBytes');
+    const loadSpy = jest.spyOn(deps, 'load');
     const source = createLazyAsyncSource(deps);
     expect(loadSpy).not.toHaveBeenCalled();
     const a = await source.lookup('apple');
@@ -52,7 +52,7 @@ describe('createLazyAsyncSource', () => {
 
   test('returns null for empty / whitespace input without invoking the loader', async () => {
     const deps = buildDeps();
-    const loadSpy = jest.spyOn(deps, 'loadBytes');
+    const loadSpy = jest.spyOn(deps, 'load');
     const source = createLazyAsyncSource(deps);
     expect(await source.lookup('  ')).toBeNull();
     expect(loadSpy).not.toHaveBeenCalled();
@@ -62,7 +62,7 @@ describe('createLazyAsyncSource', () => {
     let calls = 0;
     const source = createLazyAsyncSource(
       buildDeps({
-        loadBytes: async () => {
+        load: async () => {
           calls++;
           return null;
         },
@@ -83,7 +83,9 @@ describe('createLazyAsyncSource', () => {
       return enc('apple|fruit');
     };
     const warn = jest.fn();
-    const source = createLazyAsyncSource(buildDeps({loadBytes: flaky, logger: {warn}}));
+    const source = createLazyAsyncSource(
+      buildDeps({load: flaky, logger: {warn}}),
+    );
     expect(await source.lookup('apple')).toBeNull();
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('loader threw: flaky'));
     expect(await source.lookup('apple')).toEqual({word: 'apple', definition: 'fruit'});
@@ -110,18 +112,36 @@ describe('createLazyAsyncSource', () => {
     expect(await source.lookup('apple')).toEqual({word: 'apple', definition: 'fruit'});
   });
 
-  test('refuses files larger than maxBytes (warns, returns null)', async () => {
+  test('logTag overrides the default name in warn messages', async () => {
     const warn = jest.fn();
     const source = createLazyAsyncSource(
       buildDeps({
-        loadBytes: async () => new ArrayBuffer(100),
-        maxBytes: 50,
+        load: async () => {
+          throw new Error('boom');
+        },
+        logTag: 'stardict:WordNet',
         logger: {warn},
       }),
     );
-    expect(await source.lookup('apple')).toBeNull();
+    await source.lookup('apple');
     expect(warn).toHaveBeenCalledWith(
-      expect.stringMatching(/file too large: 100 bytes > 50 cap/),
+      expect.stringMatching(/^\[stardict:WordNet] loader threw/),
+    );
+  });
+
+  test('default tag falls back to the source name', async () => {
+    const warn = jest.fn();
+    const source = createLazyAsyncSource(
+      buildDeps({
+        load: async () => {
+          throw new Error('boom');
+        },
+        logger: {warn},
+      }),
+    );
+    await source.lookup('apple');
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringMatching(/^\[test] loader threw/),
     );
   });
 
@@ -129,21 +149,14 @@ describe('createLazyAsyncSource', () => {
     let parseCalls = 0;
     const parse = (bytes: Uint8Array) => {
       parseCalls++;
-      const m = new Map<string, string>();
-      new TextDecoder().decode(bytes).split('\n').forEach(line => {
-        const [w, d] = line.split('|');
-        if (w && d) {
-          m.set(w.toLowerCase(), d);
-        }
-      });
-      return m;
+      return decodeMap(bytes);
     };
     let loadCalls = 0;
-    const loadBytes = async () => {
+    const load = async () => {
       loadCalls++;
       return enc('apple|fruit\nbanana|yellow');
     };
-    const source = createLazyAsyncSource(buildDeps({loadBytes, parse}));
+    const source = createLazyAsyncSource(buildDeps({load, parse}));
     const [a, b, c] = await Promise.all([
       source.lookup('apple'),
       source.lookup('banana'),
@@ -159,12 +172,40 @@ describe('createLazyAsyncSource', () => {
   test('survives without a logger when the loader throws', async () => {
     const source = createLazyAsyncSource(
       buildDeps({
-        loadBytes: async () => {
+        load: async () => {
           throw new Error('silent');
         },
         logger: undefined,
       }),
     );
     expect(await source.lookup('apple')).toBeNull();
+  });
+
+  test('works with a non-byte TLoaded (e.g. a struct of buffers like StarDict)', async () => {
+    // Verifies the helper is truly generic over TLoaded — the
+    // primary motivation for the unification refactor.
+    type Triple = {a: Uint8Array; b: Uint8Array};
+    const source = createLazyAsyncSource<Triple, Map<string, string>>({
+      name: 'composite',
+      load: async () => ({
+        a: enc('apple|fruit'),
+        b: enc('banana|yellow'),
+      }),
+      parse: triple => {
+        const merged = new Map<string, string>();
+        for (const part of [triple.a, triple.b]) {
+          for (const [k, v] of decodeMap(part)) {
+            merged.set(k, v);
+          }
+        }
+        return merged;
+      },
+      lookup: (parsed, word) => {
+        const def = parsed.get(word.toLowerCase());
+        return def ? {word, definition: def} : null;
+      },
+    });
+    expect((await source.lookup('apple'))?.definition).toBe('fruit');
+    expect((await source.lookup('banana'))?.definition).toBe('yellow');
   });
 });

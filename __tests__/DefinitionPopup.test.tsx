@@ -24,7 +24,7 @@ import {
   hideDefinition,
   __testing__,
 } from '../src/ui/popupController';
-import type {LookupResult} from '../src/core/lookup';
+import type {DefinitionFormat, LookupResult} from '../src/core/lookup';
 
 const closePluginView = PluginManager.closePluginView as jest.Mock;
 
@@ -32,9 +32,10 @@ const found = (
   source: string,
   word: string,
   definition: string,
+  format: DefinitionFormat = 'plain',
 ): LookupResult => ({
   queriedFor: word,
-  hits: [{source, entry: {word, definition}}],
+  hits: [{source, entry: {word, definition, format}}],
 });
 
 const notFound = (queriedFor: string): LookupResult => ({
@@ -136,6 +137,48 @@ describe('DefinitionPopup', () => {
     expect(closePluginView).toHaveBeenCalledTimes(1);
   });
 
+  test('format=html: HTML tags get stripped to readable plain text', () => {
+    const tree = renderPopup();
+    act(() => {
+      showDefinition(
+        found(
+          'WikDict',
+          'namaste',
+          '<i>intj</i><br><ol><li>A salutation</li></ol>',
+          'html',
+        ),
+        'OCR: namaste',
+      );
+    });
+    const text = collectText(tree);
+    // Tags stripped, layout preserved as bullet/newline.
+    expect(text).not.toMatch(/<\/?[a-z]/i);
+    expect(text).toContain('intj');
+    expect(text).toContain('• A salutation');
+  });
+
+  test('format=plain: definition renders verbatim (no parser, no strip)', () => {
+    const tree = renderPopup();
+    // Deliberately HTML-looking content with format=plain — the
+    // popup must NOT strip it because the source declared plain.
+    const literal = '<not stripped> because format is plain';
+    act(() => {
+      showDefinition(found('Custom', 'x', literal, 'plain'));
+    });
+    expect(collectText(tree)).toContain(literal);
+  });
+
+  test('format=wordnet but body is unparseable: falls back to plain rendering', () => {
+    // A source can declare 'wordnet' but ship a body that doesn't
+    // match the WordNet shape (e.g. an empty entry). The popup
+    // shouldn't drop the content; it should render the raw string.
+    const tree = renderPopup();
+    act(() => {
+      showDefinition(found('Custom', 'x', 'a single line', 'wordnet'));
+    });
+    expect(collectText(tree)).toContain('a single line');
+  });
+
   test('renders parsed WordNet senses with POS labels, examples, synonyms', () => {
     const tree = renderPopup();
     const aiEntry =
@@ -147,7 +190,7 @@ describe('DefinitionPopup', () => {
       '"workers in AI hope to imitate intelligence" ' +
       '[syn: {artificial intelligence}]';
     act(() => {
-      showDefinition(found('WordNet', 'AI', aiEntry), 'OCR: AI');
+      showDefinition(found('WordNet', 'AI', aiEntry, 'wordnet'), 'OCR: AI');
     });
     const text = collectText(tree);
     expect(text).toContain('Army Intelligence');

@@ -6,9 +6,11 @@
 // Lookup is case-insensitive. First occurrence of a key wins (later
 // duplicates are ignored), matching StarDict's behaviour.
 
-import {decodeUtf8} from '../../sdk/utf8';
+import {decodeUtf8, stripBom} from '../../sdk/utf8';
 import type {DictEntry, DictSource} from '../lookup';
-import {createLazyAsyncSource, type LoadBytes} from './lazyAsyncSource';
+import {createLazyAsyncSource} from './lazyAsyncSource';
+
+export type LoadBytes = () => Promise<ArrayBuffer | null>;
 
 export type CsvDictDeps = {
   name: string;
@@ -26,9 +28,6 @@ export type CsvDictDeps = {
 };
 
 const DEFAULT_MAX_BYTES = 10 * 1024 * 1024;
-
-const stripBom = (s: string): string =>
-  s.charCodeAt(0) === 0xfeff ? s.slice(1) : s;
 
 // Minimal RFC 4180-style CSV row parser. Caller guarantees
 // `start < s.length`. Handles:
@@ -129,19 +128,36 @@ const buildCsv = (
 
 const lookupCsv = (parsed: ParsedCsv, word: string): DictEntry | null => {
   const hit = parsed.index.get(word.toLowerCase());
-  return hit ? {word: hit.word, definition: hit.definition} : null;
+  return hit
+    ? {word: hit.word, definition: hit.definition, format: 'plain'}
+    : null;
 };
 
-export const createCsvDictSource = (deps: CsvDictDeps): DictSource =>
-  createLazyAsyncSource<ParsedCsv>({
+export const createCsvDictSource = (deps: CsvDictDeps): DictSource => {
+  const maxBytes = deps.maxBytes ?? DEFAULT_MAX_BYTES;
+  const parseCsv = buildCsv({
+    headwordCol: deps.headwordCol ?? 0,
+    definitionCol: deps.definitionCol ?? 1,
+    hasHeader: deps.hasHeader ?? false,
+  });
+  return createLazyAsyncSource<Uint8Array, ParsedCsv>({
     name: deps.name,
-    loadBytes: deps.loadBytes,
-    parse: buildCsv({
-      headwordCol: deps.headwordCol ?? 0,
-      definitionCol: deps.definitionCol ?? 1,
-      hasHeader: deps.hasHeader ?? false,
-    }),
+    load: async () => {
+      const buf = await deps.loadBytes();
+      if (buf === null) {
+        return null;
+      }
+      // Size cap is per-format (10 MB for CSV). The unified lazy
+      // helper is format-agnostic; the check belongs here.
+      if (buf.byteLength > maxBytes) {
+        throw new Error(
+          `file too large: ${buf.byteLength} bytes > ${maxBytes} cap`,
+        );
+      }
+      return new Uint8Array(buf);
+    },
+    parse: parseCsv,
     lookup: lookupCsv,
-    maxBytes: deps.maxBytes ?? DEFAULT_MAX_BYTES,
     logger: deps.logger,
   });
+};

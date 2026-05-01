@@ -1,63 +1,64 @@
-// Shared lazy-load + retry harness for async-loaded DictSources
-// (CSV, JSON, MDX). StarDict is sync-loaded (bundled bytes) and
-// uses its own helper in stardictLookup.ts.
+// Shared lazy-load + retry harness for any async-loaded DictSource.
+// One helper, regardless of whether the format loads a single byte
+// buffer (CSV, JSON) or a multi-buffer composite (StarDict's
+// {ifo, idx, dict, syn?}).
 //
 // Contract:
-//   - Loader returns null intentionally -> 'absent', sticks (no retry).
-//   - Loader / parser throws            -> 'failed', leaves loaded=false
-//                                          so the next lookup retries
-//                                          (transient errors must not
-//                                          permanently dead-end the
-//                                          session).
-//   - Loader returns bytes + parser ok  -> 'success', sticks.
+//   - load() returns null intentionally -> 'absent', sticks (no retry).
+//   - load() / parse() throws            -> 'failed', leaves the
+//                                           state empty so the next
+//                                           lookup retries (transient
+//                                           errors must not permanently
+//                                           dead-end the session).
+//   - load() returns + parse() ok        -> 'success', sticks.
 //
 // Concurrency: the load promise is memoised so concurrent first
 // lookups share one underlying load+parse pass instead of racing.
 
 import type {DictEntry, DictSource} from '../lookup';
 
-export type LoadBytes = () => Promise<ArrayBuffer | null>;
-
-export type LazyAsyncSourceDeps<TParsed> = {
+export type LazyAsyncSourceDeps<TLoaded, TParsed> = {
+  // Display name for the popup section label.
   name: string;
-  loadBytes: LoadBytes;
-  parse: (bytes: Uint8Array) => TParsed;
+  // Optional log-tag prefix for warn messages. Defaults to `name`.
+  // Existing StarDict logs read `[stardict:WordNet] ...` so the
+  // factory passes "stardict:WordNet" here while keeping `name`
+  // = "WordNet" for the popup.
+  logTag?: string;
+  // Loader: returns whatever the parser needs. Null = absent
+  // (deliberate opt-out); throwing = transient failure (will retry).
+  load: () => Promise<TLoaded | null>;
+  // Format-specific parse. Size caps and any other validation belong
+  // here — the harness is format-agnostic.
+  parse: (loaded: TLoaded) => TParsed;
+  // Format-specific lookup against the parsed dict.
   lookup: (parsed: TParsed, word: string) => DictEntry | null;
-  // Optional cap; throw before parse if the file is larger.
-  maxBytes?: number;
   logger?: {warn: (msg: string) => void};
 };
 
-export const createLazyAsyncSource = <TParsed>(
-  deps: LazyAsyncSourceDeps<TParsed>,
+export const createLazyAsyncSource = <TLoaded, TParsed>(
+  deps: LazyAsyncSourceDeps<TLoaded, TParsed>,
 ): DictSource => {
   const warn = deps.logger?.warn ?? (() => {});
-  const tag = deps.name;
+  const tag = deps.logTag ?? deps.name;
   let parsed: TParsed | null = null;
   let absent = false;
   let inFlight: Promise<void> | null = null;
 
   const doLoad = async (): Promise<void> => {
-    let buf: ArrayBuffer | null;
+    let loaded: TLoaded | null;
     try {
-      buf = await deps.loadBytes();
+      loaded = await deps.load();
     } catch (e) {
       warn(`[${tag}] loader threw: ${(e as Error).message}`);
       throw e;
     }
-    if (buf === null) {
+    if (loaded === null) {
       absent = true;
       return;
     }
-    if (deps.maxBytes !== undefined && buf.byteLength > deps.maxBytes) {
-      const e = new Error(
-        `file too large: ${buf.byteLength} bytes > ${deps.maxBytes} cap`,
-      );
-      warn(`[${tag}] ${e.message}`);
-      throw e;
-    }
     try {
-      parsed = deps.parse(new Uint8Array(buf));
+      parsed = deps.parse(loaded);
     } catch (e) {
       warn(`[${tag}] parse threw: ${(e as Error).message}`);
       throw e;

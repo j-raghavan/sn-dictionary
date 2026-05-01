@@ -33,6 +33,10 @@ export type WriteOptions = {
   // exercises the .dict.dz inflate path. Off by default for tests
   // that want deterministic raw bytes.
   gzipDict?: boolean;
+  // StarDict spec field controlling the body format. 'm' = plain
+  // UTF-8 text (default), 'h' = HTML, others are dict-specific.
+  // The reader picks rendering based on this field.
+  sametypesequence?: string;
 };
 
 export const writeStarDict = (
@@ -73,7 +77,7 @@ export const writeStarDict = (
     `wordcount=${sortedWords.length}\n` +
     `idxfilesize=${idx.length}\n` +
     'idxoffsetbits=32\n' +
-    'sametypesequence=m\n';
+    `sametypesequence=${options.sametypesequence ?? 'm'}\n`;
   const ifo = encodeUtf8(ifoText);
   return {ifo, idx, dict};
 };
