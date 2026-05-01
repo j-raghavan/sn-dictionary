@@ -31,24 +31,18 @@ jobs:
       - run: npm ci
       - run: npx jest --coverage
 
-  build:
-    name: Build (${{ matrix.os }})
+  # buildPlugin.{sh,ps1} internally call `npm run prepare:dict` which
+  # fetches the WordNet StarDict from the dict.org mirror (~10MB), verifies
+  # its pinned SHA-256, and emits src/core/dict/data/baseDictData.ts before
+  # Metro bundles. The Windows job is what catches PowerShell-specific
+  # regressions in buildPlugin.ps1 — without it, a broken Windows build
+  # surface can land silently. Two separate jobs (rather than a matrix)
+  # because the `shell:` key cannot reference `matrix.*` — GitHub Actions
+  # evaluates it before matrix expansion.
+  build-linux:
+    name: Build (ubuntu-latest)
     needs: [lint, test]
-    strategy:
-      # Both legs run independently: a PowerShell-only break on Windows
-      # must not be hidden by a passing Ubuntu run, and vice versa.
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            shell: bash
-            build_cmd: chmod +x buildPlugin.sh && ./buildPlugin.sh
-            artifact_suffix: linux
-          - os: windows-latest
-            shell: pwsh
-            build_cmd: powershell -ExecutionPolicy Bypass -File .\buildPlugin.ps1
-            artifact_suffix: windows
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -56,18 +50,31 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
-      # buildPlugin.{sh,ps1} internally call `npm run prepare:dict` which
-      # fetches the WordNet StarDict from the dict.org mirror (~10MB),
-      # verifies its pinned SHA-256, and emits
-      # src/core/dict/data/baseDictData.ts before Metro bundles. The
-      # Windows leg is what catches PowerShell-specific regressions in
-      # buildPlugin.ps1 — if you only care about Linux, fail-fast won't
-      # save you from a broken Windows contributor experience.
       - name: Build plugin
-        shell: ${{ matrix.shell }}
-        run: ${{ matrix.build_cmd }}
+        shell: bash
+        run: chmod +x buildPlugin.sh && ./buildPlugin.sh
       - uses: actions/upload-artifact@v4
         with:
-          name: plugin-${{ matrix.artifact_suffix }}-${{ github.sha }}
+          name: plugin-linux-${{ github.sha }}
+          path: build/outputs/SnDict.snplg
+          retention-days: 30
+
+  build-windows:
+    name: Build (windows-latest)
+    needs: [lint, test]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Build plugin
+        shell: pwsh
+        run: powershell -ExecutionPolicy Bypass -File .\buildPlugin.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: plugin-windows-${{ github.sha }}
           path: build/outputs/SnDict.snplg
           retention-days: 30
