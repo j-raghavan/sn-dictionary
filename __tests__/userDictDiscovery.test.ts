@@ -503,4 +503,101 @@ describe('discoverUserDicts', () => {
       (deps.logger?.warn as jest.Mock).mock.calls.flat().join(' '),
     ).toMatch(/no recognised dict files/);
   });
+
+  test('discovers a StarDict folder with a .syn file alongside the triple', async () => {
+    // Build a synthetic dict with Latin headwords + a synonym index
+    // aliasing one of them, so we can verify the .syn fetch + merge
+    // path end-to-end through discovery.
+    const triple = stardictBytes({apple: 'a fruit (canonical)'});
+    // Hand-build a tiny .syn pointing the alias "malum" at idx[0].
+    const synBytes = new Uint8Array([
+      // 'malum'
+      0x6d, 0x61, 0x6c, 0x75, 0x6d,
+      0,
+      // index 0, big-endian u32
+      0, 0, 0, 0,
+    ]);
+    const synBuffer = synBytes.buffer.slice(
+      synBytes.byteOffset,
+      synBytes.byteOffset + synBytes.byteLength,
+    ) as ArrayBuffer;
+    const deps = baseDeps({
+      [`${ROOT}/wiki/dict.ifo`]: triple.ifo,
+      [`${ROOT}/wiki/dict.idx`]: triple.idx,
+      [`${ROOT}/wiki/dict.dict.dz`]: triple.dict,
+      [`${ROOT}/wiki/dict.syn`]: synBuffer,
+    });
+    const sources = await discoverUserDicts(deps);
+    expect(sources.length).toBe(1);
+    // The synonym "malum" resolves to apple's canonical entry.
+    expect((await sources[0].lookup('malum'))?.definition).toBe(
+      'a fruit (canonical)',
+    );
+    expect((await sources[0].lookup('apple'))?.definition).toBe(
+      'a fruit (canonical)',
+    );
+  });
+
+  test('StarDict folder with no .syn still discovers and works', async () => {
+    // Back-compat: dicts without a .syn file should behave exactly as
+    // they did before .syn support landed.
+    const triple = stardictBytes({apple: 'a fruit'});
+    const deps = baseDeps({
+      [`${ROOT}/plain/dict.ifo`]: triple.ifo,
+      [`${ROOT}/plain/dict.idx`]: triple.idx,
+      [`${ROOT}/plain/dict.dict.dz`]: triple.dict,
+    });
+    const sources = await discoverUserDicts(deps);
+    expect(sources.length).toBe(1);
+    expect((await sources[0].lookup('apple'))?.definition).toBe('a fruit');
+  });
+
+  test('a failing .syn fetch is non-fatal (dict still loads without synonyms)', async () => {
+    const triple = stardictBytes({apple: 'a fruit'});
+    const fileUtils: FileUtilsLike = {
+      exists: jest.fn(async () => true),
+      listFiles: jest.fn(async (path: string) => {
+        if (path === ROOT) {
+          return [fileEntry(`${ROOT}/wiki`, 0)];
+        }
+        return [
+          fileEntry(`${ROOT}/wiki/dict.ifo`, 1),
+          fileEntry(`${ROOT}/wiki/dict.idx`, 1),
+          fileEntry(`${ROOT}/wiki/dict.dict.dz`, 1),
+          fileEntry(`${ROOT}/wiki/dict.syn`, 1),
+        ];
+      }),
+    };
+    const fetchFn = jest.fn(async (url: string) => {
+      const path = url.replace(/^file:\/\//, '');
+      if (path.endsWith('.syn')) {
+        // Simulate a fetch failure on .syn only.
+        throw new Error('syn read failed');
+      }
+      if (path.endsWith('.ifo')) {
+        return {ok: true, status: 200, arrayBuffer: async () => triple.ifo} as Response;
+      }
+      if (path.endsWith('.idx')) {
+        return {ok: true, status: 200, arrayBuffer: async () => triple.idx} as Response;
+      }
+      if (path.endsWith('.dict.dz')) {
+        return {ok: true, status: 200, arrayBuffer: async () => triple.dict} as Response;
+      }
+      return {ok: false, status: 404, arrayBuffer: async () => new ArrayBuffer(0)} as Response;
+    });
+    const logger = buildLogger();
+    const sources = await discoverUserDicts({
+      fileUtils,
+      fetchFn: fetchFn as unknown as typeof fetch,
+      logger,
+      rootPath: ROOT,
+    });
+    expect(sources.length).toBe(1);
+    // Dict still works with .idx-only headwords.
+    expect((await sources[0].lookup('apple'))?.definition).toBe('a fruit');
+    // The .syn failure was logged with our continuation message.
+    expect(
+      (logger.warn as jest.Mock).mock.calls.flat().join(' '),
+    ).toMatch(/\.syn fetch threw.*continuing without synonyms/);
+  });
 });

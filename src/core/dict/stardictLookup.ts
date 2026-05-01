@@ -13,6 +13,10 @@ export type DictBytes = {
   ifo: Uint8Array;
   idx: Uint8Array;
   dict: Uint8Array;
+  // Optional StarDict synonym index. If present, alternate spellings
+  // / transliterations / inflected forms get merged into the lookup
+  // map alongside the .idx headwords.
+  syn?: Uint8Array;
 };
 
 export type LoadDictBytes = () => Promise<DictBytes | null>;
@@ -46,7 +50,7 @@ export const createStardictLookup = (
       return;
     }
     try {
-      dict = buildDict(bytes.ifo, bytes.idx, bytes.dict);
+      dict = buildDict(bytes.ifo, bytes.idx, bytes.dict, bytes.syn);
     } catch (e) {
       warn(`[${tag}] buildDict threw: ${(e as Error).message}`);
       throw e;

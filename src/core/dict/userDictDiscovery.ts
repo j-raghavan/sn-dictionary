@@ -112,7 +112,17 @@ const readMetaName = async (
 };
 
 type DetectedFormat =
-  | {kind: 'stardict'; ifo: string; idx: string; dict: string}
+  | {
+      kind: 'stardict';
+      ifo: string;
+      idx: string;
+      dict: string;
+      // Optional StarDict synonym index file. Wiktionary-derived
+      // dicts use this to ship Latin transliterations alongside
+      // native-script headwords; reading it makes Latin lookups
+      // work for non-Latin-script languages.
+      syn?: string;
+    }
   | {kind: 'csv'; path: string}
   | {kind: 'json'; path: string}
   | {kind: 'mdx'; path: string}
@@ -126,6 +136,7 @@ const detectFormat = (files: FileEntry[]): DetectedFormat => {
   const dict = filesOnly.find(
     f => extOf(f.path) === '.dict.dz' || extOf(f.path) === '.dict',
   );
+  const syn = filesOnly.find(f => extOf(f.path) === '.syn');
   const csv = filesOnly.find(f => extOf(f.path) === '.csv');
   // Exclude meta.json from JSON dict candidates.
   const json = filesOnly.find(
@@ -168,7 +179,13 @@ const detectFormat = (files: FileEntry[]): DetectedFormat => {
   }
   // present.length === 1 by elimination: pick the matching detector.
   if (stardictComplete) {
-    return {kind: 'stardict', ifo: ifo.path, idx: idx.path, dict: dict.path};
+    return {
+      kind: 'stardict',
+      ifo: ifo.path,
+      idx: idx.path,
+      dict: dict.path,
+      syn: syn ? syn.path : undefined,
+    };
   }
   if (csv) {
     return {kind: 'csv', path: csv.path};
@@ -212,15 +229,27 @@ const buildSourceForFolder = async (
   const displayName = metaName ?? folderName;
 
   if (detected.kind === 'stardict') {
+    const synPath = detected.syn;
     return createStardictLookup({
       name: displayName,
       loadBase: async (): Promise<DictBytes | null> => {
-        const [ifo, idx, dict] = await Promise.all([
+        const [ifo, idx, dict, syn] = await Promise.all([
           fetchAsUint8(detected.ifo, fetchFn),
           fetchAsUint8(detected.idx, fetchFn),
           fetchAsUint8(detected.dict, fetchFn),
+          // .syn is optional. Fetch failures here aren't fatal — fall
+          // back to the .idx-only path, which is what we did before
+          // .syn support landed.
+          synPath
+            ? fetchAsUint8(synPath, fetchFn).catch(e => {
+                logger.warn(
+                  `${TAG} folder "${folderName}" .syn fetch threw: ${(e as Error).message} — continuing without synonyms`,
+                );
+                return undefined;
+              })
+            : Promise.resolve(undefined),
         ]);
-        return {ifo, idx, dict};
+        return syn ? {ifo, idx, dict, syn} : {ifo, idx, dict};
       },
       logger,
     });
