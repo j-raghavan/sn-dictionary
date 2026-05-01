@@ -9,7 +9,8 @@
 
 import {decodeUtf8} from '../../sdk/utf8';
 import type {DictEntry, DictSource} from '../lookup';
-import {createLazyAsyncSource, type LoadBytes} from './lazyAsyncSource';
+import {createLazyAsyncSource} from './lazyAsyncSource';
+import type {LoadBytes} from './csvDictSource';
 
 export type JsonDictDeps = {
   name: string;
@@ -98,12 +99,26 @@ const lookupJson = (parsed: ParsedJson, word: string): DictEntry | null => {
   return hit ? {word: hit.word, definition: hit.definition} : null;
 };
 
-export const createJsonDictSource = (deps: JsonDictDeps): DictSource =>
-  createLazyAsyncSource<ParsedJson>({
+export const createJsonDictSource = (deps: JsonDictDeps): DictSource => {
+  const maxBytes = deps.maxBytes ?? DEFAULT_MAX_BYTES;
+  return createLazyAsyncSource<Uint8Array, ParsedJson>({
     name: deps.name,
-    loadBytes: deps.loadBytes,
+    load: async () => {
+      const buf = await deps.loadBytes();
+      if (buf === null) {
+        return null;
+      }
+      // Size cap is per-format (10 MB for JSON). The unified lazy
+      // helper is format-agnostic; the check belongs here.
+      if (buf.byteLength > maxBytes) {
+        throw new Error(
+          `file too large: ${buf.byteLength} bytes > ${maxBytes} cap`,
+        );
+      }
+      return new Uint8Array(buf);
+    },
     parse: buildJson,
     lookup: lookupJson,
-    maxBytes: deps.maxBytes ?? DEFAULT_MAX_BYTES,
     logger: deps.logger,
   });
+};

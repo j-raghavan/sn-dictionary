@@ -7,6 +7,7 @@
 // dicts (three files fetched from external storage).
 
 import type {DictEntry, DictSource} from '../lookup';
+import {createLazyAsyncSource} from './lazyAsyncSource';
 import {buildDict, lookupDict, type ParsedDict} from './stardict/stardictDict';
 
 export type DictBytes = {
@@ -27,69 +28,24 @@ export type StardictLookupDeps = {
   logger?: {warn: (msg: string) => void};
 };
 
+const lookupParsed = (
+  parsed: ParsedDict,
+  word: string,
+): DictEntry | null => {
+  const hit = lookupDict(parsed, word);
+  return hit ? {word: hit.canonicalWord, definition: hit.definition} : null;
+};
+
 export const createStardictLookup = (
   deps: StardictLookupDeps,
-): DictSource => {
-  const warn = deps.logger?.warn ?? (() => {});
-  const tag = `stardict:${deps.name}`;
-  let dict: ParsedDict | null = null;
-  let absent = false;
-  let inFlight: Promise<void> | null = null;
-
-  const doLoad = async (): Promise<void> => {
-    let bytes: DictBytes | null;
-    try {
-      bytes = await deps.loadBase();
-    } catch (e) {
-      warn(`[${tag}] loader threw: ${(e as Error).message}`);
-      throw e;
-    }
-    if (bytes === null) {
-      // Intentional opt-out — stick so we don't burn loader calls.
-      absent = true;
-      return;
-    }
-    try {
-      dict = buildDict(bytes.ifo, bytes.idx, bytes.dict, bytes.syn);
-    } catch (e) {
-      warn(`[${tag}] buildDict threw: ${(e as Error).message}`);
-      throw e;
-    }
-  };
-
-  const ensureLoaded = async (): Promise<void> => {
-    if (dict !== null || absent) {
-      return;
-    }
-    // Memoise the in-flight promise so concurrent first lookups share
-    // one underlying load+parse pass. Clear on settle so a failed
-    // attempt can be retried by the NEXT lookup (not by the racing
-    // concurrent ones — they all observe the same failure here).
-    if (inFlight === null) {
-      inFlight = doLoad().finally(() => {
-        inFlight = null;
-      });
-    }
-    try {
-      await inFlight;
-    } catch {
-      // observe via dict===null below
-    }
-  };
-
-  return {
+): DictSource =>
+  createLazyAsyncSource<DictBytes, ParsedDict>({
     name: deps.name,
-    async lookup(word: string): Promise<DictEntry | null> {
-      const trimmed = word.trim();
-      if (!trimmed) {
-        return null;
-      }
-      await ensureLoaded();
-      if (dict === null) {
-        return null;
-      }
-      const hit = lookupDict(dict, trimmed);
-      return hit ? {word: hit.canonicalWord, definition: hit.definition} : null;
-    },
-  };
-};
+    // Preserve the long-standing "[stardict:<name>] ..." log prefix
+    // so existing on-device logcat searches and tests keep working.
+    logTag: `stardict:${deps.name}`,
+    load: deps.loadBase,
+    parse: bytes => buildDict(bytes.ifo, bytes.idx, bytes.dict, bytes.syn),
+    lookup: lookupParsed,
+    logger: deps.logger,
+  });

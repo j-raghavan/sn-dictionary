@@ -74,7 +74,7 @@ describe('createStardictLookup (DictSource)', () => {
     });
     expect(await source.lookup('apple')).toBeNull();
     expect(warn).toHaveBeenCalledWith(
-      expect.stringMatching(/stardict:WordNet.*buildDict threw/),
+      expect.stringMatching(/stardict:WordNet.*parse threw/),
     );
   });
 
