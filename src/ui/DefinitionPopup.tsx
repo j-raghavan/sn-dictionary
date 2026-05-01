@@ -1,5 +1,5 @@
 import React, {useCallback, useEffect, useMemo, useState} from 'react';
-import {Pressable, ScrollView, StyleSheet, Text, View} from 'react-native';
+import {Pressable, ScrollView, Text, View} from 'react-native';
 import {PluginManager} from 'sn-plugin-lib';
 import {
   getCurrentState,
@@ -7,12 +7,9 @@ import {
   subscribe,
   type PopupState,
 } from './popupController';
-import {
-  labelForPos,
-  parseWordNetEntry,
-  type WordNetSense,
-} from './wordnetFormatter';
-import {htmlToPlainText} from './htmlToPlainText';
+import {parseWordNetEntry} from './wordnetFormatter';
+import {SourceSection} from './SourceSection';
+import {popupStyles as styles} from './popupStyles';
 import {t} from '../i18n/i18n';
 import type {SourceHit} from '../core/lookup';
 
@@ -42,8 +39,8 @@ export default function DefinitionPopup(): React.JSX.Element {
 
   // Parse each hit's WordNet entry once per definition change. Memoise
   // so subsequent re-renders (e.g. from popupController state echoes)
-  // don't re-tokenise. CSV/JSON/MDX dicts in Step 3 will go through
-  // the same parser; non-WordNet shapes fall back to raw text below.
+  // don't re-tokenise. Non-WordNet shapes fall back to the
+  // HTML-strip / plain-text path inside SourceSection.
   const parsedHits = useMemo<ParsedHit[]>(() => {
     if (!state.visible || state.result.hits.length === 0) {
       return [];
@@ -99,208 +96,3 @@ export default function DefinitionPopup(): React.JSX.Element {
     </View>
   );
 }
-
-type SourceSectionProps = {
-  hit: SourceHit;
-  parsed: ReturnType<typeof parseWordNetEntry>;
-  showBadge: boolean;
-  showDivider: boolean;
-};
-
-const SourceSection = ({
-  hit,
-  parsed,
-  showBadge,
-  showDivider,
-}: SourceSectionProps): React.JSX.Element => (
-  <View style={[styles.section, showDivider && styles.sectionDivider]}>
-    {showBadge ? (
-      <View style={styles.sectionHeader}>
-        <Text style={styles.sourceBadge}>{hit.source}</Text>
-      </View>
-    ) : null}
-    {parsed && !parsed.parseFailed ? (
-      <SenseList senses={parsed.senses} />
-    ) : (
-      // Fallback for non-WordNet content. Run through the HTML
-      // stripper so dicts with sametypesequence=h (Wiktionary-derived
-      // StarDicts and similar) render as readable plain text instead
-      // of leaking <i>/<br>/<ol>/<li> tags into the popup. No-op for
-      // genuinely plain text (no `<` or `&`).
-      <Text style={styles.definition}>
-        {htmlToPlainText(hit.entry.definition)}
-      </Text>
-    )}
-  </View>
-);
-
-type SenseListProps = {senses: WordNetSense[]};
-
-const SenseList = ({senses}: SenseListProps): React.JSX.Element => (
-  <View>
-    {senses.map((sense, i) => (
-      <SenseBlock
-        key={`${sense.pos ?? '?'}-${sense.index}-${i}`}
-        sense={sense}
-        showDivider={i > 0}
-      />
-    ))}
-  </View>
-);
-
-type SenseBlockProps = {sense: WordNetSense; showDivider: boolean};
-
-const SenseBlock = ({sense, showDivider}: SenseBlockProps): React.JSX.Element => (
-  <View style={[styles.sense, showDivider && styles.senseDivider]}>
-    <View style={styles.senseHeader}>
-      {sense.pos ? (
-        <Text style={styles.posBadge}>{labelForPos(sense.pos)}</Text>
-      ) : null}
-      <Text style={styles.senseIndex}>{`${sense.index}.`}</Text>
-    </View>
-    <Text style={styles.definition}>{sense.definition}</Text>
-    {sense.examples.length > 0 ? (
-      <View style={styles.examples}>
-        {sense.examples.map((ex, j) => (
-          <Text key={j} style={styles.example}>
-            “{ex}”
-          </Text>
-        ))}
-      </View>
-    ) : null}
-    {sense.synonyms.length > 0 ? (
-      <Text style={styles.synonyms}>
-        <Text style={styles.synonymsLabel}>{`${t('popup.synonyms')}: `}</Text>
-        {sense.synonyms.join(', ')}
-      </Text>
-    ) : null}
-  </View>
-);
-
-const styles = StyleSheet.create({
-  hidden: {width: 0, height: 0},
-  backdrop: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 24,
-  },
-  card: {
-    minWidth: 480,
-    maxWidth: 640,
-    maxHeight: 520,
-    backgroundColor: '#ffffff',
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#000000',
-    padding: 20,
-  },
-  word: {
-    fontSize: 28,
-    fontWeight: '700',
-    color: '#000000',
-  },
-  ocrLabel: {
-    marginTop: 4,
-    fontSize: 14,
-    color: '#555555',
-  },
-  body: {
-    marginTop: 12,
-    marginBottom: 16,
-  },
-  section: {
-    paddingTop: 4,
-  },
-  sectionDivider: {
-    marginTop: 14,
-    paddingTop: 14,
-    borderTopWidth: 1,
-    borderTopColor: '#bbbbbb',
-  },
-  sectionHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  sourceBadge: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#000000',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderWidth: 1,
-    borderColor: '#000000',
-    borderRadius: 3,
-  },
-  definition: {
-    fontSize: 17,
-    lineHeight: 24,
-    color: '#000000',
-  },
-  notFound: {
-    fontSize: 18,
-    color: '#555555',
-    fontStyle: 'italic',
-  },
-  sense: {
-    paddingVertical: 10,
-  },
-  senseDivider: {
-    borderTopWidth: 1,
-    borderTopColor: '#dddddd',
-  },
-  senseHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 6,
-  },
-  posBadge: {
-    fontSize: 12,
-    fontStyle: 'italic',
-    color: '#555555',
-    marginRight: 8,
-    paddingHorizontal: 6,
-    paddingVertical: 1,
-    borderWidth: 1,
-    borderColor: '#888888',
-    borderRadius: 3,
-  },
-  senseIndex: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#000000',
-  },
-  examples: {
-    marginTop: 6,
-    marginLeft: 12,
-  },
-  example: {
-    fontSize: 15,
-    fontStyle: 'italic',
-    color: '#444444',
-    lineHeight: 22,
-  },
-  synonyms: {
-    marginTop: 8,
-    fontSize: 14,
-    color: '#444444',
-    lineHeight: 20,
-  },
-  synonymsLabel: {
-    fontWeight: '600',
-    color: '#000000',
-  },
-  closeButton: {
-    alignSelf: 'flex-end',
-    paddingVertical: 8,
-    paddingHorizontal: 20,
-    borderWidth: 1,
-    borderColor: '#000000',
-    borderRadius: 4,
-  },
-  closeLabel: {
-    fontSize: 16,
-    color: '#000000',
-  },
-});
