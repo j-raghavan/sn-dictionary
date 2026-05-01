@@ -7,7 +7,7 @@
 //
 // Lookup is case-insensitive. First occurrence of a key wins.
 
-import {decodeUtf8} from '../../sdk/utf8';
+import {decodeUtf8, stripBom} from '../../sdk/utf8';
 import type {DictEntry, DictSource} from '../lookup';
 import {createLazyAsyncSource} from './lazyAsyncSource';
 import type {LoadBytes} from './csvDictSource';
@@ -25,9 +25,6 @@ const DEFAULT_MAX_BYTES = 10 * 1024 * 1024;
 type ParsedJson = {
   index: Map<string, {word: string; definition: string}>;
 };
-
-const stripBom = (s: string): string =>
-  s.charCodeAt(0) === 0xfeff ? s.slice(1) : s;
 
 const pickHeadword = (row: Record<string, unknown>): string | undefined => {
   const candidates = ['word', 'headword', 'term', 'key'];

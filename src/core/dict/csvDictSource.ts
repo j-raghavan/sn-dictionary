@@ -6,7 +6,7 @@
 // Lookup is case-insensitive. First occurrence of a key wins (later
 // duplicates are ignored), matching StarDict's behaviour.
 
-import {decodeUtf8} from '../../sdk/utf8';
+import {decodeUtf8, stripBom} from '../../sdk/utf8';
 import type {DictEntry, DictSource} from '../lookup';
 import {createLazyAsyncSource} from './lazyAsyncSource';
 
@@ -28,9 +28,6 @@ export type CsvDictDeps = {
 };
 
 const DEFAULT_MAX_BYTES = 10 * 1024 * 1024;
-
-const stripBom = (s: string): string =>
-  s.charCodeAt(0) === 0xfeff ? s.slice(1) : s;
 
 // Minimal RFC 4180-style CSV row parser. Caller guarantees
 // `start < s.length`. Handles:

@@ -29,10 +29,14 @@ export const SourceSection = ({
   showBadge,
   showDivider,
 }: SourceSectionProps): React.JSX.Element => {
-  // Memoise the format-specific transformation. Re-runs only when
-  // the entry's content changes, not on every popup re-render.
+  // Memoise the format-specific transformation. Key on the primitive
+  // fields rather than the entry object so a parent re-creating
+  // {word, definition, format} with the same values doesn't churn
+  // the WordNet parser. Today's call paths produce a fresh entry
+  // only when a new lookup completes, but keying on primitives makes
+  // that property explicit and footgun-free for future call sites.
+  const {definition, format} = hit.entry;
   const body = useMemo(() => {
-    const {definition, format} = hit.entry;
     if (format === 'wordnet') {
       const parsed = parseWordNetEntry(definition);
       if (parsed && !parsed.parseFailed) {
@@ -47,7 +51,7 @@ export const SourceSection = ({
     }
     // 'plain'
     return <Text style={styles.definition}>{definition}</Text>;
-  }, [hit.entry]);
+  }, [definition, format]);
 
   return (
     <View style={[styles.section, showDivider && styles.sectionDivider]}>
