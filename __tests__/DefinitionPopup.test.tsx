@@ -21,6 +21,7 @@ import {PluginManager} from 'sn-plugin-lib';
 import DefinitionPopup from '../src/ui/DefinitionPopup';
 import {
   showDefinition,
+  showRecognizing,
   hideDefinition,
   __testing__,
 } from '../src/ui/popupController';
@@ -354,5 +355,52 @@ describe('DefinitionPopup', () => {
     // Single section — no badge label.
     expect(text).not.toContain('Solo');
     expect(text).toMatch(/Loading…/);
+  });
+
+  test('shows the localised "Recognizing…" message when the popup is in the recognizing kind', () => {
+    // Tap-to-popup speedup: the lasso flow opens the popup on tap,
+    // before any OCR or lookup result exists. The popup must render
+    // a recognizing message — not a stale prior result, not an
+    // empty card.
+    const tree = renderPopup();
+    act(() => {
+      showRecognizing();
+    });
+    const text = collectText(tree);
+    expect(text).toContain('Recognizing…');
+    // Must not surface lookup-result chrome that has no value here.
+    expect(text).not.toMatch(/no definition found/i);
+    expect(text).not.toMatch(/Loading…/);
+    // Close button is always available so the user can dismiss.
+    expect(text).toContain('Close');
+  });
+
+  test('renders the OCR label alongside Recognizing… when supplied', () => {
+    const tree = renderPopup();
+    act(() => {
+      showRecognizing('OCR: hello');
+    });
+    const text = collectText(tree);
+    expect(text).toContain('Recognizing…');
+    expect(text).toContain('OCR: hello');
+  });
+
+  test('transitions cleanly from recognizing to result without a flicker of stale state', () => {
+    // Simulates the on-device lifecycle: tap → showRecognizing →
+    // OCR completes → showDefinition. The popup must end on the
+    // result kind with the freshly-emitted hits, not retain any
+    // recognizing chrome.
+    const tree = renderPopup();
+    act(() => {
+      showRecognizing();
+    });
+    expect(collectText(tree)).toContain('Recognizing…');
+    act(() => {
+      showDefinition(found('WordNet', 'hello', 'a greeting'), 'OCR: hello');
+    });
+    const text = collectText(tree);
+    expect(text).not.toContain('Recognizing…');
+    expect(text).toContain('hello');
+    expect(text).toContain('a greeting');
   });
 });

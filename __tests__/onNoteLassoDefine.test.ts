@@ -33,6 +33,8 @@ const buildDeps = (overrides: Partial<DefineDeps> = {}): DefineDeps => {
       return true;
     }),
   };
+  const showRecognizing = jest.fn();
+  const hidePopup = jest.fn();
   const deps: DefineDeps = {
     comm: {
       getLassoElementTypeCounts: jest.fn(async () => {
@@ -70,7 +72,9 @@ const buildDeps = (overrides: Partial<DefineDeps> = {}): DefineDeps => {
     lookup: {
       lookup: jest.fn(async () => lookupResult),
     },
+    showRecognizing,
     showResult,
+    hidePopup,
     logger: {log: jest.fn(), warn: jest.fn(), error: jest.fn()},
     ...overrides,
   };
@@ -315,6 +319,121 @@ describe('onNoteLassoDefine', () => {
     expect((deps.showResult as jest.Mock).mock.calls[1][0]).toEqual(finalSnapshot);
     expect((deps.showResult as jest.Mock).mock.calls[2][0]).toEqual(finalSnapshot);
     expect(deps.view.closePluginView).not.toHaveBeenCalled();
+  });
+
+  test('opens the "Recognizing…" popup BEFORE OCR runs, ahead of any showResult call', async () => {
+    // Tap-to-popup speedup: the user must see feedback within
+    // hundreds of ms, not the 5–8 s the firmware needs to marshal
+    // strokes + run OCR. Verifies showRecognizing fires before the
+    // SDK round-trips kick off.
+    const callSequence: string[] = [];
+    const baseComm = buildDeps().comm;
+    const deps = buildDeps({
+      comm: {
+        ...baseComm,
+        getLassoElements: jest.fn(async () => {
+          callSequence.push('getLassoElements');
+          return ok([{}]);
+        }),
+        recognizeElements: jest.fn(async () => {
+          callSequence.push('recognizeElements');
+          return ok('hello');
+        }),
+      } as DefineDeps['comm'],
+      showRecognizing: jest.fn(() => callSequence.push('showRecognizing')),
+      showResult: jest.fn(() => callSequence.push('showResult')),
+    });
+    await onNoteLassoDefine(deps);
+    expect(callSequence[0]).toBe('showRecognizing');
+    expect(callSequence.indexOf('showRecognizing')).toBeLessThan(
+      callSequence.indexOf('getLassoElements'),
+    );
+    expect(callSequence.indexOf('showRecognizing')).toBeLessThan(
+      callSequence.indexOf('recognizeElements'),
+    );
+  });
+
+  test('parallelises getLassoElements + getCurrentFilePath + getCurrentPageNum (concurrent SDK calls)', async () => {
+    // Without parallelisation the three independent SDK calls cost
+    // ~1 s each and stack ~3 s onto tap-to-popup. Promise.all over
+    // them shaves that down. The test verifies they're started
+    // concurrently — each call records its start, and we assert the
+    // start times overlap rather than serialising.
+    let lassoStarted = -1;
+    let pathStarted = -1;
+    let pageNumStarted = -1;
+    let lassoResolve!: () => void;
+    let pathResolve!: () => void;
+    let pageNumResolve!: () => void;
+    const lassoP = new Promise<{success: true; result: Object[]}>(r => {
+      lassoResolve = () => r({success: true, result: [{}]});
+    });
+    const pathP = new Promise<{success: true; result: string}>(r => {
+      pathResolve = () => r({success: true, result: '/notes/x.note'});
+    });
+    const pageNumP = new Promise<{success: true; result: number}>(r => {
+      pageNumResolve = () => r({success: true, result: 0});
+    });
+    let counter = 0;
+    const baseComm = buildDeps().comm;
+    const deps = buildDeps({
+      comm: {
+        ...baseComm,
+        getLassoElements: jest.fn(() => {
+          lassoStarted = counter++;
+          return lassoP;
+        }),
+        getCurrentFilePath: jest.fn(() => {
+          pathStarted = counter++;
+          return pathP;
+        }),
+        getCurrentPageNum: jest.fn(() => {
+          pageNumStarted = counter++;
+          return pageNumP;
+        }),
+      } as DefineDeps['comm'],
+    });
+    const outcome = onNoteLassoDefine(deps);
+    // All three should have been started before any has resolved.
+    await Promise.resolve(); // microtask flush
+    expect(lassoStarted).toBeGreaterThanOrEqual(0);
+    expect(pathStarted).toBeGreaterThanOrEqual(0);
+    expect(pageNumStarted).toBeGreaterThanOrEqual(0);
+    // Now resolve them and let the handler complete.
+    lassoResolve();
+    pathResolve();
+    pageNumResolve();
+    expect(await outcome).toBe('ok');
+  });
+
+  test('hides the Recognizing popup on recognize-empty so the host overlay can close', async () => {
+    const deps = buildDeps({
+      comm: {
+        ...buildDeps().comm,
+        recognizeElements: jest.fn(async () => ok('')),
+      } as DefineDeps['comm'],
+    });
+    const outcome = await onNoteLassoDefine(deps);
+    expect(outcome).toBe('recognize-empty');
+    expect(deps.showRecognizing).toHaveBeenCalled();
+    expect(deps.hidePopup).toHaveBeenCalled();
+    expect(deps.view.closePluginView).toHaveBeenCalled();
+  });
+
+  test('hides the Recognizing popup on a pipeline crash', async () => {
+    const deps = buildDeps({
+      comm: {
+        ...buildDeps().comm,
+        getLassoElements: jest.fn(async () => {
+          throw new Error('lasso fetch boom');
+        }),
+      } as DefineDeps['comm'],
+    });
+    const outcome = await onNoteLassoDefine(deps);
+    expect(outcome).toBe('failed');
+    expect(deps.showRecognizing).toHaveBeenCalled();
+    expect(deps.hidePopup).toHaveBeenCalled();
+    expect(deps.view.closePluginView).toHaveBeenCalled();
   });
 
   test('lookup throws WITHOUT emitting any snapshot: outcome is failed and view is closed', async () => {

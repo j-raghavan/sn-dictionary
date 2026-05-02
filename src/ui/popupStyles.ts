@@ -76,6 +76,13 @@ export const popupStyles = StyleSheet.create({
     color: '#555555',
     fontStyle: 'italic',
   },
+  recognizing: {
+    fontSize: 18,
+    color: '#000000',
+    fontWeight: '600',
+    textAlign: 'center',
+    paddingVertical: 28,
+  },
   sense: {
     paddingVertical: 10,
   },

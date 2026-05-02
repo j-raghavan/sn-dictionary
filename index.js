@@ -17,7 +17,11 @@ import {createMultiDictLookup} from './src/core/dict/multiDictLookup';
 import {discoverUserDicts} from './src/core/dict/userDictDiscovery';
 import {primeAllConcurrently} from './src/core/dict/primeAllConcurrently';
 import {loadBaseDictFromGenerated} from './src/core/dict/data/baseDictData';
-import {showDefinition} from './src/ui/popupController';
+import {
+  hideDefinition,
+  showDefinition,
+  showRecognizing,
+} from './src/ui/popupController';
 
 AppRegistry.registerComponent(appName, () => App);
 
@@ -99,7 +103,9 @@ const noteHandlerDeps = {
   view: PluginManager,
   file: PluginFileAPI,
   lookup,
+  showRecognizing,
   showResult: showDefinition,
+  hidePopup: hideDefinition,
   logger,
 };
 

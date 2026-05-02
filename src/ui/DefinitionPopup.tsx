@@ -36,6 +36,32 @@ export default function DefinitionPopup(): React.JSX.Element {
     return <View pointerEvents="none" style={styles.hidden} />;
   }
 
+  if (state.kind === 'recognizing') {
+    // Tap-to-popup speedup: the lasso flow opens the popup
+    // immediately on tap, BEFORE the firmware finishes lasso-element
+    // marshalling and OCR. Without this state, the user stares at
+    // the page for 5–8 s while those SDK calls run; with it, the
+    // popup pops within ~300 ms and shows a localised "Recognizing…"
+    // until the OCR'd word and dictionary results arrive.
+    return (
+      <View style={styles.backdrop}>
+        <View style={styles.card}>
+          <Text style={styles.recognizing}>{t('popup.recognizing')}</Text>
+          {state.ocrLabel ? (
+            <Text style={styles.ocrLabel}>{state.ocrLabel}</Text>
+          ) : null}
+          <Pressable
+            accessibilityRole="button"
+            onPress={handleClose}
+            style={styles.closeButton}>
+            <Text style={styles.closeLabel}>{t('popup.close')}</Text>
+          </Pressable>
+        </View>
+      </View>
+    );
+  }
+
+  // state.kind === 'result'
   const hits = state.result.hits;
   const loading = state.result.loading ?? [];
   const isWaitingForFirstHit = hits.length === 0 && loading.length > 0;

@@ -25,7 +25,8 @@ export type StringId =
   | 'popup.ocr'
   | 'popup.notFoundFor'
   | 'popup.close'
-  | 'popup.loading';
+  | 'popup.loading'
+  | 'popup.recognizing';
 
 // Locale codes use the firmware's convention: en, zh_CN, zh_TW, ja,
 // th, nl. Underscore (not hyphen) matches PluginButton.nameMap shape
@@ -37,6 +38,7 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.notFoundFor': 'No definition found for',
     'popup.close': 'Close',
     'popup.loading': 'Loading…',
+    'popup.recognizing': 'Recognizing…',
   },
   zh_CN: {
     'popup.synonyms': '同义词',
@@ -44,6 +46,7 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.notFoundFor': '未找到定义：',
     'popup.close': '关闭',
     'popup.loading': '加载中…',
+    'popup.recognizing': '识别中…',
   },
   zh_TW: {
     'popup.synonyms': '同義詞',
@@ -51,6 +54,7 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.notFoundFor': '未找到定義：',
     'popup.close': '關閉',
     'popup.loading': '載入中…',
+    'popup.recognizing': '辨識中…',
   },
   ja: {
     'popup.synonyms': '類義語',
@@ -58,6 +62,7 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.notFoundFor': '定義が見つかりません：',
     'popup.close': '閉じる',
     'popup.loading': '読み込み中…',
+    'popup.recognizing': '認識中…',
   },
   th: {
     'popup.synonyms': 'คำพ้องความหมาย',
@@ -65,6 +70,7 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.notFoundFor': 'ไม่พบคำจำกัดความสำหรับ',
     'popup.close': 'ปิด',
     'popup.loading': 'กำลังโหลด…',
+    'popup.recognizing': 'กำลังรู้จำ…',
   },
   nl: {
     'popup.synonyms': 'Synoniemen',
@@ -72,6 +78,7 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.notFoundFor': 'Geen definitie gevonden voor',
     'popup.close': 'Sluiten',
     'popup.loading': 'Bezig met laden…',
+    'popup.recognizing': 'Bezig met herkennen…',
   },
   de: {
     'popup.synonyms': 'Synonyme',
@@ -79,6 +86,7 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.notFoundFor': 'Keine Definition gefunden für',
     'popup.close': 'Schließen',
     'popup.loading': 'Wird geladen…',
+    'popup.recognizing': 'Wird erkannt…',
   },
 };
 
