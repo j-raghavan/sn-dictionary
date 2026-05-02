@@ -7,10 +7,11 @@
 //
 // Lookup is case-insensitive. First occurrence of a key wins.
 
-import {decodeUtf8, stripBom} from '../../sdk/utf8';
+import {decodeText} from '../../sdk/textDecode';
 import type {DictEntry, DictSource} from '../lookup';
 import {createLazyAsyncSource} from './lazyAsyncSource';
 import type {LoadBytes} from './csvDictSource';
+import {normalizeKey} from './normalizeKey';
 
 export type JsonDictDeps = {
   name: string;
@@ -52,7 +53,7 @@ const isPlainObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v);
 
 const buildJson = (bytes: Uint8Array): ParsedJson => {
-  const text = stripBom(decodeUtf8(bytes));
+  const text = decodeText(bytes);
   const data: unknown = JSON.parse(text);
   const index = new Map<string, {word: string; definition: string}>();
 
@@ -61,8 +62,8 @@ const buildJson = (bytes: Uint8Array): ParsedJson => {
     if (w.length === 0) {
       return;
     }
-    const key = w.toLowerCase();
-    if (!index.has(key)) {
+    const key = normalizeKey(w);
+    if (key.length > 0 && !index.has(key)) {
       index.set(key, {word: w, definition});
     }
   };
@@ -92,7 +93,7 @@ const buildJson = (bytes: Uint8Array): ParsedJson => {
 };
 
 const lookupJson = (parsed: ParsedJson, word: string): DictEntry | null => {
-  const hit = parsed.index.get(word.toLowerCase());
+  const hit = parsed.index.get(normalizeKey(word));
   return hit
     ? {word: hit.word, definition: hit.definition, format: 'plain'}
     : null;
