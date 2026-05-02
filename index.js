@@ -68,13 +68,24 @@ lookup
 // (users can hit the base dict immediately) and discovery prepends
 // any found dicts into the registry as they become available.
 //
-// After registration we kick off `prime()` on each discovered source
-// SERIALLY — large user dicts are CPU-bound during parse, and running
-// them concurrently just thrashes the JS thread. Awaiting one at a
-// time keeps each parse's cooperative yields effective so the UI
-// stays responsive even while priming. The lazy harness memoises the
-// in-flight load, so a user-initiated lookup that arrives mid-prime
-// shares the same parse instead of starting a duplicate.
+// After registration we fire `prime()` on every discovered source
+// CONCURRENTLY. The cooperative-yield helper inside parseIdx /
+// parseSyn / buildDict hands the JS thread back at every yield
+// boundary, so concurrent parses interleave on the same thread
+// instead of monopolising it; total CPU work is unchanged but each
+// source's status flips from 'idle' to 'loading' immediately. That
+// matters because multiDictLookup skips 'loading' sources at
+// fan-out time — a user tap during prime returns instantly with
+// the already-ready sources' hits, instead of awaiting whichever
+// dict happened to be next in a serial queue. Earlier serial
+// priming was the cause of the on-device "lookup hangs ~70 s after
+// tap" report.
+//
+// Promise.all over the awaited primes lets us log once per source
+// as each completes and once at the end. lazyAsyncSource.prime()
+// never rejects (errors are caught inside the harness so the next
+// lookup can retry); foreign DictSource implementations that throw
+// will surface via the .catch on this chain.
 discoverUserDicts({fileUtils: FileUtils, logger})
   .then(async userDicts => {
     if (userDicts.length === 0) {
@@ -86,18 +97,15 @@ discoverUserDicts({fileUtils: FileUtils, logger})
         .map(s => s.name)
         .join(', ')}]`,
     );
-    // lazyAsyncSource.prime() never rejects (errors are caught
-    // inside the harness so the next lookup can retry). Foreign
-    // DictSource implementations could in principle throw, but if
-    // one ever does we'd rather see the rejection surface in the
-    // logger.error path of this .then chain than swallow it here.
-    for (const source of userDicts) {
-      if (typeof source.prime !== 'function') {
-        continue;
-      }
-      await source.prime();
-      logger.log(`[startup] primed user dict "${source.name}"`);
-    }
+    await Promise.all(
+      userDicts.map(async source => {
+        if (typeof source.prime !== 'function') {
+          return;
+        }
+        await source.prime();
+        logger.log(`[startup] primed user dict "${source.name}"`);
+      }),
+    );
   })
   .catch(e => logger.error(`[discovery] dispatch crashed: ${e.message}`));
 
