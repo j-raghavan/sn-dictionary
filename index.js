@@ -103,9 +103,15 @@ lookup
   .catch(e => logger.error(`[stardict] init probe threw: ${e.message}`));
 
 // Discover sideloaded user dicts under /storage/emulated/0/MyStyle/SnDict.
-// Fire-and-forget at startup: the Lookup button is always enabled
-// (users can hit the base dict immediately) and discovery prepends
-// any found dicts into the registry as they become available.
+// Fire-and-forget at startup: the Lookup buttons are registered
+// disabled (see initiallyEnabled:false below) and stay disabled
+// until the base WordNet init probe completes — that's when
+// setButtonState flips them on. Discovery runs in parallel with
+// the base prime; user dicts are prepended to the registry as
+// they're found and primed concurrently afterwards. Once base is
+// ready and the buttons enable, a tap returns hits from any
+// already-primed source and skips still-loading user dicts via
+// multiDictLookup's status gate.
 //
 // Priming is delegated to primeAllConcurrently — see that module
 // for the rationale on concurrent vs. serial. The contract is
