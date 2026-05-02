@@ -51,6 +51,27 @@ const emit = (
   }
 };
 
+// A custom DictSource may ship a buggy status() that throws. Treat
+// any thrown status as non-loading (fall through to lookup) — we'd
+// rather query the source and let safeLookup handle a faulty
+// implementation than reject the entire fan-out for one bad actor.
+const isLoading = (
+  source: DictSource,
+  warn: (msg: string) => void,
+): boolean => {
+  if (typeof source.status !== 'function') {
+    return false;
+  }
+  try {
+    return source.status() === 'loading';
+  } catch (e) {
+    warn(
+      `[multiDict] source "${source.name}" status() threw: ${(e as Error).message}`,
+    );
+    return false;
+  }
+};
+
 export const createMultiDictLookup = (
   sources: DictSource[],
   logger?: Logger,
@@ -119,7 +140,7 @@ export const createMultiDictLookup = (
       // called (test fixtures, sources skipped by the prime loop).
       await Promise.all(
         snapshot.map(async (source, i) => {
-          if (source.status?.() === 'loading') {
+          if (isLoading(source, warn)) {
             return;
           }
           const entry = await safeLookup(source, trimmed, warn);

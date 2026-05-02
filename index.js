@@ -86,34 +86,30 @@ discoverUserDicts({fileUtils: FileUtils, logger})
         .map(s => s.name)
         .join(', ')}]`,
     );
+    // lazyAsyncSource.prime() never rejects (errors are caught
+    // inside the harness so the next lookup can retry). Foreign
+    // DictSource implementations could in principle throw, but if
+    // one ever does we'd rather see the rejection surface in the
+    // logger.error path of this .then chain than swallow it here.
     for (const source of userDicts) {
       if (typeof source.prime !== 'function') {
         continue;
       }
-      try {
-        await source.prime();
-        logger.log(`[startup] primed user dict "${source.name}"`);
-      } catch (e) {
-        logger.warn(
-          `[startup] prime "${source.name}" threw: ${e.message} — will retry on next lookup`,
-        );
-      }
+      await source.prime();
+      logger.log(`[startup] primed user dict "${source.name}"`);
     }
   })
   .catch(e => logger.error(`[discovery] dispatch crashed: ${e.message}`));
 
 // closePluginView lives on PluginManager, not PluginCommAPI, so the
-// handlers take a separate `view` dep. Wiring it via PluginCommAPI
-// would silently resolve to undefined at runtime — exactly the bug
-// the on-device "[WARN] closePluginView threw: undefined is not a
-// function" reentrancy log surfaced.
-const view = {
-  closePluginView: () => PluginManager.closePluginView(),
-};
-
+// handlers take a separate `view` dep. PluginManager satisfies the
+// ClosablePluginView interface structurally — no wrapper needed.
+// Wiring it via PluginCommAPI would silently resolve to undefined at
+// runtime — exactly the bug the on-device "[WARN] closePluginView
+// threw: undefined is not a function" reentrancy log surfaced.
 const noteHandlerDeps = {
   comm: PluginCommAPI,
-  view,
+  view: PluginManager,
   file: PluginFileAPI,
   lookup,
   showResult: showDefinition,
@@ -122,7 +118,7 @@ const noteHandlerDeps = {
 
 const docHandlerDeps = {
   doc: PluginDocAPI,
-  view,
+  view: PluginManager,
   lookup,
   showResult: showDefinition,
   logger,

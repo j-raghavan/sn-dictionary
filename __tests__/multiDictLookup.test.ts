@@ -358,5 +358,31 @@ describe('createMultiDictLookup', () => {
       expect(result.hits.map(h => h.source)).toEqual(['A']);
       expect(result.loading).toEqual([]);
     });
+
+    test('a source whose status() throws is logged and queried normally', async () => {
+      // A faulty custom source must not break the entire fan-out.
+      // status() throwing → fall through to lookup() (the source's
+      // own behaviour decides what happens next).
+      const warn = jest.fn();
+      const flaky: DictSource = {
+        name: 'Flaky',
+        status: () => {
+          throw new Error('status boom');
+        },
+        lookup: jest.fn(async () => ({
+          word: 'apple',
+          definition: 'fruit',
+          format: 'plain',
+        })),
+      };
+      const fallback = stubSource('B', {apple: 'fruit (B)'});
+      const lookup = createMultiDictLookup([flaky, fallback], {warn});
+      const result = await lookup.lookup('apple');
+      expect(flaky.lookup).toHaveBeenCalled();
+      expect(result.hits.map(h => h.source)).toEqual(['Flaky', 'B']);
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringMatching(/source "Flaky" status\(\) threw: status boom/),
+      );
+    });
   });
 });

@@ -31,7 +31,12 @@ describe('createDictReader', () => {
 
     test('throws on a negative offset', () => {
       const reader = createDictReader(enc('abc'));
-      expect(() => reader.slice(-1, 1)).toThrow(/out of range/);
+      expect(() => reader.slice(-1, 1)).toThrow(/negative bound/);
+    });
+
+    test('throws on a negative length', () => {
+      const reader = createDictReader(enc('abcdef'));
+      expect(() => reader.slice(2, -1)).toThrow(/negative bound/);
     });
 
     test('returns a copy, not a view, so callers cannot pin the original buffer', () => {
@@ -139,6 +144,40 @@ describe('createDictReader', () => {
       const dz = encodeDictzip(body, {chunkSize: 4});
       const reader = createDictReader(dz);
       expect(() => reader.slice(-1, 2)).toThrow(/negative bound/);
+    });
+
+    test('LRU-evicts inflated chunks once over the budget', () => {
+      // Build a dict with 4 chunks of 16 bytes uncompressed each, then
+      // pass a 16-byte cache budget. The reader must keep ≤1 chunk
+      // resident; subsequent slices into other chunks evict and
+      // re-inflate the previous chunk on revisit.
+      const body = new Uint8Array(64).fill(0x42);
+      const dz = encodeDictzip(body, {chunkSize: 16});
+      const reader = createDictReader(dz, {maxCacheBytes: 16});
+      const inflateRawSpy = jest.spyOn(pako, 'inflateRaw');
+      try {
+        reader.slice(0, 16); // chunk 0 inflated (cache=1 chunk)
+        reader.slice(16, 16); // chunk 1 inflated, chunk 0 evicted
+        reader.slice(32, 16); // chunk 2 inflated, chunk 1 evicted
+        reader.slice(0, 16); // chunk 0 must re-inflate (was evicted)
+        // Four distinct slices, each inflated once + one re-inflate
+        // for the evicted chunk 0 = 4 calls.
+        expect(inflateRawSpy).toHaveBeenCalledTimes(4);
+      } finally {
+        inflateRawSpy.mockRestore();
+      }
+    });
+
+    test('cache budget floors at chunkSize so the just-inflated chunk always fits', () => {
+      // Even with maxCacheBytes=0, the just-fetched chunk must not be
+      // evicted before slice() can copy bytes out of it. The reader
+      // floors the effective budget at one chunk's worth.
+      const body = new Uint8Array(32).fill(0x55);
+      const dz = encodeDictzip(body, {chunkSize: 16});
+      const reader = createDictReader(dz, {maxCacheBytes: 0});
+      // Slice spans both chunks — must succeed without throwing.
+      const out = reader.slice(8, 16);
+      expect(out.length).toBe(16);
     });
   });
 
@@ -343,6 +382,24 @@ describe('createDictReader', () => {
       expect(idx).not.toBeNull();
       // dataStart = 12 + 12 + 2 = 26.
       expect(idx?.chunks[0].compressedStart).toBe(26);
+    });
+
+    test('returns null when cumulative chunk lengths overrun the buffer', () => {
+      // SUBLEN claims 1 chunk of compressed length 0xffff. The
+      // header itself is well-formed but the chunk would extend far
+      // past the buffer end. The reader must reject up-front rather
+      // than build a slicer that throws confusingly later.
+      const out: number[] = [
+        0x1f, 0x8b, 0x08, 0x04, 0, 0, 0, 0, 0, 0xff,
+        0x0c, 0x00,
+        0x52, 0x41, 0x08, 0x00,
+        0x01, 0x00, // VER = 1
+        0x40, 0x00, // CHLEN = 64
+        0x01, 0x00, // CHCNT = 1
+        0xff, 0xff, // chunk[0] compressed length = 65535
+        // ...but no compressed body follows.
+      ];
+      expect(parseDictzipExtra(new Uint8Array(out))).toBeNull();
     });
 
     test('returns null when optional headers run past the end of the buffer', () => {

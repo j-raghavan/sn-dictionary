@@ -62,6 +62,18 @@ const FLG_FCOMMENT = 0x10;
 const SI_R = 0x52;
 const SI_A = 0x41;
 
+// 5-byte raw-deflate trailer that terminates the stream as an empty
+// stored block: BFINAL=1, BTYPE=00 (stored), padding to byte boundary
+// (0 bits), LEN=0, NLEN=0xffff. Appended to each chunk's compressed
+// bytes before pako.inflateRaw — see file-header comment.
+const DEFLATE_END_SENTINEL = new Uint8Array([0x01, 0x00, 0x00, 0xff, 0xff]);
+
+// Default LRU budget for the inflated-chunk cache. ~8 MB keeps
+// recent chunks resident (≈128 chunks at 64 KB each — typical
+// dictzip CHLEN) while bounding worst-case footprint when a user
+// pages through an entire 30 MB Wiktionary body.
+const DEFAULT_CACHE_BYTES = 8 * 1024 * 1024;
+
 const readU16LE = (bytes: Uint8Array, pos: number): number => {
   // eslint-disable-next-line no-bitwise
   return bytes[pos] | (bytes[pos + 1] << 8);
@@ -70,15 +82,21 @@ const readU16LE = (bytes: Uint8Array, pos: number): number => {
 export interface DictReader {
   // Returns a NEW Uint8Array (copy) covering [offset, offset+length)
   // of the *uncompressed* .dict body. Always returns exactly
-  // `length` bytes; throws if the requested range is out of bounds.
+  // `length` bytes; throws if the requested range is out of bounds
+  // or if `offset` / `length` is negative.
   slice(offset: number, length: number): Uint8Array;
 }
 
 class RawReader implements DictReader {
   constructor(private readonly bytes: Uint8Array) {}
   slice(offset: number, length: number): Uint8Array {
+    if (offset < 0 || length < 0) {
+      throw new Error(
+        `dictReader: slice [${offset}, ${offset + length}) has negative bound`,
+      );
+    }
     const end = offset + length;
-    if (offset < 0 || end > this.bytes.length) {
+    if (end > this.bytes.length) {
       throw new Error(
         `dictReader: slice [${offset}, ${end}) out of range (size ${this.bytes.length})`,
       );
@@ -103,18 +121,36 @@ type DictzipIndex = {
   chunks: DictzipChunk[];
 };
 
+export type DictzipReaderOptions = {
+  // Soft cap on resident inflated-chunk bytes. Defaults to 8 MB.
+  // Must be >= chunkSize: a single chunk always fits (otherwise the
+  // reader couldn't serve any slice). Tests may pass a tiny budget
+  // to exercise eviction without large fixtures.
+  maxCacheBytes?: number;
+};
+
 class DictzipReader implements DictReader {
-  // Decompressed-chunk cache. Lookups against a sorted user dict
-  // tend to walk the .dict body roughly in offset order, so most
-  // queries land in a small set of chunks. Bounded re-inflate cost
-  // even without an LRU — eviction lands in Phase 3 if memory
-  // becomes a problem.
+  // Decompressed-chunk cache with LRU eviction. We track resident
+  // bytes against `maxCacheBytes` and evict least-recently-used
+  // chunks when the budget is exceeded. JavaScript Maps preserve
+  // insertion order; we re-insert on hit to move an entry to the
+  // tail (most-recent) and evict from the head when over budget.
   private readonly cache = new Map<number, Uint8Array>();
+  private cachedBytes = 0;
+  private readonly maxCacheBytes: number;
 
   constructor(
     private readonly bytes: Uint8Array,
     private readonly index: DictzipIndex,
-  ) {}
+    options: DictzipReaderOptions = {},
+  ) {
+    // Floor at one chunk's worth of room so any single inflate fits;
+    // a tighter cap would force us to drop the chunk we just produced.
+    this.maxCacheBytes = Math.max(
+      options.maxCacheBytes ?? DEFAULT_CACHE_BYTES,
+      index.chunkSize,
+    );
+  }
 
   slice(offset: number, length: number): Uint8Array {
     if (offset < 0 || length < 0) {
@@ -155,6 +191,9 @@ class DictzipReader implements DictReader {
   private getChunk(i: number): Uint8Array {
     const cached = this.cache.get(i);
     if (cached !== undefined) {
+      // Re-insert to move to the most-recent end of the LRU order.
+      this.cache.delete(i);
+      this.cache.set(i, cached);
       return cached;
     }
     const meta = this.index.chunks[i];
@@ -165,7 +204,9 @@ class DictzipReader implements DictReader {
     // Append the BFINAL=1 stored-empty-block sentinel (see file
     // header): non-final dictzip chunks lack end-of-stream markers,
     // and pako.inflateRaw silently returns undefined without one.
-    const padded = new Uint8Array(compressed.length + DEFLATE_END_SENTINEL.length);
+    const padded = new Uint8Array(
+      compressed.length + DEFLATE_END_SENTINEL.length,
+    );
     padded.set(compressed, 0);
     padded.set(DEFLATE_END_SENTINEL, compressed.length);
     const inflated = pako.inflateRaw(padded);
@@ -175,14 +216,28 @@ class DictzipReader implements DictReader {
       );
     }
     this.cache.set(i, inflated);
+    this.cachedBytes += inflated.length;
+    this.evictIfOverBudget();
     return inflated;
   }
-}
 
-// 5-byte raw-deflate trailer that terminates the stream as an empty
-// stored block: BFINAL=1, BTYPE=00 (stored), padding to byte boundary
-// (0 bits), LEN=0, NLEN=0xffff.
-const DEFLATE_END_SENTINEL = new Uint8Array([0x01, 0x00, 0x00, 0xff, 0xff]);
+  private evictIfOverBudget(): void {
+    while (this.cachedBytes > this.maxCacheBytes && this.cache.size > 1) {
+      // Map iteration order is insertion order: the first key is the
+      // least-recently-used. We bypass a full iteration with the
+      // .keys().next() shorthand.
+      const oldest = this.cache.keys().next().value;
+      if (oldest === undefined) {
+        break;
+      }
+      const buf = this.cache.get(oldest);
+      this.cache.delete(oldest);
+      if (buf !== undefined) {
+        this.cachedBytes -= buf.length;
+      }
+    }
+  }
+}
 
 // Returns the parsed dictzip RA index, or null if the gzip stream
 // lacks an RA extra field (so the caller falls back to whole-file
@@ -270,6 +325,13 @@ const parseDictzipExtra = (bytes: Uint8Array): DictzipIndex | null => {
   let compressedOffset = dataStart;
   for (let i = 0; i < chunkCount; i++) {
     const compressedLength = readU16LE(bytes, raPayloadStart + 6 + i * 2);
+    // Up-front bounds check: cumulative chunk bytes must fit in the
+    // file (allowing room for the 8-byte gzip trailer). Failing this
+    // means the RA index points past EOF; we'd otherwise build a
+    // reader that throws confusingly at slice time.
+    if (compressedOffset + compressedLength > bytes.length) {
+      return null;
+    }
     chunks[i] = {compressedStart: compressedOffset, compressedLength};
     compressedOffset += compressedLength;
   }
@@ -281,13 +343,18 @@ const isGzip = (bytes: Uint8Array): boolean =>
   bytes[0] === GZIP_MAGIC_0 &&
   bytes[1] === GZIP_MAGIC_1;
 
-export const createDictReader = (bytes: Uint8Array): DictReader => {
+export type CreateDictReaderOptions = DictzipReaderOptions;
+
+export const createDictReader = (
+  bytes: Uint8Array,
+  options: CreateDictReaderOptions = {},
+): DictReader => {
   if (!isGzip(bytes)) {
     return new RawReader(bytes);
   }
   const index = parseDictzipExtra(bytes);
   if (index !== null) {
-    return new DictzipReader(bytes, index);
+    return new DictzipReader(bytes, index, options);
   }
   // gzip without dictzip RA: fall back to whole-file inflate. We
   // lose the random-access memory savings, but functional behaviour
