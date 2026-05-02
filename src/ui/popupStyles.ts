@@ -162,32 +162,43 @@ export const popupStyles = StyleSheet.create({
     flexShrink: 1,
     marginRight: 12,
   },
-  // Body-text size stepper (NN/g input-stepper pattern): one
-  // bordered widget visually, two stacked touch zones internally.
-  // The top half scales body text up; the bottom half scales it
-  // down. Arrows hide (not the whole zone) at the bounds so the
-  // widget's outer dimensions stay constant — no layout shift on
-  // press, no greyed-out states on e-ink.
-  fontStepper: {
-    width: 44,
+  // Body-text size selector: two circular buttons side-by-side.
+  // The small "a" steps text size down; the large "A" steps it up.
+  // The visual size of the glyph IS the affordance — direction is
+  // unambiguous on first sight, no arrows or +/− needed. Same
+  // pattern Apple Books, Kindle, and Safari Reader Mode use.
+  // At a bound, the unusable button greys out instead of hiding so
+  // the layout never shifts.
+  fontSizeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  fontSizeButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: '#000000',
-    borderRadius: 6,
-    overflow: 'hidden',
-  },
-  fontStepperHalf: {
-    minHeight: 28,
     alignItems: 'center',
     justifyContent: 'center',
+    marginLeft: 8,
   },
-  fontStepperDivider: {
-    height: 1,
-    backgroundColor: '#000000',
+  fontSizeButtonDisabled: {
+    borderColor: '#999999',
   },
-  fontStepperArrow: {
+  fontSizeLabelSmall: {
     fontSize: 14,
     fontWeight: '700',
     color: '#000000',
-    lineHeight: 14,
+    lineHeight: 16,
+  },
+  fontSizeLabelLarge: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#000000',
+    lineHeight: 22,
+  },
+  fontSizeLabelDisabled: {
+    color: '#999999',
   },
 });

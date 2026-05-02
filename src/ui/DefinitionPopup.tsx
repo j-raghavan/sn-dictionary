@@ -129,23 +129,40 @@ export default function DefinitionPopup(): React.JSX.Element {
           <Text style={[styles.word, styles.headerWordWrap]} numberOfLines={1}>
             {headerWord}
           </Text>
-          <View style={styles.fontStepper}>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={t('popup.fontLarger')}
-              onPress={handleLarger}
-              disabled={!canGrow}
-              style={styles.fontStepperHalf}>
-              <Text style={styles.fontStepperArrow}>{canGrow ? '▲' : ' '}</Text>
-            </Pressable>
-            <View style={styles.fontStepperDivider} />
+          <View style={styles.fontSizeRow}>
             <Pressable
               accessibilityRole="button"
               accessibilityLabel={t('popup.fontSmaller')}
               onPress={handleSmaller}
               disabled={!canShrink}
-              style={styles.fontStepperHalf}>
-              <Text style={styles.fontStepperArrow}>{canShrink ? '▼' : ' '}</Text>
+              style={[
+                styles.fontSizeButton,
+                !canShrink && styles.fontSizeButtonDisabled,
+              ]}>
+              <Text
+                style={[
+                  styles.fontSizeLabelSmall,
+                  !canShrink && styles.fontSizeLabelDisabled,
+                ]}>
+                a
+              </Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={t('popup.fontLarger')}
+              onPress={handleLarger}
+              disabled={!canGrow}
+              style={[
+                styles.fontSizeButton,
+                !canGrow && styles.fontSizeButtonDisabled,
+              ]}>
+              <Text
+                style={[
+                  styles.fontSizeLabelLarge,
+                  !canGrow && styles.fontSizeLabelDisabled,
+                ]}>
+                A
+              </Text>
             </Pressable>
           </View>
         </View>
