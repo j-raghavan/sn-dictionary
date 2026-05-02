@@ -17,6 +17,7 @@ const buildDeps = (
         return {id: 1};
       }),
       getPluginDirPath: jest.fn(async () => '/data/plugins/sn-dict'),
+      setButtonState: jest.fn(async () => true),
     },
     onPress: jest.fn(),
     logger: {warn: jest.fn()},
@@ -85,6 +86,22 @@ describe('registerDocSelectButton', () => {
       .calls[0][2];
     expect(button.icon).toBe('');
     expect(deps.logger.warn).toHaveBeenCalled();
+  });
+
+  test('initiallyEnabled defaults to true (backwards-compat)', async () => {
+    const deps = buildDeps();
+    await registerDocSelectButton(deps);
+    const button = (deps.pluginManager.registerButton as jest.Mock).mock
+      .calls[0][2];
+    expect(button.enable).toBe(true);
+  });
+
+  test('initiallyEnabled=false registers the button disabled', async () => {
+    const deps = buildDeps({initiallyEnabled: false});
+    await registerDocSelectButton(deps);
+    const button = (deps.pluginManager.registerButton as jest.Mock).mock
+      .calls[0][2];
+    expect(button.enable).toBe(false);
   });
 
   test('listener forwards events for the DOC Define button only', async () => {

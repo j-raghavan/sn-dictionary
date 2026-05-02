@@ -32,6 +32,13 @@ export type RegisterDeps = {
   pluginManager: PluginManagerLike;
   onPress: (event: ButtonEvent) => void;
   logger: {warn: (msg: string) => void};
+  // Defaults to true. Pass false at startup so the button is
+  // disabled until base WordNet has primed; index.js flips it to
+  // true via setButtonState once the init probe resolves. Without
+  // this gating, a tap before priming completes runs OCR + lookup
+  // on a JS thread shared with multiple in-flight parses, stretching
+  // tap-to-result by 5–10×.
+  initiallyEnabled?: boolean;
 };
 
 export const registerNoteLassoButton = async (
@@ -52,7 +59,7 @@ export const registerNoteLassoButton = async (
       // matching the device locale (sticker plugin's nameMap shape).
       name: localizedButtonName(),
       icon: iconUri,
-      enable: true,
+      enable: deps.initiallyEnabled ?? true,
       // Single stroke-family entry — covers both freshly-written
       // strokes (trailNum) and previously-recognised strokes
       // (trailLinkNum / titleNum), which the handler funnels into

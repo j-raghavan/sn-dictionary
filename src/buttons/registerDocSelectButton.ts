@@ -25,6 +25,11 @@ export type RegisterDocDeps = {
   pluginManager: PluginManagerLike;
   onPress: (event: ButtonEvent) => void;
   logger: {warn: (msg: string) => void};
+  // Defaults to true. Pass false at startup so the button is
+  // disabled until base WordNet has primed; index.js flips it to
+  // true via setButtonState once the init probe resolves. See the
+  // NOTE lasso button for full rationale.
+  initiallyEnabled?: boolean;
 };
 
 export const registerDocSelectButton = async (
@@ -49,7 +54,7 @@ export const registerDocSelectButton = async (
       // lasso button. Firmware picks the row matching device locale.
       name: localizedButtonName(),
       icon: iconUri,
-      enable: true,
+      enable: deps.initiallyEnabled ?? true,
       // Defensive double-set across SDK versions; see
       // src/buttons/registerNoteLassoButton.ts for rationale.
       showType: 1,

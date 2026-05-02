@@ -8,8 +8,14 @@ import {
   PluginFileAPI,
   PluginManager,
 } from 'sn-plugin-lib';
-import {registerNoteLassoButton} from './src/buttons/registerNoteLassoButton';
-import {registerDocSelectButton} from './src/buttons/registerDocSelectButton';
+import {
+  registerNoteLassoButton,
+  NOTE_LASSO_DEFINE_BUTTON_ID,
+} from './src/buttons/registerNoteLassoButton';
+import {
+  registerDocSelectButton,
+  DOC_SELECT_DEFINE_BUTTON_ID,
+} from './src/buttons/registerDocSelectButton';
 import {onNoteLassoDefine} from './src/handlers/onNoteLassoDefine';
 import {onDocSelectDefine} from './src/handlers/onDocSelectDefine';
 import {createStardictLookup} from './src/core/dict/stardictLookup';
@@ -61,11 +67,28 @@ const lookup = createMultiDictLookup(sources, logger);
 // visible immediately in logcat rather than at first lookup. The
 // dict is memoised inside the loader, so this doesn't add per-lookup
 // cost.
+//
+// We ALSO use the init probe as the gate for enabling the Lookup
+// buttons. The buttons are registered with `enable: false` below; on
+// init probe resolution they flip to enabled via setButtonState. The
+// user can't tap before WordNet is parseable — which avoids the
+// 8-second OCR + lookup latency we observed on-device when a tap
+// raced active priming on the JS thread.
 lookup
   .lookup('__sndict_init__')
-  .then(() =>
-    logger.log('[stardict] base dict loaded ok (init probe complete)'),
-  )
+  .then(() => {
+    logger.log('[stardict] base dict loaded ok (init probe complete)');
+    return Promise.all([
+      PluginManager.setButtonState(NOTE_LASSO_DEFINE_BUTTON_ID, true),
+      PluginManager.setButtonState(DOC_SELECT_DEFINE_BUTTON_ID, true),
+    ])
+      .then(() => logger.log('[startup] Lookup buttons enabled'))
+      .catch(e =>
+        logger.warn(
+          `[startup] setButtonState threw: ${e.message} — buttons remain disabled until next reload`,
+        ),
+      );
+  })
   .catch(e => logger.error(`[stardict] init probe threw: ${e.message}`));
 
 // Discover sideloaded user dicts under /storage/emulated/0/MyStyle/SnDict.
@@ -119,6 +142,10 @@ const docHandlerDeps = {
 
 registerNoteLassoButton({
   pluginManager: PluginManager,
+  // Disabled until the base WordNet dict has primed. setButtonState
+  // flips it on after the init probe completes; see the lookup
+  // .then chain above.
+  initiallyEnabled: false,
   onPress: () => {
     onNoteLassoDefine(noteHandlerDeps).catch(e => {
       logger.error(`[define] dispatch crashed: ${e.message}`);
@@ -131,6 +158,7 @@ registerNoteLassoButton({
 
 registerDocSelectButton({
   pluginManager: PluginManager,
+  initiallyEnabled: false,
   onPress: () => {
     onDocSelectDefine(docHandlerDeps).catch(e => {
       logger.error(`[doc-define] dispatch crashed: ${e.message}`);
