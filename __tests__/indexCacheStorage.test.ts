@@ -1,7 +1,7 @@
 import {
   createMemoryIndexCacheStorage,
+  createSelfHealingBackend,
   getDefaultIndexCacheStorage,
-  wrapKvBackend,
   __testing__,
 } from '../src/core/dict/indexCacheStorage';
 
@@ -29,88 +29,107 @@ describe('createMemoryIndexCacheStorage', () => {
   });
 });
 
-describe('wrapKvBackend', () => {
-  test('forwards getItem / setItem to the underlying backend', async () => {
-    const backend = {
+describe('createSelfHealingBackend', () => {
+  test('forwards calls to a working primary backend', async () => {
+    const primary = {
       getItem: jest.fn(async () => 'value'),
       setItem: jest.fn(async () => undefined),
     };
-    const store = wrapKvBackend(backend);
+    const store = createSelfHealingBackend(primary);
     expect(await store.getItem('k')).toBe('value');
     await store.setItem('k', 'v');
-    expect(backend.setItem).toHaveBeenCalledWith('k', 'v');
+    expect(primary.setItem).toHaveBeenCalledWith('k', 'v');
   });
 
-  test('swallows getItem errors and returns null', async () => {
+  test('falls back to memory on the first getItem throw and stays there', async () => {
     const warn = jest.fn();
-    const backend = {
+    const primary = {
       getItem: jest.fn(async () => {
-        throw new Error('disk full');
+        throw new Error('Native module is null, cannot access legacy storage');
+      }),
+      setItem: jest.fn(async () => {
+        throw new Error('Native module is null');
+      }),
+    };
+    const store = createSelfHealingBackend(primary, {warn});
+    // First getItem throws → swap to memory; the memory backend
+    // returns null (no value set), but the call doesn't propagate
+    // the error.
+    expect(await store.getItem('k')).toBeNull();
+    // Subsequent calls go to memory directly — primary.setItem is
+    // NOT invoked again.
+    await store.setItem('k', 'v');
+    expect(primary.setItem).not.toHaveBeenCalled();
+    expect(await store.getItem('k')).toBe('v');
+    // Single fallback warn line per session.
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringMatching(/falling back to in-memory cache/),
+    );
+  });
+
+  test('falls back to memory on the first setItem throw and stays there', async () => {
+    const warn = jest.fn();
+    const primary = {
+      getItem: jest.fn(async () => null),
+      setItem: jest
+        .fn<Promise<void>, [string, string]>()
+        .mockImplementationOnce(async () => {
+          throw new Error('Native module is null');
+        }),
+    };
+    const store = createSelfHealingBackend(primary, {warn});
+    await store.setItem('k', 'v');
+    // The retry on the memory fallback succeeds.
+    expect(await store.getItem('k')).toBe('v');
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringMatching(/AsyncStorage.setItem threw/),
+    );
+  });
+
+  test('falls back when removeItem throws', async () => {
+    const warn = jest.fn();
+    const primary = {
+      getItem: jest.fn(async () => null),
+      setItem: jest.fn(async () => undefined),
+      removeItem: jest.fn(async () => {
+        throw new Error('Native module is null');
+      }),
+    };
+    const store = createSelfHealingBackend(primary, {warn});
+    await store.removeItem!('k');
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringMatching(/AsyncStorage.removeItem threw/),
+    );
+    // Subsequent setItem goes to memory.
+    await store.setItem('k', 'v');
+    expect(primary.setItem).not.toHaveBeenCalled();
+  });
+
+  test('only one fallback warn fires even with many subsequent operations', async () => {
+    const warn = jest.fn();
+    const primary = {
+      getItem: jest.fn(async () => {
+        throw new Error('Native module is null');
       }),
       setItem: jest.fn(async () => undefined),
     };
-    const store = wrapKvBackend(backend, {warn});
-    expect(await store.getItem('k')).toBeNull();
-    expect(warn).toHaveBeenCalledWith(
-      expect.stringMatching(/getItem.*disk full/),
-    );
-  });
-
-  test('swallows setItem errors (writes are best-effort)', async () => {
-    const warn = jest.fn();
-    const backend = {
-      getItem: jest.fn(async () => null),
-      setItem: jest.fn(async () => {
-        throw new Error('quota exceeded');
-      }),
-    };
-    const store = wrapKvBackend(backend, {warn});
-    await expect(store.setItem('k', 'v')).resolves.toBeUndefined();
-    expect(warn).toHaveBeenCalledWith(
-      expect.stringMatching(/setItem.*quota/),
-    );
-  });
-
-  test('exposes removeItem only when the backend supports it', async () => {
-    const withRemove = wrapKvBackend({
-      getItem: jest.fn(),
-      setItem: jest.fn(),
-      removeItem: jest.fn(async () => undefined),
-    });
-    expect(typeof withRemove.removeItem).toBe('function');
-    const withoutRemove = wrapKvBackend({
-      getItem: jest.fn(),
-      setItem: jest.fn(),
-    });
-    expect(withoutRemove.removeItem).toBeUndefined();
-  });
-
-  test('removeItem swallows errors', async () => {
-    const warn = jest.fn();
-    const store = wrapKvBackend(
-      {
-        getItem: jest.fn(),
-        setItem: jest.fn(),
-        removeItem: jest.fn(async () => {
-          throw new Error('boom');
-        }),
-      },
-      {warn},
-    );
-    await expect(store.removeItem!('k')).resolves.toBeUndefined();
-    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/removeItem.*boom/));
+    const store = createSelfHealingBackend(primary, {warn});
+    await store.getItem('k');
+    await store.getItem('k');
+    await store.setItem('k', 'v');
+    await store.removeItem!('k');
+    expect(warn).toHaveBeenCalledTimes(1);
   });
 });
 
 describe('getDefaultIndexCacheStorage', () => {
-  test('returns a working KV (AsyncStorage if installed, memory otherwise)', async () => {
+  test('returns a working KV', async () => {
     const store = getDefaultIndexCacheStorage();
     await store.setItem('k', 'v');
-    // When AsyncStorage isn't loadable in the test env, the memory
-    // backend round-trips. With the dep installed it may also
-    // round-trip; either way we assert behaviour, not which backend
-    // was selected.
     const out = await store.getItem('k');
+    // Either AsyncStorage round-trips, or the self-healing wrapper
+    // already swapped to memory — both yield the value back.
     expect(out === 'v' || out === null).toBe(true);
   });
 
@@ -120,12 +139,10 @@ describe('getDefaultIndexCacheStorage', () => {
     expect(a).toBe(b);
   });
 
-  test('logs an informational note when the backend resolves', () => {
+  test('logs an informational note about the chosen path', () => {
     const log = jest.fn();
     const warn = jest.fn();
     getDefaultIndexCacheStorage({log, warn});
-    // Either a "AsyncStorage available" log or a "falling back" warn
-    // fires; whichever it is, the user gets a log line.
     expect(log.mock.calls.length + warn.mock.calls.length).toBeGreaterThan(0);
   });
 });
@@ -140,9 +157,6 @@ describe('getDefaultIndexCacheStorage with AsyncStorage available', () => {
     let storedKey: string | null = null;
     let storedValue: string | null = null;
     jest.isolateModules(() => {
-      // The real package's index emits an ESM-style default export.
-      // Mirror that so the lazy `mod?.default ?? mod` line resolves
-      // to our fake.
       jest.doMock(
         '@react-native-async-storage/async-storage',
         () => ({
@@ -164,14 +178,12 @@ describe('getDefaultIndexCacheStorage with AsyncStorage available', () => {
       );
       const log = jest.fn();
       const warn = jest.fn();
-      // Re-import so the mock is in effect.
       const mod = require('../src/core/dict/indexCacheStorage');
       mod.__testing__.resetDefault();
       const store = mod.getDefaultIndexCacheStorage({log, warn});
       expect(log).toHaveBeenCalledWith(
-        expect.stringMatching(/AsyncStorage backend available/),
+        expect.stringMatching(/AsyncStorage JS shim loaded/),
       );
-      // Round-trip through the wrapper.
       return store.setItem('k', 'v').then(async () => {
         expect(await store.getItem('k')).toBe('v');
       });

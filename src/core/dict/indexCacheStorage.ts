@@ -5,29 +5,27 @@
 // The community-standard solution is
 // `@react-native-async-storage/async-storage` (a native module).
 //
-// Like sn-shapes does for favourites, we lazy-`require()` the dep
-// inside a try/catch so:
-//   * tests run without the dep installed (memory fallback);
-//   * production with the dep installed gets durable persistence;
-//   * production without the dep falls back to in-memory — the
-//     plugin still works, just doesn't speed up subsequent loads.
+// Two layers of fallback:
 //
-// Public surface is an interface, not the concrete AsyncStorage
-// shape, so callers depend on contract not on a third-party type.
+// 1. Lazy `require()` of the AsyncStorage dep inside a try/catch.
+//    If the package isn't installed, fall through to memory.
+// 2. SELF-HEALING runtime guard. The plugin host on Supernote ships
+//    AsyncStorage's JS shim but not its native module — every
+//    getItem/setItem then throws "Native module is null". On the
+//    first such failure we swap to the in-memory backend and stay
+//    there for the rest of the session. The user gets one warn
+//    line, then a working memory cache (no cross-session
+//    persistence; same behaviour as before this whole commit).
+//
+// To get genuine persistence on Supernote, the plugin needs to
+// ship its own android/app/src/main/java/... ReactPackage that
+// re-exports AsyncStoragePackage; buildPlugin.sh would then bundle
+// the native code into app.npk. That's the next step if it turns
+// out to be worth the Java surface.
 
 export interface IndexCacheStorage {
-  // Returns `null` for a missing key OR any storage error.
-  // Callers must treat any non-null return as "may be valid; verify
-  // fingerprint" because the disk store could outlive the data
-  // format that produced it.
   getItem(key: string): Promise<string | null>;
-  // Failures are swallowed (logged): cache writes are a perf
-  // optimisation, never a correctness requirement, so a write loss
-  // must not abort a successful parse.
   setItem(key: string, value: string): Promise<void>;
-  // Used by tests to clear a key on tear-down. Optional in the
-  // production AsyncStorage implementation only because some
-  // backends don't support it; ours does.
   removeItem?(key: string): Promise<void>;
 }
 
@@ -54,41 +52,6 @@ const tryLoadAsyncStorage = (): AsyncStorageLike | null => {
   return null;
 };
 
-export const wrapKvBackend = (
-  backend: AsyncStorageLike,
-  logger?: {warn: (msg: string) => void},
-): IndexCacheStorage => {
-  const warn = logger?.warn ?? (() => {});
-  return {
-    async getItem(key) {
-      try {
-        return await backend.getItem(key);
-      } catch (e) {
-        warn(`[indexCache] getItem("${key}") threw: ${(e as Error).message}`);
-        return null;
-      }
-    },
-    async setItem(key, value) {
-      try {
-        await backend.setItem(key, value);
-      } catch (e) {
-        warn(`[indexCache] setItem("${key}") threw: ${(e as Error).message}`);
-      }
-    },
-    removeItem: backend.removeItem
-      ? async key => {
-          try {
-            await backend.removeItem!(key);
-          } catch (e) {
-            warn(
-              `[indexCache] removeItem("${key}") threw: ${(e as Error).message}`,
-            );
-          }
-        }
-      : undefined,
-  };
-};
-
 export const createMemoryIndexCacheStorage = (): IndexCacheStorage => {
   const map = new Map<string, string>();
   return {
@@ -104,6 +67,69 @@ export const createMemoryIndexCacheStorage = (): IndexCacheStorage => {
   };
 };
 
+// Wraps a real AsyncStorage-like backend with a one-shot self-heal:
+// the first time any operation throws (typically the Supernote plugin
+// host's "Native module is null" error), swap permanently to memory.
+// Subsequent calls hit memory directly with no try/catch overhead.
+// The fallback warn fires exactly once per JS-context lifetime.
+export const createSelfHealingBackend = (
+  primary: AsyncStorageLike,
+  logger?: {warn: (msg: string) => void; log?: (msg: string) => void},
+): IndexCacheStorage => {
+  const warn = logger?.warn ?? (() => {});
+  let memory: IndexCacheStorage | null = null;
+  // Callers always check `memory` BEFORE invoking this helper, so
+  // we're guaranteed first-time semantics here — the warn fires
+  // exactly once per session lifetime.
+  const fallToMemory = (reason: string): IndexCacheStorage => {
+    warn(
+      `[indexCache] ${reason} — falling back to in-memory cache for the rest of this session (no cross-session persistence)`,
+    );
+    memory = createMemoryIndexCacheStorage();
+    return memory;
+  };
+  return {
+    async getItem(key) {
+      if (memory) {
+        return memory.getItem(key);
+      }
+      try {
+        return await primary.getItem(key);
+      } catch (e) {
+        return fallToMemory(
+          `AsyncStorage.getItem threw: ${(e as Error).message}`,
+        ).getItem(key);
+      }
+    },
+    async setItem(key, value) {
+      if (memory) {
+        await memory.setItem(key, value);
+        return;
+      }
+      try {
+        await primary.setItem(key, value);
+      } catch (e) {
+        await fallToMemory(
+          `AsyncStorage.setItem threw: ${(e as Error).message}`,
+        ).setItem(key, value);
+      }
+    },
+    removeItem: async key => {
+      if (memory) {
+        await memory.removeItem!(key);
+        return;
+      }
+      try {
+        await primary.removeItem?.(key);
+      } catch (e) {
+        await fallToMemory(
+          `AsyncStorage.removeItem threw: ${(e as Error).message}`,
+        ).removeItem!(key);
+      }
+    },
+  };
+};
+
 let cachedDefault: IndexCacheStorage | null = null;
 
 export const getDefaultIndexCacheStorage = (logger?: {
@@ -115,8 +141,14 @@ export const getDefaultIndexCacheStorage = (logger?: {
   }
   const backend = tryLoadAsyncStorage();
   if (backend !== null) {
-    logger?.log?.('[indexCache] AsyncStorage backend available');
-    cachedDefault = wrapKvBackend(backend, logger);
+    // We can't tell at this point whether the host's native module
+    // is actually bound — the AsyncStorage JS shim loads either way.
+    // The self-healing wrapper detects the missing native module on
+    // first use and swaps to memory.
+    logger?.log?.(
+      '[indexCache] AsyncStorage JS shim loaded; will probe native binding on first use',
+    );
+    cachedDefault = createSelfHealingBackend(backend, logger);
   } else {
     logger?.warn(
       '[indexCache] AsyncStorage not available — falling back to in-memory cache (no cross-session persistence)',
