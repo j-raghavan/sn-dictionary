@@ -8,13 +8,18 @@
 // a large user dict. Awaiting parseIdx/parseSyn lets *those* yield;
 // the local merge loops here also yield every YIELD_PERIOD entries
 // to keep the JS thread responsive while user dicts warm up.
+//
+// Random-access dict: the .dict / .dict.dz body is held behind a
+// DictReader so dictzip-encoded files can inflate per-lookup chunks
+// instead of the whole body up-front. See dictReader.ts.
 
 import type {IfoMeta} from './parseIfo';
 import {parseIfo} from './parseIfo';
 import type {IdxEntry} from './parseIdx';
 import {parseIdx} from './parseIdx';
 import {parseSyn} from './parseSyn';
-import {decompressDict} from './decompressDict';
+import type {DictReader} from './dictReader';
+import {createDictReader} from './dictReader';
 import {decodeUtf8} from '../../../sdk/utf8';
 import {normalizeKey} from '../normalizeKey';
 import {shouldYield, yieldToEventLoop} from './yieldOften';
@@ -27,7 +32,7 @@ export type ParsedDict = {
   // same map pointing at their canonical .idx entry. If the source
   // has duplicate-key collisions, the first one wins (deterministic).
   index: Map<string, IdxEntry>;
-  dictBytes: Uint8Array;
+  dictReader: DictReader;
 };
 
 export type DictHit = {
@@ -48,7 +53,7 @@ export const buildDict = async (
 ): Promise<ParsedDict> => {
   const meta = parseIfo(ifoBytes);
   const entries = await parseIdx(idxBytes, meta.idxoffsetbits);
-  const decompressed = decompressDict(dictBytes);
+  const dictReader = createDictReader(dictBytes);
   const index = new Map<string, IdxEntry>();
   for (let i = 0; i < entries.length; i++) {
     const e = entries[i];
@@ -83,7 +88,7 @@ export const buildDict = async (
       }
     }
   }
-  return {meta, index, dictBytes: decompressed};
+  return {meta, index, dictReader};
 };
 
 export const lookupDict = (
@@ -98,10 +103,7 @@ export const lookupDict = (
   if (!entry) {
     return null;
   }
-  const slice = dict.dictBytes.subarray(
-    entry.offset,
-    entry.offset + entry.length,
-  );
+  const slice = dict.dictReader.slice(entry.offset, entry.length);
   const definition = decodeUtf8(slice);
   return {canonicalWord: entry.word, definition};
 };
