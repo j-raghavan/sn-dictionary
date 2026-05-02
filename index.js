@@ -15,6 +15,7 @@ import {onDocSelectDefine} from './src/handlers/onDocSelectDefine';
 import {createStardictLookup} from './src/core/dict/stardictLookup';
 import {createMultiDictLookup} from './src/core/dict/multiDictLookup';
 import {discoverUserDicts} from './src/core/dict/userDictDiscovery';
+import {primeAllConcurrently} from './src/core/dict/primeAllConcurrently';
 import {loadBaseDictFromGenerated} from './src/core/dict/data/baseDictData';
 import {showDefinition} from './src/ui/popupController';
 
@@ -68,24 +69,10 @@ lookup
 // (users can hit the base dict immediately) and discovery prepends
 // any found dicts into the registry as they become available.
 //
-// After registration we fire `prime()` on every discovered source
-// CONCURRENTLY. The cooperative-yield helper inside parseIdx /
-// parseSyn / buildDict hands the JS thread back at every yield
-// boundary, so concurrent parses interleave on the same thread
-// instead of monopolising it; total CPU work is unchanged but each
-// source's status flips from 'idle' to 'loading' immediately. That
-// matters because multiDictLookup skips 'loading' sources at
-// fan-out time — a user tap during prime returns instantly with
-// the already-ready sources' hits, instead of awaiting whichever
-// dict happened to be next in a serial queue. Earlier serial
-// priming was the cause of the on-device "lookup hangs ~70 s after
-// tap" report.
-//
-// Promise.all over the awaited primes lets us log once per source
-// as each completes and once at the end. lazyAsyncSource.prime()
-// never rejects (errors are caught inside the harness so the next
-// lookup can retry); foreign DictSource implementations that throw
-// will surface via the .catch on this chain.
+// Priming is delegated to primeAllConcurrently — see that module
+// for the rationale on concurrent vs. serial. The contract is
+// covered by __tests__/primeAllConcurrently.test.ts so we can't
+// regress this without breaking the suite.
 discoverUserDicts({fileUtils: FileUtils, logger})
   .then(async userDicts => {
     if (userDicts.length === 0) {
@@ -97,15 +84,7 @@ discoverUserDicts({fileUtils: FileUtils, logger})
         .map(s => s.name)
         .join(', ')}]`,
     );
-    await Promise.all(
-      userDicts.map(async source => {
-        if (typeof source.prime !== 'function') {
-          return;
-        }
-        await source.prime();
-        logger.log(`[startup] primed user dict "${source.name}"`);
-      }),
-    );
+    await primeAllConcurrently(userDicts, logger);
   })
   .catch(e => logger.error(`[discovery] dispatch crashed: ${e.message}`));
 
