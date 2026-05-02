@@ -11,8 +11,35 @@ import {SourceSection} from './SourceSection';
 import {popupStyles as styles} from './popupStyles';
 import {t} from '../i18n/i18n';
 
+// Body-text size selector. The two-button A−/A+ control cycles
+// through these in order. Default is 'S' (the historical body-text
+// size); the user can step up to M or L when a definition is hard
+// to read at the default. Persists across show/hide cycles within
+// a session — the popup component never unmounts, only changes
+// what it renders — so a user who picks L sees L on the next tap
+// without re-clicking. Resets only when the JS bundle reloads.
+const FONT_SIZES = ['S', 'M', 'L'] as const;
+type FontSize = (typeof FONT_SIZES)[number];
+
+const FONT_SCALE: Record<FontSize, number> = {
+  S: 1,
+  M: 1.25,
+  L: 1.5,
+};
+
+const stepUp = (size: FontSize): FontSize => {
+  const i = FONT_SIZES.indexOf(size);
+  return FONT_SIZES[Math.min(i + 1, FONT_SIZES.length - 1)];
+};
+
+const stepDown = (size: FontSize): FontSize => {
+  const i = FONT_SIZES.indexOf(size);
+  return FONT_SIZES[Math.max(i - 1, 0)];
+};
+
 export default function DefinitionPopup(): React.JSX.Element {
   const [state, setState] = useState<PopupState>(getCurrentState);
+  const [fontSize, setFontSize] = useState<FontSize>('S');
 
   useEffect(() => subscribe(setState), []);
 
@@ -30,6 +57,15 @@ export default function DefinitionPopup(): React.JSX.Element {
     });
   }, []);
 
+  const handleSmaller = useCallback(
+    () => setFontSize(s => stepDown(s)),
+    [],
+  );
+  const handleLarger = useCallback(
+    () => setFontSize(s => stepUp(s)),
+    [],
+  );
+
   if (!state.visible) {
     // Zero-size, non-interactive when nothing to show — matches the
     // sn-formula phase-1 pattern that avoids ghost-touching the page.
@@ -43,6 +79,10 @@ export default function DefinitionPopup(): React.JSX.Element {
     // the page for 5–8 s while those SDK calls run; with it, the
     // popup pops within ~300 ms and shows a localised "Recognizing…"
     // until the OCR'd word and dictionary results arrive.
+    //
+    // Font-size buttons are intentionally hidden here — there's no
+    // body text to scale. They reappear when the result kind takes
+    // over.
     return (
       <View style={styles.backdrop}>
         <View style={styles.card}>
@@ -52,6 +92,7 @@ export default function DefinitionPopup(): React.JSX.Element {
           ) : null}
           <Pressable
             accessibilityRole="button"
+            accessibilityLabel={t('popup.close')}
             onPress={handleClose}
             style={styles.closeButton}>
             <Text style={styles.closeLabel}>{t('popup.close')}</Text>
@@ -75,11 +116,40 @@ export default function DefinitionPopup(): React.JSX.Element {
   // (hits + loading combined), so the layout doesn't reflow when a
   // loading section flips to a hit.
   const showSourceBadges = hits.length + loading.length >= 2;
+  const fontScale = FONT_SCALE[fontSize];
+  // Hide the bound buttons rather than greying them — disabled-state
+  // styling on e-ink can look like dead pixels.
+  const canShrink = fontSize !== 'S';
+  const canGrow = fontSize !== 'L';
 
   return (
     <View style={styles.backdrop}>
       <View style={styles.card}>
-        <Text style={styles.word}>{headerWord}</Text>
+        <View style={styles.headerRow}>
+          <Text style={[styles.word, styles.headerWordWrap]} numberOfLines={1}>
+            {headerWord}
+          </Text>
+          <View style={styles.fontControls}>
+            {canShrink ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={t('popup.fontSmaller')}
+                onPress={handleSmaller}
+                style={styles.fontButton}>
+                <Text style={styles.fontButtonLabel}>A−</Text>
+              </Pressable>
+            ) : null}
+            {canGrow ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={t('popup.fontLarger')}
+                onPress={handleLarger}
+                style={styles.fontButton}>
+                <Text style={styles.fontButtonLabel}>A+</Text>
+              </Pressable>
+            ) : null}
+          </View>
+        </View>
         {state.ocrLabel ? (
           <Text style={styles.ocrLabel}>{state.ocrLabel}</Text>
         ) : null}
@@ -90,6 +160,7 @@ export default function DefinitionPopup(): React.JSX.Element {
               hit={hit}
               showBadge={showSourceBadges}
               showDivider={i > 0}
+              fontScale={fontScale}
             />
           ))}
           {loading.map((sourceName, i) => (
@@ -115,6 +186,7 @@ export default function DefinitionPopup(): React.JSX.Element {
         </ScrollView>
         <Pressable
           accessibilityRole="button"
+          accessibilityLabel={t('popup.close')}
           onPress={handleClose}
           style={styles.closeButton}>
           <Text style={styles.closeLabel}>{t('popup.close')}</Text>

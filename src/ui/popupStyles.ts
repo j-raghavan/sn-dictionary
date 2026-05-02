@@ -49,17 +49,22 @@ export const popupStyles = StyleSheet.create({
   sectionHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 8,
+    marginBottom: 10,
   },
+  // Source-of-definition badge above each section. Bumped from
+  // fontSize 14 to 17 + heavier padding so the user can see at a
+  // glance which dict produced each definition. e-ink renders solid
+  // borders crisply at this size; the previous 14 / 8×3 padding was
+  // perceptually faint relative to the 28-pt headword above.
   sourceBadge: {
-    fontSize: 14,
+    fontSize: 17,
     fontWeight: '700',
     color: '#000000',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderWidth: 1.5,
     borderColor: '#000000',
-    borderRadius: 3,
+    borderRadius: 4,
   },
   definition: {
     fontSize: 17,
@@ -141,6 +146,37 @@ export const popupStyles = StyleSheet.create({
   },
   closeLabel: {
     fontSize: 16,
+    color: '#000000',
+  },
+  // Top-of-card row with the headword on the left and the font-size
+  // controls on the right. Chrome, not body text — fontButton sizes
+  // are NOT scaled by the user's selection.
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  headerWordWrap: {
+    // Lets the headword shrink before the buttons do when long words
+    // (e.g. de "Wörterbuch") would otherwise push them off-screen.
+    flexShrink: 1,
+    marginRight: 12,
+  },
+  fontControls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  fontButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: '#000000',
+    borderRadius: 4,
+    marginLeft: 8,
+  },
+  fontButtonLabel: {
+    fontSize: 16,
+    fontWeight: '700',
     color: '#000000',
   },
 });

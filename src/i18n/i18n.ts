@@ -26,7 +26,9 @@ export type StringId =
   | 'popup.notFoundFor'
   | 'popup.close'
   | 'popup.loading'
-  | 'popup.recognizing';
+  | 'popup.recognizing'
+  | 'popup.fontSmaller'
+  | 'popup.fontLarger';
 
 // Locale codes use the firmware's convention: en, zh_CN, zh_TW, ja,
 // th, nl. Underscore (not hyphen) matches PluginButton.nameMap shape
@@ -39,6 +41,8 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.close': 'Close',
     'popup.loading': 'Loading…',
     'popup.recognizing': 'Recognizing…',
+    'popup.fontSmaller': 'Decrease text size',
+    'popup.fontLarger': 'Increase text size',
   },
   zh_CN: {
     'popup.synonyms': '同义词',
@@ -47,6 +51,8 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.close': '关闭',
     'popup.loading': '加载中…',
     'popup.recognizing': '识别中…',
+    'popup.fontSmaller': '缩小文字',
+    'popup.fontLarger': '放大文字',
   },
   zh_TW: {
     'popup.synonyms': '同義詞',
@@ -55,6 +61,8 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.close': '關閉',
     'popup.loading': '載入中…',
     'popup.recognizing': '辨識中…',
+    'popup.fontSmaller': '縮小文字',
+    'popup.fontLarger': '放大文字',
   },
   ja: {
     'popup.synonyms': '類義語',
@@ -63,6 +71,8 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.close': '閉じる',
     'popup.loading': '読み込み中…',
     'popup.recognizing': '認識中…',
+    'popup.fontSmaller': '文字を小さく',
+    'popup.fontLarger': '文字を大きく',
   },
   th: {
     'popup.synonyms': 'คำพ้องความหมาย',
@@ -71,6 +81,8 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.close': 'ปิด',
     'popup.loading': 'กำลังโหลด…',
     'popup.recognizing': 'กำลังรู้จำ…',
+    'popup.fontSmaller': 'ลดขนาดตัวอักษร',
+    'popup.fontLarger': 'เพิ่มขนาดตัวอักษร',
   },
   nl: {
     'popup.synonyms': 'Synoniemen',
@@ -79,6 +91,8 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.close': 'Sluiten',
     'popup.loading': 'Bezig met laden…',
     'popup.recognizing': 'Bezig met herkennen…',
+    'popup.fontSmaller': 'Tekst verkleinen',
+    'popup.fontLarger': 'Tekst vergroten',
   },
   de: {
     'popup.synonyms': 'Synonyme',
@@ -87,6 +101,8 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.close': 'Schließen',
     'popup.loading': 'Wird geladen…',
     'popup.recognizing': 'Wird erkannt…',
+    'popup.fontSmaller': 'Schrift verkleinern',
+    'popup.fontLarger': 'Schrift vergrößern',
   },
 };
 

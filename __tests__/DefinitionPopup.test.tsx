@@ -138,7 +138,12 @@ describe('DefinitionPopup', () => {
       showDefinition(notFound('foo'));
     });
     expect(collectText(tree)).toContain('foo');
-    const closeBtn = tree.root.findByProps({accessibilityRole: 'button'});
+    // Multiple buttons exist (Close + font-size controls); find by
+    // the localised label.
+    const closeBtn = tree.root.findByProps({
+      accessibilityRole: 'button',
+      accessibilityLabel: 'Close',
+    });
     act(() => {
       closeBtn.props.onPress();
     });
@@ -231,7 +236,10 @@ describe('DefinitionPopup', () => {
     act(() => {
       showDefinition(notFound('foo'));
     });
-    const closeBtn = tree.root.findByProps({accessibilityRole: 'button'});
+    const closeBtn = tree.root.findByProps({
+      accessibilityRole: 'button',
+      accessibilityLabel: 'Close',
+    });
     expect(() => {
       act(() => {
         closeBtn.props.onPress();
@@ -383,6 +391,155 @@ describe('DefinitionPopup', () => {
     const text = collectText(tree);
     expect(text).toContain('Recognizing…');
     expect(text).toContain('OCR: hello');
+  });
+
+  describe('font-size A− / A+ controls', () => {
+    const findFontBtn = (
+      tree: ReactTestRenderer,
+      label: 'Decrease text size' | 'Increase text size',
+    ) =>
+      tree.root.findAllByProps({
+        accessibilityRole: 'button',
+        accessibilityLabel: label,
+      })[0];
+
+    const tryFindFontBtn = (
+      tree: ReactTestRenderer,
+      label: 'Decrease text size' | 'Increase text size',
+    ) =>
+      tree.root.findAllByProps({
+        accessibilityRole: 'button',
+        accessibilityLabel: label,
+      });
+
+    test('default size is S — only A+ is rendered (no A−)', () => {
+      const tree = renderPopup();
+      act(() => {
+        showDefinition(found('WordNet', 'hello', 'a greeting'));
+      });
+      expect(tryFindFontBtn(tree, 'Decrease text size')).toHaveLength(0);
+      expect(tryFindFontBtn(tree, 'Increase text size')).toHaveLength(1);
+    });
+
+    test('M shows both A− and A+', () => {
+      const tree = renderPopup();
+      act(() => {
+        showDefinition(found('WordNet', 'hello', 'a greeting'));
+      });
+      const plus = findFontBtn(tree, 'Increase text size');
+      act(() => {
+        plus.props.onPress();
+      });
+      expect(tryFindFontBtn(tree, 'Decrease text size')).toHaveLength(1);
+      expect(tryFindFontBtn(tree, 'Increase text size')).toHaveLength(1);
+    });
+
+    test('L shows only A− (no A+)', () => {
+      const tree = renderPopup();
+      act(() => {
+        showDefinition(found('WordNet', 'hello', 'a greeting'));
+      });
+      // S → M
+      act(() => {
+        findFontBtn(tree, 'Increase text size').props.onPress();
+      });
+      // M → L
+      act(() => {
+        findFontBtn(tree, 'Increase text size').props.onPress();
+      });
+      expect(tryFindFontBtn(tree, 'Decrease text size')).toHaveLength(1);
+      expect(tryFindFontBtn(tree, 'Increase text size')).toHaveLength(0);
+    });
+
+    test('A+ at L is no-op (clamped) — but the test never reaches it because A+ is hidden at L', () => {
+      // Defensive: the stepper logic clamps at the bound, so even if
+      // the button were somehow re-pressed it wouldn't overflow.
+      const tree = renderPopup();
+      act(() => {
+        showDefinition(found('WordNet', 'hello', 'a greeting'));
+      });
+      act(() => {
+        findFontBtn(tree, 'Increase text size').props.onPress();
+        findFontBtn(tree, 'Increase text size').props.onPress();
+      });
+      // At L. A− back to M.
+      act(() => {
+        findFontBtn(tree, 'Decrease text size').props.onPress();
+      });
+      expect(tryFindFontBtn(tree, 'Decrease text size')).toHaveLength(1);
+      expect(tryFindFontBtn(tree, 'Increase text size')).toHaveLength(1);
+    });
+
+    test('font-size buttons are NOT rendered during the recognizing kind', () => {
+      const tree = renderPopup();
+      act(() => {
+        showRecognizing();
+      });
+      expect(tryFindFontBtn(tree, 'Decrease text size')).toHaveLength(0);
+      expect(tryFindFontBtn(tree, 'Increase text size')).toHaveLength(0);
+    });
+
+    test('fontScale propagates to the definition body — Text fontSize grows on A+', () => {
+      const tree = renderPopup();
+      act(() => {
+        showDefinition(found('WordNet', 'hello', 'a greeting', 'plain'));
+      });
+      const findDefinitionFontSize = (): number => {
+        const json = tree.toJSON();
+        let captured: number | null = null;
+        const visit = (node: unknown): void => {
+          if (Array.isArray(node)) {
+            node.forEach(visit);
+            return;
+          }
+          if (
+            node &&
+            typeof node === 'object' &&
+            'props' in node &&
+            'children' in node
+          ) {
+            const obj = node as {
+              props: {style?: unknown};
+              children: unknown;
+              type?: string;
+            };
+            const text = JSON.stringify(obj.children);
+            if (text.includes('a greeting')) {
+              const flatten = (s: unknown): {fontSize?: number} => {
+                if (Array.isArray(s)) {
+                  return Object.assign({}, ...s.map(flatten));
+                }
+                if (s && typeof s === 'object') {
+                  return s as {fontSize?: number};
+                }
+                return {};
+              };
+              const flat = flatten(obj.props.style);
+              if (typeof flat.fontSize === 'number') {
+                captured = flat.fontSize;
+              }
+            }
+            visit(obj.children);
+          }
+        };
+        visit(json);
+        if (captured === null) {
+          throw new Error('definition Text not found');
+        }
+        return captured;
+      };
+      const baseFontSize = findDefinitionFontSize();
+      act(() => {
+        tree.root
+          .findAllByProps({
+            accessibilityRole: 'button',
+            accessibilityLabel: 'Increase text size',
+          })[0]
+          .props.onPress();
+      });
+      const mediumFontSize = findDefinitionFontSize();
+      expect(mediumFontSize).toBeGreaterThan(baseFontSize);
+    });
   });
 
   test('transitions cleanly from recognizing to result without a flicker of stale state', () => {
