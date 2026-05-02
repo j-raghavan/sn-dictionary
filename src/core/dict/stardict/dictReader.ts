@@ -20,11 +20,25 @@
 //   FNAME (zstr) if FLG.FNAME
 //   FCOMMENT (zstr) if FLG.FCOMMENT
 //   FHCRC (u16) if FLG.FHCRC
-//   chunk[0] deflate stream | chunk[1] deflate stream | ...
+//   chunk[0] | chunk[1] | ... | chunk[N-1]
 //   gzip trailer (CRC32 + ISIZE)
 //
-// Each chunk is a self-contained raw-deflate stream (no per-chunk
-// gzip wrapper) — pako.inflateRaw decodes them in isolation.
+// Subtle: real dictzip writes chunks as a SINGLE continuous deflate
+// stream broken into byte-aligned slices using Z_FULL_FLUSH between
+// chunks. Each chunk's bytes inflate independently (the flush resets
+// inflate state), but the chunks do NOT carry BFINAL=1 — the outer
+// stream is a Z_FINISH only at the very end, and it lands inside the
+// LAST chunk. Calling pako.inflateRaw(chunkBytes) on a non-final
+// chunk therefore returns `undefined` (pako never sees end-of-stream)
+// and silently breaks the reader.
+//
+// Fix: append a synthetic 5-byte stored-empty-block marker
+// (`01 00 00 ff ff` — BFINAL=1, BTYPE=stored, LEN=0, NLEN=0xffff)
+// to every chunk before inflating. That tells pako "this is the
+// last block" without changing what it produces. The last chunk
+// already has BFINAL=1 of its own; pako stops at the first end-of-
+// stream marker and ignores the trailing sentinel, so the same
+// always-append code path handles both cases.
 //
 // Fallback for gzip-without-RA: a few writers (and our synthetic test
 // fixtures from older releases) emit a single-block gzip with no RA
@@ -148,11 +162,27 @@ class DictzipReader implements DictReader {
       meta.compressedStart,
       meta.compressedStart + meta.compressedLength,
     );
-    const inflated = pako.inflateRaw(compressed);
+    // Append the BFINAL=1 stored-empty-block sentinel (see file
+    // header): non-final dictzip chunks lack end-of-stream markers,
+    // and pako.inflateRaw silently returns undefined without one.
+    const padded = new Uint8Array(compressed.length + DEFLATE_END_SENTINEL.length);
+    padded.set(compressed, 0);
+    padded.set(DEFLATE_END_SENTINEL, compressed.length);
+    const inflated = pako.inflateRaw(padded);
+    if (!(inflated instanceof Uint8Array)) {
+      throw new Error(
+        `dictReader: pako.inflateRaw returned ${typeof inflated} for chunk ${i} (compressed ${meta.compressedLength} bytes)`,
+      );
+    }
     this.cache.set(i, inflated);
     return inflated;
   }
 }
+
+// 5-byte raw-deflate trailer that terminates the stream as an empty
+// stored block: BFINAL=1, BTYPE=00 (stored), padding to byte boundary
+// (0 bits), LEN=0, NLEN=0xffff.
+const DEFLATE_END_SENTINEL = new Uint8Array([0x01, 0x00, 0x00, 0xff, 0xff]);
 
 // Returns the parsed dictzip RA index, or null if the gzip stream
 // lacks an RA extra field (so the caller falls back to whole-file
