@@ -66,10 +66,17 @@ lookup
 // Discover sideloaded user dicts under /storage/emulated/0/MyStyle/SnDict.
 // Fire-and-forget at startup: the Lookup button is always enabled
 // (users can hit the base dict immediately) and discovery prepends
-// any found dicts into the registry as they become available. Each
-// individual user dict still parses lazily on its first lookup.
+// any found dicts into the registry as they become available.
+//
+// After registration we kick off `prime()` on each discovered source
+// SERIALLY — large user dicts are CPU-bound during parse, and running
+// them concurrently just thrashes the JS thread. Awaiting one at a
+// time keeps each parse's cooperative yields effective so the UI
+// stays responsive even while priming. The lazy harness memoises the
+// in-flight load, so a user-initiated lookup that arrives mid-prime
+// shares the same parse instead of starting a duplicate.
 discoverUserDicts({fileUtils: FileUtils, logger})
-  .then(userDicts => {
+  .then(async userDicts => {
     if (userDicts.length === 0) {
       return;
     }
@@ -79,6 +86,19 @@ discoverUserDicts({fileUtils: FileUtils, logger})
         .map(s => s.name)
         .join(', ')}]`,
     );
+    for (const source of userDicts) {
+      if (typeof source.prime !== 'function') {
+        continue;
+      }
+      try {
+        await source.prime();
+        logger.log(`[startup] primed user dict "${source.name}"`);
+      } catch (e) {
+        logger.warn(
+          `[startup] prime "${source.name}" threw: ${e.message} — will retry on next lookup`,
+        );
+      }
+    }
   })
   .catch(e => logger.error(`[discovery] dispatch crashed: ${e.message}`));
 

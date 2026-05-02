@@ -24,7 +24,8 @@ export type StringId =
   | 'popup.synonyms'
   | 'popup.ocr'
   | 'popup.notFoundFor'
-  | 'popup.close';
+  | 'popup.close'
+  | 'popup.loading';
 
 // Locale codes use the firmware's convention: en, zh_CN, zh_TW, ja,
 // th, nl. Underscore (not hyphen) matches PluginButton.nameMap shape
@@ -35,42 +36,49 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.ocr': 'OCR',
     'popup.notFoundFor': 'No definition found for',
     'popup.close': 'Close',
+    'popup.loading': 'Loading…',
   },
   zh_CN: {
     'popup.synonyms': '同义词',
     'popup.ocr': '识别',
     'popup.notFoundFor': '未找到定义：',
     'popup.close': '关闭',
+    'popup.loading': '加载中…',
   },
   zh_TW: {
     'popup.synonyms': '同義詞',
     'popup.ocr': '辨識',
     'popup.notFoundFor': '未找到定義：',
     'popup.close': '關閉',
+    'popup.loading': '載入中…',
   },
   ja: {
     'popup.synonyms': '類義語',
     'popup.ocr': 'OCR',
     'popup.notFoundFor': '定義が見つかりません：',
     'popup.close': '閉じる',
+    'popup.loading': '読み込み中…',
   },
   th: {
     'popup.synonyms': 'คำพ้องความหมาย',
     'popup.ocr': 'OCR',
     'popup.notFoundFor': 'ไม่พบคำจำกัดความสำหรับ',
     'popup.close': 'ปิด',
+    'popup.loading': 'กำลังโหลด…',
   },
   nl: {
     'popup.synonyms': 'Synoniemen',
     'popup.ocr': 'OCR',
     'popup.notFoundFor': 'Geen definitie gevonden voor',
     'popup.close': 'Sluiten',
+    'popup.loading': 'Bezig met laden…',
   },
   de: {
     'popup.synonyms': 'Synonyme',
     'popup.ocr': 'OCR',
     'popup.notFoundFor': 'Keine Definition gefunden für',
     'popup.close': 'Schließen',
+    'popup.loading': 'Wird geladen…',
   },
 };
 

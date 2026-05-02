@@ -5,13 +5,13 @@ import {
 import {buildSyntheticStarDict} from './_helpers/buildSyntheticStarDict';
 
 describe('stardictDict', () => {
-  test('builds and looks up an entry from raw .dict bytes', () => {
+  test('builds and looks up an entry from raw .dict bytes', async () => {
     const {ifo, idx, dict} = buildSyntheticStarDict({
       apple: 'a fruit',
       banana: 'a yellow fruit',
       cherry: 'a small red fruit',
     });
-    const parsed = buildDict(ifo, idx, dict);
+    const parsed = await buildDict(ifo, idx, dict);
     expect(parsed.meta.wordcount).toBe(3);
     const hit = lookupDict(parsed, 'banana');
     expect(hit).toEqual({
@@ -20,12 +20,12 @@ describe('stardictDict', () => {
     });
   });
 
-  test('builds and looks up from gzip-wrapped .dict.dz', () => {
+  test('builds and looks up from gzip-wrapped .dict.dz', async () => {
     const {ifo, idx, dict} = buildSyntheticStarDict(
       {apple: 'a fruit', banana: 'a yellow fruit'},
       {gzipDict: true},
     );
-    const parsed = buildDict(ifo, idx, dict);
+    const parsed = await buildDict(ifo, idx, dict);
     expect(lookupDict(parsed, 'apple')).toEqual({
       canonicalWord: 'apple',
       definition: 'a fruit',
@@ -36,38 +36,38 @@ describe('stardictDict', () => {
     });
   });
 
-  test('lookup is case-insensitive and trims whitespace', () => {
+  test('lookup is case-insensitive and trims whitespace', async () => {
     const {ifo, idx, dict} = buildSyntheticStarDict({Apple: 'a fruit'});
-    const parsed = buildDict(ifo, idx, dict);
+    const parsed = await buildDict(ifo, idx, dict);
     expect(lookupDict(parsed, 'APPLE')?.canonicalWord).toBe('Apple');
     expect(lookupDict(parsed, '  Apple   ')?.canonicalWord).toBe('Apple');
     expect(lookupDict(parsed, 'apple')?.canonicalWord).toBe('Apple');
   });
 
-  test('returns null for an unknown word', () => {
+  test('returns null for an unknown word', async () => {
     const {ifo, idx, dict} = buildSyntheticStarDict({apple: 'a fruit'});
-    const parsed = buildDict(ifo, idx, dict);
+    const parsed = await buildDict(ifo, idx, dict);
     expect(lookupDict(parsed, 'banana')).toBeNull();
   });
 
-  test('returns null for an empty / whitespace-only query', () => {
+  test('returns null for an empty / whitespace-only query', async () => {
     const {ifo, idx, dict} = buildSyntheticStarDict({apple: 'a fruit'});
-    const parsed = buildDict(ifo, idx, dict);
+    const parsed = await buildDict(ifo, idx, dict);
     expect(lookupDict(parsed, '')).toBeNull();
     expect(lookupDict(parsed, '   ')).toBeNull();
   });
 
-  test('decodes UTF-8 multibyte definitions correctly', () => {
+  test('decodes UTF-8 multibyte definitions correctly', async () => {
     const {ifo, idx, dict} = buildSyntheticStarDict({
       café: '咖啡 (coffee)',
       日本: 'Japan • 日本国',
     });
-    const parsed = buildDict(ifo, idx, dict);
+    const parsed = await buildDict(ifo, idx, dict);
     expect(lookupDict(parsed, 'café')?.definition).toBe('咖啡 (coffee)');
     expect(lookupDict(parsed, '日本')?.definition).toBe('Japan • 日本国');
   });
 
-  test('case-collision: first entry in .idx wins for the lowercased key', () => {
+  test('case-collision: first entry in .idx wins for the lowercased key', async () => {
     // .idx is sorted by case-sensitive byte order, so 'Apple' (0x41)
     // sorts before 'apple' (0x61). The orchestrator should keep the
     // first occurrence to be deterministic.
@@ -75,7 +75,7 @@ describe('stardictDict', () => {
       Apple: 'capitalised',
       apple: 'lowercase',
     });
-    const parsed = buildDict(ifo, idx, dict);
+    const parsed = await buildDict(ifo, idx, dict);
     expect(lookupDict(parsed, 'apple')?.canonicalWord).toBe('Apple');
   });
 
@@ -103,7 +103,7 @@ describe('stardictDict', () => {
       /* eslint-enable no-bitwise */
     };
 
-    test('synonym lookup resolves to the canonical .idx entry', () => {
+    test('synonym lookup resolves to the canonical .idx entry', async () => {
       // Real-world case: Devanagari-only .idx + Latin transliterations
       // in .syn. The synthetic builder uses Latin keys but the
       // mechanics are identical — synonym maps to entry by index.
@@ -118,7 +118,7 @@ describe('stardictDict', () => {
         {word: 'pomum', index: 0}, // another alias for apple
         {word: 'cerasus', index: 2}, // alias for cherry
       ]);
-      const parsed = buildDict(ifo, idx, dict, syn);
+      const parsed = await buildDict(ifo, idx, dict, syn);
       // Synonym lookups resolve to the canonical entry.
       expect(lookupDict(parsed, 'malum')).toEqual({
         canonicalWord: 'apple',
@@ -136,15 +136,15 @@ describe('stardictDict', () => {
       expect(lookupDict(parsed, 'apple')?.definition).toBe('a fruit');
     });
 
-    test('synonym lookup is case-insensitive', () => {
+    test('synonym lookup is case-insensitive', async () => {
       const {ifo, idx, dict} = buildSyntheticStarDict({apple: 'a fruit'});
       const syn = buildSyn([{word: 'MALUM', index: 0}]);
-      const parsed = buildDict(ifo, idx, dict, syn);
+      const parsed = await buildDict(ifo, idx, dict, syn);
       expect(lookupDict(parsed, 'malum')?.definition).toBe('a fruit');
       expect(lookupDict(parsed, 'Malum')?.definition).toBe('a fruit');
     });
 
-    test('synonyms do not shadow existing .idx entries (idx wins)', () => {
+    test('synonyms do not shadow existing .idx entries (idx wins)', async () => {
       // If a synonym happens to match an existing headword, the .idx
       // entry already in the map keeps its place. Otherwise a bad
       // .syn could silently swap definitions.
@@ -155,33 +155,33 @@ describe('stardictDict', () => {
       // Synonym "apple" attempting to point at cherry's index. Should
       // be ignored — apple already maps to its own entry.
       const syn = buildSyn([{word: 'apple', index: 1}]);
-      const parsed = buildDict(ifo, idx, dict, syn);
+      const parsed = await buildDict(ifo, idx, dict, syn);
       expect(lookupDict(parsed, 'apple')?.definition).toBe('real apple');
     });
 
-    test('out-of-range synonym index is skipped silently', () => {
+    test('out-of-range synonym index is skipped silently', async () => {
       const {ifo, idx, dict} = buildSyntheticStarDict({apple: 'a fruit'});
       // index 99 doesn't exist (we have only entry 0).
       const syn = buildSyn([{word: 'badref', index: 99}]);
-      const parsed = buildDict(ifo, idx, dict, syn);
+      const parsed = await buildDict(ifo, idx, dict, syn);
       expect(lookupDict(parsed, 'badref')).toBeNull();
       // The good entries still work.
       expect(lookupDict(parsed, 'apple')?.definition).toBe('a fruit');
     });
 
-    test('empty .syn buffer is treated as no synonyms', () => {
+    test('empty .syn buffer is treated as no synonyms', async () => {
       const {ifo, idx, dict} = buildSyntheticStarDict({apple: 'a fruit'});
-      const parsed = buildDict(ifo, idx, dict, new Uint8Array(0));
+      const parsed = await buildDict(ifo, idx, dict, new Uint8Array(0));
       expect(lookupDict(parsed, 'apple')?.definition).toBe('a fruit');
     });
 
-    test('omitted .syn parameter is equivalent to no synonym index', () => {
+    test('omitted .syn parameter is equivalent to no synonym index', async () => {
       const {ifo, idx, dict} = buildSyntheticStarDict({apple: 'a fruit'});
-      const parsed = buildDict(ifo, idx, dict);
+      const parsed = await buildDict(ifo, idx, dict);
       expect(lookupDict(parsed, 'apple')?.definition).toBe('a fruit');
     });
 
-    test('multi-byte synonym word (Devanagari) resolves correctly', () => {
+    test('multi-byte synonym word (Devanagari) resolves correctly', async () => {
       // Real Wiktionary case: native script in .idx, Latin in .syn.
       // Here the synthetic dict has Latin in .idx and Devanagari in
       // .syn — same mechanics, just inverted scripts.
@@ -189,7 +189,7 @@ describe('stardictDict', () => {
         namaste: 'a Hindi greeting',
       });
       const syn = buildSyn([{word: 'नमस्ते', index: 0}]);
-      const parsed = buildDict(ifo, idx, dict, syn);
+      const parsed = await buildDict(ifo, idx, dict, syn);
       expect(lookupDict(parsed, 'नमस्ते')).toEqual({
         canonicalWord: 'namaste',
         definition: 'a Hindi greeting',

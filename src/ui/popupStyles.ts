@@ -71,6 +71,11 @@ export const popupStyles = StyleSheet.create({
     color: '#555555',
     fontStyle: 'italic',
   },
+  loading: {
+    fontSize: 16,
+    color: '#555555',
+    fontStyle: 'italic',
+  },
   sense: {
     paddingVertical: 10,
   },

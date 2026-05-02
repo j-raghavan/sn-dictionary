@@ -150,9 +150,19 @@ export const onNoteLassoDefine = async (
       );
       return 'recognize-empty';
     }
-    const result = await deps.lookup.lookup(recognized);
-    deps.showResult(result, `${t('popup.ocr')}: ${recognized}`);
+    // Streaming progress: render the popup as soon as the lookup
+    // begins (with every user dict marked as loading) so the pen tap
+    // never appears to hang on a slow source. Each source resolution
+    // re-renders with the freshly-arrived hit. popupShown flips only
+    // once a snapshot has actually been emitted, so a lookup impl
+    // that throws before emitting still triggers the close-view path.
+    const ocrLabel = `${t('popup.ocr')}: ${recognized}`;
+    const result = await deps.lookup.lookup(recognized, snapshot => {
+      popupShown = true;
+      deps.showResult(snapshot, ocrLabel);
+    });
     popupShown = true;
+    deps.showResult(result, ocrLabel);
     return 'ok';
   } catch (e) {
     deps.logger.error(`[define] pipeline crashed: ${(e as Error).message}`);

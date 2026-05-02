@@ -50,9 +50,16 @@ export const onDocSelectDefine = async (
       deps.logger.warn('[doc-define] no selection — nothing to define');
       return 'no-selection';
     }
-    const result = await deps.lookup.lookup(text);
-    deps.showResult(result);
+    // Streaming progress: open the popup immediately and re-render as
+    // each source resolves. popupShown flips only after the first
+    // emission so a synchronous throw inside lookup still closes the
+    // plugin view via the finally block.
+    const result = await deps.lookup.lookup(text, snapshot => {
+      popupShown = true;
+      deps.showResult(snapshot);
+    });
     popupShown = true;
+    deps.showResult(result);
     return 'ok';
   } catch (e) {
     deps.logger.error(`[doc-define] pipeline crashed: ${(e as Error).message}`);

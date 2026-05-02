@@ -16,7 +16,7 @@ const decodeMap = (bytes: Uint8Array): Map<string, string> => {
 
 const buildDeps = (overrides: {
   load?: () => Promise<Uint8Array | null>;
-  parse?: (bytes: Uint8Array) => Map<string, string>;
+  parse?: (bytes: Uint8Array) => Map<string, string> | Promise<Map<string, string>>;
   lookup?: (parsed: Map<string, string>, word: string) => DictEntry | null;
   logTag?: string;
   logger?: {warn: jest.Mock};
@@ -207,5 +207,94 @@ describe('createLazyAsyncSource', () => {
     });
     expect((await source.lookup('apple'))?.definition).toBe('fruit');
     expect((await source.lookup('banana'))?.definition).toBe('yellow');
+  });
+
+  test('async parse: parser may return a Promise<TParsed> (StarDict path)', async () => {
+    // The StarDict parser is async because it yields cooperatively
+    // during large index builds. Verify the harness awaits it.
+    const parse = jest.fn(async (bytes: Uint8Array) => {
+      // Simulate work that resolves on a later microtask.
+      await Promise.resolve();
+      return decodeMap(bytes);
+    });
+    const source = createLazyAsyncSource(buildDeps({parse}));
+    expect((await source.lookup('apple'))?.definition).toBe('fruit');
+    expect(parse).toHaveBeenCalledTimes(1);
+  });
+
+  test('prime() warms up without invoking lookup, status flips ready', async () => {
+    const deps = buildDeps();
+    const source = createLazyAsyncSource(deps);
+    expect(source.status?.()).toBe('idle');
+    await source.prime?.();
+    expect(source.status?.()).toBe('ready');
+    // A subsequent lookup must NOT re-load — prime did it once.
+    const loadSpy = jest.spyOn(deps, 'load');
+    await source.lookup('apple');
+    expect(loadSpy).not.toHaveBeenCalled();
+  });
+
+  test('prime() and concurrent lookup share a single load+parse', async () => {
+    let loadCalls = 0;
+    const load = jest.fn(async () => {
+      loadCalls++;
+      await new Promise(r => setTimeout(r, 5));
+      return enc('apple|fruit');
+    });
+    const source = createLazyAsyncSource(buildDeps({load}));
+    const [, hit] = await Promise.all([source.prime?.(), source.lookup('apple')]);
+    expect(hit?.definition).toBe('fruit');
+    expect(loadCalls).toBe(1);
+  });
+
+  test('prime() never throws even when the loader fails', async () => {
+    const source = createLazyAsyncSource(
+      buildDeps({
+        load: async () => {
+          throw new Error('disk gone');
+        },
+      }),
+    );
+    await expect(source.prime?.()).resolves.toBeUndefined();
+    expect(source.status?.()).toBe('failed');
+  });
+
+  test('status reports loading mid-flight then settles', async () => {
+    let resolveLoad!: (b: Uint8Array) => void;
+    const load = () =>
+      new Promise<Uint8Array>(resolve => {
+        resolveLoad = resolve;
+      });
+    const source = createLazyAsyncSource(buildDeps({load}));
+    const primePromise = source.prime?.();
+    expect(source.status?.()).toBe('loading');
+    resolveLoad(enc('apple|fruit'));
+    await primePromise;
+    expect(source.status?.()).toBe('ready');
+  });
+
+  test('status reports absent when the loader returns null', async () => {
+    const source = createLazyAsyncSource(buildDeps({load: async () => null}));
+    await source.prime?.();
+    expect(source.status?.()).toBe('absent');
+  });
+
+  test('failed status flips back to idle on the next attempt then to ready', async () => {
+    let calls = 0;
+    const flaky = async () => {
+      calls++;
+      if (calls === 1) {
+        throw new Error('flaky');
+      }
+      return enc('apple|fruit');
+    };
+    const source = createLazyAsyncSource(buildDeps({load: flaky}));
+    await source.prime?.();
+    expect(source.status?.()).toBe('failed');
+    // Next attempt: status transitions failed -> loading -> ready.
+    const second = source.prime?.();
+    expect(source.status?.()).toBe('loading');
+    await second;
+    expect(source.status?.()).toBe('ready');
   });
 });

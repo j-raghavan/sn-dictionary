@@ -1,5 +1,5 @@
 import {createMultiDictLookup} from '../src/core/dict/multiDictLookup';
-import type {DictEntry, DictSource} from '../src/core/lookup';
+import type {DictEntry, DictSource, LookupResult} from '../src/core/lookup';
 
 const stubSource = (
   name: string,
@@ -18,12 +18,17 @@ describe('createMultiDictLookup', () => {
     expect(await lookup.lookup('apple')).toEqual({
       queriedFor: 'apple',
       hits: [],
+      loading: [],
     });
   });
 
   test('returns no hits with original input preserved on whitespace', async () => {
     const lookup = createMultiDictLookup([stubSource('A', {apple: 'fruit'})]);
-    expect(await lookup.lookup('   ')).toEqual({queriedFor: '   ', hits: []});
+    expect(await lookup.lookup('   ')).toEqual({
+      queriedFor: '   ',
+      hits: [],
+      loading: [],
+    });
   });
 
   test('does not call any source for empty/whitespace input', async () => {
@@ -42,6 +47,7 @@ describe('createMultiDictLookup', () => {
       {source: 'A', entry: {word: 'apple', definition: 'a fruit (A)'}},
       {source: 'B', entry: {word: 'apple', definition: 'a fruit (B)'}},
     ]);
+    expect(result.loading).toEqual([]);
   });
 
   test('preserves source-array order regardless of resolution order', async () => {
@@ -83,6 +89,7 @@ describe('createMultiDictLookup', () => {
     expect(await lookup.lookup('mango')).toEqual({
       queriedFor: 'mango',
       hits: [],
+      loading: [],
     });
   });
 
@@ -123,6 +130,7 @@ describe('createMultiDictLookup', () => {
     expect(await lookup.lookup('apple')).toEqual({
       queriedFor: 'apple',
       hits: [],
+      loading: [],
     });
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('a fail'));
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('b fail'));
@@ -179,5 +187,93 @@ describe('createMultiDictLookup', () => {
     // internally consistent.
     const next = await lookup.lookup('apple');
     expect(next.hits.map(h => h.source)).toEqual(['UserB', 'UserA', 'Base']);
+  });
+
+  describe('streaming progress (onUpdate)', () => {
+    test('emits an initial empty-hits snapshot listing every source as loading', async () => {
+      const a = stubSource('A', {apple: 'fruit (A)'});
+      const b = stubSource('B', {apple: 'fruit (B)'});
+      const lookup = createMultiDictLookup([a, b]);
+      const updates: LookupResult[] = [];
+      await lookup.lookup('apple', s => updates.push({...s}));
+      expect(updates.length).toBeGreaterThan(0);
+      const initial = updates[0];
+      expect(initial.hits).toEqual([]);
+      expect(initial.loading).toEqual(['A', 'B']);
+    });
+
+    test('emits a snapshot after each source resolution and a final snapshot with loading=[]', async () => {
+      // 'A' resolves after 'B' so the visible progression is
+      //   [A,B] loading -> A loading + B hit -> both resolved.
+      const a: DictSource = {
+        name: 'A',
+        lookup: jest.fn(
+          () =>
+            new Promise(resolve =>
+              setTimeout(
+                () => resolve({word: 'apple', definition: 'a-slow'}),
+                15,
+              ),
+            ),
+        ),
+      };
+      const b: DictSource = {
+        name: 'B',
+        lookup: jest.fn(async () => ({word: 'apple', definition: 'b-fast'})),
+      };
+      const lookup = createMultiDictLookup([a, b]);
+      const updates: LookupResult[] = [];
+      const final = await lookup.lookup('apple', s => updates.push({...s}));
+      // Initial + per-source resolution emissions.
+      expect(updates[0].loading).toEqual(['A', 'B']);
+      const lastInterim = updates[updates.length - 1];
+      expect(lastInterim.loading).toEqual([]);
+      expect(final.loading).toEqual([]);
+      expect(final.hits.map(h => h.source)).toEqual(['A', 'B']);
+    });
+
+    test('streaming snapshot omits sources that miss but resolves them out of loading', async () => {
+      const a = stubSource('A', {apple: 'fruit'});
+      const b = stubSource('B', {grape: 'small fruit'}); // misses apple
+      const lookup = createMultiDictLookup([a, b]);
+      const updates: LookupResult[] = [];
+      const final = await lookup.lookup('apple', s => updates.push({...s}));
+      expect(final.hits.map(h => h.source)).toEqual(['A']);
+      expect(final.loading).toEqual([]);
+      // No mid-flight snapshot has 'B' as a hit; it should just drop
+      // out of loading once it resolves.
+      for (const u of updates) {
+        expect(u.hits.map(h => h.source)).not.toContain('B');
+      }
+    });
+
+    test('emits a single empty snapshot for whitespace-only input', async () => {
+      const a = stubSource('A', {apple: 'fruit'});
+      const lookup = createMultiDictLookup([a]);
+      const updates: LookupResult[] = [];
+      await lookup.lookup('   ', s => updates.push({...s}));
+      expect(updates).toEqual([
+        {queriedFor: '   ', hits: [], loading: []},
+      ]);
+    });
+
+    test('a throwing onUpdate listener does not break the lookup', async () => {
+      const a = stubSource('A', {apple: 'fruit'});
+      const lookup = createMultiDictLookup([a]);
+      const final = await lookup.lookup('apple', () => {
+        throw new Error('listener boom');
+      });
+      expect(final.hits.map(h => h.source)).toEqual(['A']);
+    });
+
+    test('no listener: skips the streaming code path entirely', async () => {
+      const a = stubSource('A', {apple: 'fruit'});
+      const lookup = createMultiDictLookup([a]);
+      // Passing no second argument exercises the non-streaming
+      // resolution path (single Promise.all without per-source emit).
+      const final = await lookup.lookup('apple');
+      expect(final.hits.map(h => h.source)).toEqual(['A']);
+      expect(final.loading).toEqual([]);
+    });
   });
 });

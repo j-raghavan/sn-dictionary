@@ -37,9 +37,18 @@ export default function DefinitionPopup(): React.JSX.Element {
   }
 
   const hits = state.result.hits;
+  const loading = state.result.loading ?? [];
+  const isWaitingForFirstHit = hits.length === 0 && loading.length > 0;
+  // The popup may render before any source resolves (streaming
+  // emission). In that "waiting" state we have no canonical word
+  // yet, so fall back to whatever the user queried so the header
+  // still shows something meaningful.
   const headerWord =
     hits.length > 0 ? hits[0].entry.word : state.result.queriedFor;
-  const showSourceBadges = hits.length >= 2;
+  // Show source badges as soon as we have ≥2 distinct things to show
+  // (hits + loading combined), so the layout doesn't reflow when a
+  // loading section flips to a hit.
+  const showSourceBadges = hits.length + loading.length >= 2;
 
   return (
     <View style={styles.backdrop}>
@@ -49,20 +58,34 @@ export default function DefinitionPopup(): React.JSX.Element {
           <Text style={styles.ocrLabel}>{state.ocrLabel}</Text>
         ) : null}
         <ScrollView style={styles.body}>
-          {hits.length === 0 ? (
+          {hits.map((hit, i) => (
+            <SourceSection
+              key={`hit-${hit.source}-${i}`}
+              hit={hit}
+              showBadge={showSourceBadges}
+              showDivider={i > 0}
+            />
+          ))}
+          {loading.map((sourceName, i) => (
+            <View
+              key={`loading-${sourceName}-${i}`}
+              style={[
+                styles.section,
+                (hits.length > 0 || i > 0) && styles.sectionDivider,
+              ]}>
+              {showSourceBadges ? (
+                <View style={styles.sectionHeader}>
+                  <Text style={styles.sourceBadge}>{sourceName}</Text>
+                </View>
+              ) : null}
+              <Text style={styles.loading}>{t('popup.loading')}</Text>
+            </View>
+          ))}
+          {hits.length === 0 && !isWaitingForFirstHit ? (
             <Text style={styles.notFound}>
               {`${t('popup.notFoundFor')} "${state.result.queriedFor}".`}
             </Text>
-          ) : (
-            hits.map((hit, i) => (
-              <SourceSection
-                key={`${hit.source}-${i}`}
-                hit={hit}
-                showBadge={showSourceBadges}
-                showDivider={i > 0}
-              />
-            ))
-          )}
+          ) : null}
         </ScrollView>
         <Pressable
           accessibilityRole="button"

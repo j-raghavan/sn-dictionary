@@ -23,6 +23,7 @@ const buildDeps = (overrides: Partial<DefineDeps> = {}): DefineDeps => {
   const lookupResult: LookupResult = {
     queriedFor: 'hello',
     hits: [{source: 'WordNet', entry: {word: 'hello', definition: 'a greeting'}}],
+    loading: [],
   };
   const showResult = jest.fn();
 
@@ -97,7 +98,7 @@ describe('onNoteLassoDefine', () => {
     ]);
     expect(deps.comm.setLassoBoxState).toHaveBeenCalledWith(2);
     expect(deps.comm.closePluginView).not.toHaveBeenCalled();
-    expect(deps.lookup.lookup).toHaveBeenCalledWith('hello');
+    expect(deps.lookup.lookup).toHaveBeenCalledWith('hello', expect.any(Function));
     // Tests run with the en locale, so the OCR-prefix label
     // resolves to "OCR: hello"; in other locales the prefix is
     // localised (e.g. zh_CN -> "识别: hello").
@@ -125,7 +126,7 @@ describe('onNoteLassoDefine', () => {
     const outcome = await onNoteLassoDefine(deps);
     expect(outcome).toBe('ok');
     expect(deps.comm.recognizeElements).toHaveBeenCalled();
-    expect(deps.lookup.lookup).toHaveBeenCalledWith('hello');
+    expect(deps.lookup.lookup).toHaveBeenCalledWith('hello', expect.any(Function));
   });
 
   test('lassoed title (titleNum > 0): same OCR path fires', async () => {
@@ -224,7 +225,7 @@ describe('onNoteLassoDefine', () => {
       } as DefineDeps['comm'],
     });
     await onNoteLassoDefine(deps);
-    expect(deps.lookup.lookup).toHaveBeenCalledWith('hello');
+    expect(deps.lookup.lookup).toHaveBeenCalledWith('hello', expect.any(Function));
     // OCR label uses the trimmed text too — popup doesn't show
     // "OCR:   hello\n".
     expect(deps.showResult).toHaveBeenCalledWith(
@@ -277,5 +278,53 @@ describe('onNoteLassoDefine', () => {
     const outcome = await onNoteLassoDefine(deps);
     expect(outcome).toBe('ok');
     expect(deps.comm.setLassoBoxState).toHaveBeenCalledWith(2);
+  });
+
+  test('streaming progress: showResult fires per snapshot emission and once for the final result', async () => {
+    const initialSnapshot: LookupResult = {
+      queriedFor: 'hello',
+      hits: [],
+      loading: ['UserA', 'WordNet'],
+    };
+    const finalSnapshot: LookupResult = {
+      queriedFor: 'hello',
+      hits: [{source: 'WordNet', entry: {word: 'hello', definition: 'a greeting'}}],
+      loading: [],
+    };
+    const deps = buildDeps({
+      lookup: {
+        lookup: jest.fn(
+          async (
+            _t: string,
+            onUpdate?: (snap: LookupResult) => void,
+          ): Promise<LookupResult> => {
+            onUpdate?.(initialSnapshot);
+            onUpdate?.(finalSnapshot);
+            return finalSnapshot;
+          },
+        ),
+      },
+    });
+    const outcome = await onNoteLassoDefine(deps);
+    expect(outcome).toBe('ok');
+    expect(deps.showResult).toHaveBeenCalledTimes(3);
+    expect((deps.showResult as jest.Mock).mock.calls[0][0]).toEqual(initialSnapshot);
+    expect((deps.showResult as jest.Mock).mock.calls[1][0]).toEqual(finalSnapshot);
+    expect((deps.showResult as jest.Mock).mock.calls[2][0]).toEqual(finalSnapshot);
+    expect(deps.comm.closePluginView).not.toHaveBeenCalled();
+  });
+
+  test('lookup throws WITHOUT emitting any snapshot: outcome is failed and view is closed', async () => {
+    const deps = buildDeps({
+      lookup: {
+        lookup: jest.fn(async (): Promise<LookupResult> => {
+          throw new Error('lookup boom');
+        }),
+      },
+    });
+    const outcome = await onNoteLassoDefine(deps);
+    expect(outcome).toBe('failed');
+    expect(deps.showResult).not.toHaveBeenCalled();
+    expect(deps.comm.closePluginView).toHaveBeenCalled();
   });
 });

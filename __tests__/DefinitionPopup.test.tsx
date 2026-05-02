@@ -36,11 +36,19 @@ const found = (
 ): LookupResult => ({
   queriedFor: word,
   hits: [{source, entry: {word, definition, format}}],
+  loading: [],
 });
 
 const notFound = (queriedFor: string): LookupResult => ({
   queriedFor,
   hits: [],
+  loading: [],
+});
+
+const loading = (queriedFor: string, sources: string[]): LookupResult => ({
+  queriedFor,
+  hits: [],
+  loading: sources,
 });
 
 beforeEach(() => {
@@ -246,6 +254,7 @@ describe('DefinitionPopup', () => {
               entry: {word: 'apple', definition: 'an edible fruit (WordNet)'},
             },
           ],
+          loading: [],
         },
         'OCR: apple',
       );
@@ -261,7 +270,7 @@ describe('DefinitionPopup', () => {
     expect(text).toContain('apple');
   });
 
-  test('uses the first hit\'s entry word as the popup headword', () => {
+  test("uses the first hit's entry word as the popup headword", () => {
     const tree = renderPopup();
     act(() => {
       showDefinition({
@@ -276,6 +285,7 @@ describe('DefinitionPopup', () => {
             entry: {word: 'WordNetCanonical', definition: 'def-b'},
           },
         ],
+        loading: [],
       });
     });
     const text = collectText(tree);
@@ -289,5 +299,60 @@ describe('DefinitionPopup', () => {
     // We assert the first canonical leads.
     const firstIdx = text.indexOf('CustomCanonical');
     expect(firstIdx).toBeGreaterThanOrEqual(0);
+  });
+
+  test('renders Loading… placeholder for each loading source while no hits have arrived', () => {
+    // The streaming variant of lookup() emits an initial snapshot
+    // with every source still loading. The popup must open with
+    // placeholders rather than a "no definition found" message.
+    const tree = renderPopup();
+    act(() => {
+      showDefinition(loading('apple', ['UserDict', 'WordNet']));
+    });
+    const text = collectText(tree);
+    // Both source badges appear.
+    expect(text).toContain('UserDict');
+    expect(text).toContain('WordNet');
+    // Loading label appears (en locale).
+    expect(text).toMatch(/Loading…/);
+    // Not-found message must NOT appear during the loading state.
+    expect(text).not.toMatch(/no definition found/i);
+    // Headword falls back to the queried text.
+    expect(text).toContain('apple');
+  });
+
+  test('renders both resolved hits and pending loading sections in the same snapshot', () => {
+    // Mid-resolution snapshot: one source has resolved, one is still
+    // loading. The popup shows the resolved hit AND a placeholder for
+    // the pending source so the layout doesn't flicker as the second
+    // source lands.
+    const tree = renderPopup();
+    act(() => {
+      showDefinition({
+        queriedFor: 'apple',
+        hits: [
+          {
+            source: 'WordNet',
+            entry: {word: 'apple', definition: 'an edible fruit', format: 'plain'},
+          },
+        ],
+        loading: ['UserDict'],
+      });
+    });
+    const text = collectText(tree);
+    expect(text).toContain('an edible fruit');
+    expect(text).toContain('UserDict');
+    expect(text).toMatch(/Loading…/);
+  });
+
+  test('loading-only snapshot with one source: no badge (single section)', () => {
+    const tree = renderPopup();
+    act(() => {
+      showDefinition(loading('apple', ['Solo']));
+    });
+    const text = collectText(tree);
+    // Single section — no badge label.
+    expect(text).not.toContain('Solo');
+    expect(text).toMatch(/Loading…/);
   });
 });

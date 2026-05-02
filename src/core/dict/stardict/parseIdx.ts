@@ -6,8 +6,15 @@
 // The records are sorted by case-sensitive byte order in the original
 // StarDict spec; we don't depend on that order — the orchestrator
 // re-indexes case-insensitively for lookup.
+//
+// Async + cooperative-yield: large user-supplied dicts can have
+// 200k–2M entries. Walking the buffer synchronously blocks the JS
+// thread for many seconds on Hermes; we yield to the event loop
+// every YIELD_PERIOD entries so background priming doesn't freeze
+// the UI.
 
 import {decodeUtf8} from '../../../sdk/utf8';
+import {shouldYield, yieldToEventLoop} from './yieldOften';
 
 export type IdxEntry = {
   word: string;
@@ -15,10 +22,10 @@ export type IdxEntry = {
   length: number;
 };
 
-export const parseIdx = (
+export const parseIdx = async (
   bytes: Uint8Array,
   idxoffsetbits: 32 | 64,
-): IdxEntry[] => {
+): Promise<IdxEntry[]> => {
   const entries: IdxEntry[] = [];
   const view = new DataView(
     bytes.buffer,
@@ -62,6 +69,9 @@ export const parseIdx = (
     pos += 4;
     entries.push({word, offset, length});
     i = pos;
+    if (shouldYield(entries.length)) {
+      await yieldToEventLoop();
+    }
   }
   return entries;
 };

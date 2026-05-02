@@ -12,8 +12,12 @@
 // keeps Devanagari headwords in `.idx` and Latin transliterations in
 // `.syn` — without reading `.syn`, "namaste" would never match the
 // नमस्ते entry).
+//
+// Async + cooperative-yield: Wiktionary-class .syn files can hold
+// hundreds of thousands of entries. Same yield discipline as parseIdx.
 
 import {decodeUtf8} from '../../../sdk/utf8';
+import {shouldYield, yieldToEventLoop} from './yieldOften';
 
 export type SynEntry = {
   word: string;
@@ -21,7 +25,7 @@ export type SynEntry = {
   originalWordIndex: number;
 };
 
-export const parseSyn = (bytes: Uint8Array): SynEntry[] => {
+export const parseSyn = async (bytes: Uint8Array): Promise<SynEntry[]> => {
   const entries: SynEntry[] = [];
   const view = new DataView(
     bytes.buffer,
@@ -49,6 +53,9 @@ export const parseSyn = (bytes: Uint8Array): SynEntry[] => {
     const originalWordIndex = view.getUint32(end + 1, false);
     entries.push({word, originalWordIndex});
     i = end + 1 + 4;
+    if (shouldYield(entries.length)) {
+      await yieldToEventLoop();
+    }
   }
   return entries;
 };

@@ -2,11 +2,20 @@
 // concurrently and returns the union of hits, in source-array order.
 // A source that throws is logged and treated as "no hit" — one bad
 // dict doesn't break the rest of the lookup.
+//
+// Streaming progress: when the caller passes onUpdate, the registry
+// emits an initial empty-hits snapshot listing every source as
+// loading (so the popup can open instantly), then re-emits after
+// each source resolves. The final snapshot has loading=[]. This
+// removes the "popup hangs until the slowest source returns"
+// behaviour without changing the resolution semantics for callers
+// that don't pass onUpdate.
 
 import type {
   DictEntry,
   DictLookup,
   DictSource,
+  LookupOnUpdate,
   LookupResult,
   SourceHit,
 } from '../lookup';
@@ -28,6 +37,20 @@ const safeLookup = async (
   }
 };
 
+const emit = (
+  onUpdate: LookupOnUpdate | undefined,
+  snapshot: LookupResult,
+): void => {
+  if (!onUpdate) {
+    return;
+  }
+  try {
+    onUpdate(snapshot);
+  } catch {
+    // Listeners must not break the lookup pipeline.
+  }
+};
+
 export const createMultiDictLookup = (
   sources: DictSource[],
   logger?: Logger,
@@ -35,10 +58,15 @@ export const createMultiDictLookup = (
   const warn = logger?.warn ?? (() => {});
 
   return {
-    async lookup(text: string): Promise<LookupResult> {
+    async lookup(
+      text: string,
+      onUpdate?: LookupOnUpdate,
+    ): Promise<LookupResult> {
       const trimmed = text.trim();
       if (!trimmed) {
-        return {queriedFor: text, hits: []};
+        const empty: LookupResult = {queriedFor: text, hits: [], loading: []};
+        emit(onUpdate, empty);
+        return empty;
       }
       // Snapshot the sources array at lookup start. The caller (index.js)
       // is allowed to mutate the shared `sources` array after discovery
@@ -48,20 +76,41 @@ export const createMultiDictLookup = (
       // and pushing { entry: undefined } as a hit — breaking the popup
       // which expects entry.definition to exist.
       const snapshot = sources.slice();
+      const resolved: (DictEntry | null | undefined)[] = new Array(
+        snapshot.length,
+      );
+
+      const buildSnapshot = (): LookupResult => {
+        const hits: SourceHit[] = [];
+        const loading: string[] = [];
+        for (let i = 0; i < snapshot.length; i++) {
+          const entry = resolved[i];
+          if (entry === undefined) {
+            loading.push(snapshot[i].name);
+          } else if (entry !== null) {
+            hits.push({source: snapshot[i].name, entry});
+          }
+        }
+        return {queriedFor: text, hits, loading};
+      };
+
+      // Initial emission — popup opens immediately with every source
+      // marked as loading. Skipped when no listener is attached so the
+      // non-streaming call path stays a single Promise.all.
+      emit(onUpdate, buildSnapshot());
+
       // Concurrent fan-out, then walk in snapshot order so the popup
       // section ordering is deterministic regardless of which source
       // resolved first.
-      const entries = await Promise.all(
-        snapshot.map(s => safeLookup(s, trimmed, warn)),
+      await Promise.all(
+        snapshot.map(async (source, i) => {
+          const entry = await safeLookup(source, trimmed, warn);
+          resolved[i] = entry;
+          emit(onUpdate, buildSnapshot());
+        }),
       );
-      const hits: SourceHit[] = [];
-      for (let i = 0; i < snapshot.length; i++) {
-        const entry = entries[i];
-        if (entry != null) {
-          hits.push({source: snapshot[i].name, entry});
-        }
-      }
-      return {queriedFor: text, hits};
+
+      return buildSnapshot();
     },
   };
 };
