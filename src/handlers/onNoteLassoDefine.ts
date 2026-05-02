@@ -2,7 +2,7 @@ import {tryAcquire, release} from '../core/reentrancyGuard';
 import type {DictLookup, LookupResult} from '../core/lookup';
 import type {APIResponse, Logger} from '../sdk/types';
 import {unwrap} from '../sdk/unwrap';
-import {safeClosePluginView} from '../sdk/closeView';
+import {safeClosePluginView, type ClosablePluginView} from '../sdk/closeView';
 import {t} from '../i18n/i18n';
 
 const LASSO_BOX_STATE_RELEASED = 2;
@@ -46,6 +46,12 @@ type LassoCounts = {
   titleNum: number;
 };
 
+// Note: closePluginView is intentionally NOT on this interface.
+// PluginCommAPI from sn-plugin-lib does not expose it — closePluginView
+// lives on PluginManager. The handler takes a separate `view` dep so
+// the runtime wiring matches the SDK's actual surface and we never
+// hit "undefined is not a function" at the reentrancy / finally
+// close path again.
 export type CommAPILike = {
   getLassoElementTypeCounts: () => Promise<APIResponse<LassoCounts>>;
   getLassoElements: () => Promise<APIResponse<Object[]>>;
@@ -56,7 +62,6 @@ export type CommAPILike = {
     size: Size,
   ) => Promise<APIResponse<string>>;
   setLassoBoxState: (state: number) => Promise<APIResponse<boolean>>;
-  closePluginView: () => Promise<boolean>;
 };
 
 export type FileAPILike = {
@@ -65,6 +70,10 @@ export type FileAPILike = {
 
 export type DefineDeps = {
   comm: CommAPILike;
+  // PluginManager surface for closing the firmware overlay. Distinct
+  // from `comm` because closePluginView is on PluginManager, not
+  // PluginCommAPI — see CommAPILike comment above.
+  view: ClosablePluginView;
   file: FileAPILike;
   lookup: DictLookup;
   showResult: (result: LookupResult, ocrLabel?: string) => void;
@@ -115,7 +124,7 @@ export const onNoteLassoDefine = async (
   // (sn-formula/src/spike.ts:419-426).
   if (!tryAcquire()) {
     deps.logger.warn('[define] pipeline already running — ignoring re-entry');
-    await safeClosePluginView(deps.comm, deps.logger);
+    await safeClosePluginView(deps.view, deps.logger);
     return 'busy';
   }
 
@@ -180,7 +189,7 @@ export const onNoteLassoDefine = async (
     // run for empty-lasso, recognize-empty, failed, AND ok.
     await safeReleaseLassoBox(deps.comm, deps.logger);
     if (!popupShown) {
-      await safeClosePluginView(deps.comm, deps.logger);
+      await safeClosePluginView(deps.view, deps.logger);
     }
   }
 };

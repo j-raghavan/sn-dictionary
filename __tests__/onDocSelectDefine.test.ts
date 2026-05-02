@@ -23,7 +23,7 @@ const buildDeps = (
     doc: {
       getLastSelectedText: jest.fn(async () => ok('hello')),
     },
-    comm: {
+    view: {
       closePluginView: jest.fn(async () => true),
     },
     lookup: {
@@ -51,7 +51,7 @@ describe('onDocSelectDefine', () => {
     expect(deps.showResult).toHaveBeenCalledWith(
       expect.objectContaining({hits: expect.arrayContaining([expect.anything()])}),
     );
-    expect(deps.comm.closePluginView).not.toHaveBeenCalled();
+    expect(deps.view.closePluginView).not.toHaveBeenCalled();
   });
 
   test('trims whitespace before passing to lookup', async () => {
@@ -73,7 +73,7 @@ describe('onDocSelectDefine', () => {
     const outcome = await onDocSelectDefine(deps);
     expect(outcome).toBe('no-selection');
     expect(deps.lookup.lookup).not.toHaveBeenCalled();
-    expect(deps.comm.closePluginView).toHaveBeenCalled();
+    expect(deps.view.closePluginView).toHaveBeenCalled();
   });
 
   test('reentrancy: when guard is busy, returns busy and closes view without calling SDK', async () => {
@@ -83,7 +83,7 @@ describe('onDocSelectDefine', () => {
     expect(outcome).toBe('busy');
     expect(deps.doc.getLastSelectedText).not.toHaveBeenCalled();
     expect(deps.lookup.lookup).not.toHaveBeenCalled();
-    expect(deps.comm.closePluginView).toHaveBeenCalled();
+    expect(deps.view.closePluginView).toHaveBeenCalled();
   });
 
   test('SDK failure: returns failed, releases guard, closes view', async () => {
@@ -94,7 +94,7 @@ describe('onDocSelectDefine', () => {
     });
     const outcome = await onDocSelectDefine(deps);
     expect(outcome).toBe('failed');
-    expect(deps.comm.closePluginView).toHaveBeenCalled();
+    expect(deps.view.closePluginView).toHaveBeenCalled();
 
     // Subsequent call must succeed (guard was released).
     const next = buildDeps();
@@ -134,7 +134,7 @@ describe('onDocSelectDefine', () => {
     expect((deps.showResult as jest.Mock).mock.calls[0][0]).toEqual(initialSnapshot);
     expect((deps.showResult as jest.Mock).mock.calls[1][0]).toEqual(finalSnapshot);
     expect((deps.showResult as jest.Mock).mock.calls[2][0]).toEqual(finalSnapshot);
-    expect(deps.comm.closePluginView).not.toHaveBeenCalled();
+    expect(deps.view.closePluginView).not.toHaveBeenCalled();
   });
 
   test('lookup throws WITHOUT emitting any snapshot: outcome is failed and view is closed', async () => {
@@ -148,6 +148,6 @@ describe('onDocSelectDefine', () => {
     const outcome = await onDocSelectDefine(deps);
     expect(outcome).toBe('failed');
     expect(deps.showResult).not.toHaveBeenCalled();
-    expect(deps.comm.closePluginView).toHaveBeenCalled();
+    expect(deps.view.closePluginView).toHaveBeenCalled();
   });
 });

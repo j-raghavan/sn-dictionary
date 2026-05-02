@@ -27,6 +27,12 @@ const buildDeps = (overrides: Partial<DefineDeps> = {}): DefineDeps => {
   };
   const showResult = jest.fn();
 
+  const view = {
+    closePluginView: jest.fn(async () => {
+      calls.push('closePluginView');
+      return true;
+    }),
+  };
   const deps: DefineDeps = {
     comm: {
       getLassoElementTypeCounts: jest.fn(async () => {
@@ -53,11 +59,8 @@ const buildDeps = (overrides: Partial<DefineDeps> = {}): DefineDeps => {
         calls.push('setLassoBoxState');
         return ok(true);
       }),
-      closePluginView: jest.fn(async () => {
-        calls.push('closePluginView');
-        return true;
-      }),
     },
+    view,
     file: {
       getPageSize: jest.fn(async () => {
         calls.push('getPageSize');
@@ -97,7 +100,7 @@ describe('onNoteLassoDefine', () => {
       'setLassoBoxState',
     ]);
     expect(deps.comm.setLassoBoxState).toHaveBeenCalledWith(2);
-    expect(deps.comm.closePluginView).not.toHaveBeenCalled();
+    expect(deps.view.closePluginView).not.toHaveBeenCalled();
     expect(deps.lookup.lookup).toHaveBeenCalledWith('hello', expect.any(Function));
     // Tests run with the en locale, so the OCR-prefix label
     // resolves to "OCR: hello"; in other locales the prefix is
@@ -166,7 +169,7 @@ describe('onNoteLassoDefine', () => {
     const outcome = await onNoteLassoDefine(deps);
     expect(outcome).toBe('empty-lasso');
     expect(deps.comm.setLassoBoxState).toHaveBeenCalledWith(2);
-    expect(deps.comm.closePluginView).toHaveBeenCalled();
+    expect(deps.view.closePluginView).toHaveBeenCalled();
     expect(deps.lookup.lookup).not.toHaveBeenCalled();
   });
 
@@ -175,7 +178,7 @@ describe('onNoteLassoDefine', () => {
     const deps = buildDeps();
     const outcome = await onNoteLassoDefine(deps);
     expect(outcome).toBe('busy');
-    expect(deps.comm.closePluginView).toHaveBeenCalled();
+    expect(deps.view.closePluginView).toHaveBeenCalled();
     // The first (in-flight) invocation owns the lasso state and will
     // release it in its own finally. The reentrant tap must not
     // race-release on top of that.
@@ -196,7 +199,7 @@ describe('onNoteLassoDefine', () => {
     expect(deps.lookup.lookup).not.toHaveBeenCalled();
     expect(deps.showResult).not.toHaveBeenCalled();
     expect(deps.comm.setLassoBoxState).toHaveBeenCalledWith(2);
-    expect(deps.comm.closePluginView).toHaveBeenCalled();
+    expect(deps.view.closePluginView).toHaveBeenCalled();
   });
 
   test('returns recognize-empty when OCR yields whitespace only ("  \\n  ") and releases lasso box', async () => {
@@ -214,7 +217,7 @@ describe('onNoteLassoDefine', () => {
     expect(deps.lookup.lookup).not.toHaveBeenCalled();
     expect(deps.showResult).not.toHaveBeenCalled();
     expect(deps.comm.setLassoBoxState).toHaveBeenCalledWith(2);
-    expect(deps.comm.closePluginView).toHaveBeenCalled();
+    expect(deps.view.closePluginView).toHaveBeenCalled();
   });
 
   test('trims surrounding whitespace from OCR output before lookup and OCR label', async () => {
@@ -246,7 +249,7 @@ describe('onNoteLassoDefine', () => {
     const outcome = await onNoteLassoDefine(deps);
     expect(outcome).toBe('failed');
     expect(deps.comm.setLassoBoxState).toHaveBeenCalledWith(2);
-    expect(deps.comm.closePluginView).toHaveBeenCalled();
+    expect(deps.view.closePluginView).toHaveBeenCalled();
 
     const next = buildDeps();
     expect(await onNoteLassoDefine(next)).toBe('ok');
@@ -265,7 +268,7 @@ describe('onNoteLassoDefine', () => {
     const outcome = await onNoteLassoDefine(deps);
     expect(outcome).toBe('recognize-empty');
     expect(deps.comm.setLassoBoxState).toHaveBeenCalledWith(2);
-    expect(deps.comm.closePluginView).toHaveBeenCalled();
+    expect(deps.view.closePluginView).toHaveBeenCalled();
   });
 
   test('lasso box release tolerates setLassoBoxState returning success=false', async () => {
@@ -311,7 +314,7 @@ describe('onNoteLassoDefine', () => {
     expect((deps.showResult as jest.Mock).mock.calls[0][0]).toEqual(initialSnapshot);
     expect((deps.showResult as jest.Mock).mock.calls[1][0]).toEqual(finalSnapshot);
     expect((deps.showResult as jest.Mock).mock.calls[2][0]).toEqual(finalSnapshot);
-    expect(deps.comm.closePluginView).not.toHaveBeenCalled();
+    expect(deps.view.closePluginView).not.toHaveBeenCalled();
   });
 
   test('lookup throws WITHOUT emitting any snapshot: outcome is failed and view is closed', async () => {
@@ -325,6 +328,6 @@ describe('onNoteLassoDefine', () => {
     const outcome = await onNoteLassoDefine(deps);
     expect(outcome).toBe('failed');
     expect(deps.showResult).not.toHaveBeenCalled();
-    expect(deps.comm.closePluginView).toHaveBeenCalled();
+    expect(deps.view.closePluginView).toHaveBeenCalled();
   });
 });

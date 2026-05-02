@@ -102,8 +102,18 @@ discoverUserDicts({fileUtils: FileUtils, logger})
   })
   .catch(e => logger.error(`[discovery] dispatch crashed: ${e.message}`));
 
+// closePluginView lives on PluginManager, not PluginCommAPI, so the
+// handlers take a separate `view` dep. Wiring it via PluginCommAPI
+// would silently resolve to undefined at runtime — exactly the bug
+// the on-device "[WARN] closePluginView threw: undefined is not a
+// function" reentrancy log surfaced.
+const view = {
+  closePluginView: () => PluginManager.closePluginView(),
+};
+
 const noteHandlerDeps = {
   comm: PluginCommAPI,
+  view,
   file: PluginFileAPI,
   lookup,
   showResult: showDefinition,
@@ -112,7 +122,7 @@ const noteHandlerDeps = {
 
 const docHandlerDeps = {
   doc: PluginDocAPI,
-  comm: PluginCommAPI,
+  view,
   lookup,
   showResult: showDefinition,
   logger,
