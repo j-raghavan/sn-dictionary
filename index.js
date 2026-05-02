@@ -22,6 +22,7 @@ import {createStardictLookup} from './src/core/dict/stardictLookup';
 import {createMultiDictLookup} from './src/core/dict/multiDictLookup';
 import {discoverUserDicts} from './src/core/dict/userDictDiscovery';
 import {primeAllConcurrently} from './src/core/dict/primeAllConcurrently';
+import {getDefaultIndexCacheStorage} from './src/core/dict/indexCacheStorage';
 import {loadBaseDictFromGenerated} from './src/core/dict/data/baseDictData';
 import {
   hideDefinition,
@@ -43,6 +44,15 @@ const logger = {
   error: msg => console.log(`[ERROR] ${msg}`),
 };
 
+// Persistent index cache. AsyncStorage if available, in-memory
+// otherwise — see getDefaultIndexCacheStorage for the lazy-require
+// rationale. Caches parsed StarDict indexes (lookup-key →
+// offset/length tuples) keyed by source name + idx fingerprint, so
+// subsequent JS-context reloads (firmware reloads on every note
+// open) skip parseIdx + parseSyn and complete in seconds instead of
+// minutes.
+const indexCache = getDefaultIndexCacheStorage(logger);
+
 // The base dict source. Bundled into the JS at build time, so the
 // loader is sync underneath; we wrap it in async to fit the shared
 // loadBase contract used by runtime-discovered user dicts. Explicit
@@ -52,6 +62,7 @@ const baseSource = createStardictLookup({
   name: 'WordNet',
   loadBase: async () => loadBaseDictFromGenerated(),
   format: 'wordnet',
+  cache: indexCache,
   logger,
 });
 
@@ -100,7 +111,7 @@ lookup
 // for the rationale on concurrent vs. serial. The contract is
 // covered by __tests__/primeAllConcurrently.test.ts so we can't
 // regress this without breaking the suite.
-discoverUserDicts({fileUtils: FileUtils, logger})
+discoverUserDicts({fileUtils: FileUtils, cache: indexCache, logger})
   .then(async userDicts => {
     if (userDicts.length === 0) {
       return;
