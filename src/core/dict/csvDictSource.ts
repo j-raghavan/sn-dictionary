@@ -6,9 +6,10 @@
 // Lookup is case-insensitive. First occurrence of a key wins (later
 // duplicates are ignored), matching StarDict's behaviour.
 
-import {decodeUtf8, stripBom} from '../../sdk/utf8';
+import {decodeText} from '../../sdk/textDecode';
 import type {DictEntry, DictSource} from '../lookup';
 import {createLazyAsyncSource} from './lazyAsyncSource';
+import {normalizeKey} from './normalizeKey';
 
 export type LoadBytes = () => Promise<ArrayBuffer | null>;
 
@@ -101,7 +102,7 @@ const buildCsv = (
   deps: Required<Pick<CsvDictDeps, 'headwordCol' | 'definitionCol' | 'hasHeader'>>,
 ) =>
   (bytes: Uint8Array): ParsedCsv => {
-    const text = stripBom(decodeUtf8(bytes));
+    const text = decodeText(bytes);
     const index = new Map<string, {word: string; definition: string}>();
     let cursor = 0;
     let rowIdx = 0;
@@ -118,8 +119,8 @@ const buildCsv = (
       if (word.length === 0) {
         continue;
       }
-      const key = word.toLowerCase();
-      if (!index.has(key)) {
+      const key = normalizeKey(word);
+      if (key.length > 0 && !index.has(key)) {
         index.set(key, {word, definition});
       }
     }
@@ -127,7 +128,7 @@ const buildCsv = (
   };
 
 const lookupCsv = (parsed: ParsedCsv, word: string): DictEntry | null => {
-  const hit = parsed.index.get(word.toLowerCase());
+  const hit = parsed.index.get(normalizeKey(word));
   return hit
     ? {word: hit.word, definition: hit.definition, format: 'plain'}
     : null;

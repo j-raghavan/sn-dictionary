@@ -10,6 +10,7 @@ import {parseIdx} from './parseIdx';
 import {parseSyn} from './parseSyn';
 import {decompressDict} from './decompressDict';
 import {decodeUtf8} from '../../../sdk/utf8';
+import {normalizeKey} from '../normalizeKey';
 
 export type ParsedDict = {
   meta: IfoMeta;
@@ -43,8 +44,8 @@ export const buildDict = (
   const decompressed = decompressDict(dictBytes);
   const index = new Map<string, IdxEntry>();
   for (const e of entries) {
-    const key = e.word.toLowerCase();
-    if (!index.has(key)) {
+    const key = normalizeKey(e.word);
+    if (key.length > 0 && !index.has(key)) {
       index.set(key, e);
     }
   }
@@ -58,8 +59,8 @@ export const buildDict = (
         // dead-end an otherwise-fine dictionary.
         continue;
       }
-      const key = syn.word.toLowerCase();
-      if (!index.has(key)) {
+      const key = normalizeKey(syn.word);
+      if (key.length > 0 && !index.has(key)) {
         // Synonym keys point at the SAME canonical .idx entry, so the
         // popup's headerWord (entry.word) shows the original headword,
         // not the synonym alias the user typed.
@@ -74,7 +75,7 @@ export const lookupDict = (
   dict: ParsedDict,
   word: string,
 ): DictHit | null => {
-  const key = word.trim().toLowerCase();
+  const key = normalizeKey(word);
   if (!key) {
     return null;
   }

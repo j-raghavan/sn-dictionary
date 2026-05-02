@@ -154,6 +154,20 @@ describe('createJsonDictSource', () => {
     expect(src.name).toBe('my-glossary');
   });
 
+  test('decodes Windows-1252 JSON exports', async () => {
+    // {"apple":"a fruit, it’s red"} where ’ is CP1252 0x92.
+    const cp1252 = new Uint8Array([
+      0x7b, 0x22, 0x61, 0x70, 0x70, 0x6c, 0x65, 0x22, 0x3a, // {"apple":
+      0x22, 0x61, 0x20, 0x66, 0x72, 0x75, 0x69, 0x74, 0x2c, 0x20, // "a fruit,
+      0x69, 0x74, 0x92, 0x73, 0x20, 0x72, 0x65, 0x64, 0x22, 0x7d, // it’s red"}
+    ]);
+    const src = createJsonDictSource({
+      name: 'test',
+      loadBytes: async () => cp1252.buffer.slice(0) as ArrayBuffer,
+    });
+    expect((await src.lookup('apple'))?.definition).toBe('a fruit, it’s red');
+  });
+
   test('lazy: loader fires once across many lookups', async () => {
     const loadBytes = jest.fn(async () => enc(JSON.stringify({apple: 'fruit'})));
     const src = createJsonDictSource({name: 'test', loadBytes});

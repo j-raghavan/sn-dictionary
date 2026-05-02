@@ -1,6 +1,12 @@
-import {decodeUtf8, encodeUtf8, __testing__} from '../src/sdk/utf8';
+import {
+  decodeUtf8,
+  encodeUtf8,
+  tryDecodeUtf8Strict,
+  __testing__,
+} from '../src/sdk/utf8';
 
-const {manualEncodeUtf8, manualDecodeUtf8} = __testing__;
+const {manualEncodeUtf8, manualDecodeUtf8, manualTryDecodeUtf8Strict} =
+  __testing__;
 
 const ROUND_TRIP_SAMPLES = [
   '',
@@ -66,6 +72,91 @@ describe('utf8 codec', () => {
   test('manual encoder does not crash on a lone high surrogate', () => {
     expect(() => manualEncodeUtf8('\uD83D')).not.toThrow();
     expect(manualEncodeUtf8('\uD83D').length).toBeGreaterThan(0);
+  });
+});
+
+describe('tryDecodeUtf8Strict', () => {
+  describe.each([
+    ['platform fast path', tryDecodeUtf8Strict],
+    ['manual fallback', manualTryDecodeUtf8Strict],
+  ])('%s', (_label, decode) => {
+    test('accepts ASCII', () => {
+      expect(decode(new Uint8Array([0x61, 0x62, 0x63]))).toBe('abc');
+    });
+    test('accepts well-formed multibyte UTF-8', () => {
+      // é = C3 A9, 日 = E6 97 A5, 🚀 = F0 9F 9A 80
+      expect(
+        decode(
+          new Uint8Array([0xc3, 0xa9, 0xe6, 0x97, 0xa5, 0xf0, 0x9f, 0x9a, 0x80]),
+        ),
+      ).toBe('é日🚀');
+    });
+    test('accepts an empty buffer', () => {
+      expect(decode(new Uint8Array([]))).toBe('');
+    });
+    test('rejects a stray continuation byte (0x92, the Dune.csv case)', () => {
+      expect(decode(new Uint8Array([0x61, 0x92, 0x63]))).toBeNull();
+    });
+    test('rejects an invalid lead byte (0xC0 — overlong start)', () => {
+      expect(decode(new Uint8Array([0xc0, 0x80]))).toBeNull();
+    });
+    test('rejects an invalid lead byte (0xF5 — above U+10FFFF range)', () => {
+      expect(decode(new Uint8Array([0xf5, 0x80, 0x80, 0x80]))).toBeNull();
+    });
+    test('rejects a truncated 2-byte sequence', () => {
+      expect(decode(new Uint8Array([0xc2]))).toBeNull();
+    });
+    test('rejects a truncated 3-byte sequence', () => {
+      expect(decode(new Uint8Array([0xe6, 0x97]))).toBeNull();
+    });
+    test('rejects a truncated 4-byte sequence', () => {
+      expect(decode(new Uint8Array([0xf0, 0x9f, 0x9a]))).toBeNull();
+    });
+    test('rejects a 2-byte sequence with bad continuation', () => {
+      expect(decode(new Uint8Array([0xc2, 0x20]))).toBeNull();
+    });
+    test('rejects a 3-byte sequence with bad continuation', () => {
+      expect(decode(new Uint8Array([0xe6, 0x97, 0x20]))).toBeNull();
+    });
+    test('rejects a 4-byte sequence with bad continuation', () => {
+      expect(decode(new Uint8Array([0xf0, 0x9f, 0x9a, 0x20]))).toBeNull();
+    });
+    test('rejects an overlong 3-byte form (E0 with second byte < 0xA0)', () => {
+      expect(decode(new Uint8Array([0xe0, 0x80, 0x80]))).toBeNull();
+    });
+    test('rejects a UTF-16 surrogate half encoded as 3-byte UTF-8 (ED A0 80)', () => {
+      expect(decode(new Uint8Array([0xed, 0xa0, 0x80]))).toBeNull();
+    });
+    test('rejects an overlong 4-byte form (F0 with second byte < 0x90)', () => {
+      expect(decode(new Uint8Array([0xf0, 0x80, 0x80, 0x80]))).toBeNull();
+    });
+    test('rejects 4-byte forms above U+10FFFF (F4 with second byte >= 0x90)', () => {
+      expect(decode(new Uint8Array([0xf4, 0x90, 0x80, 0x80]))).toBeNull();
+    });
+  });
+
+  test('falls back to manual strict decode when host TextDecoder is broken', () => {
+    jest.isolateModules(() => {
+      const g = globalThis as Record<string, unknown>;
+      const origDecoder = g.TextDecoder;
+      class BrokenDecoder {
+        decode(): string {
+          throw new Error('decoder broken');
+        }
+      }
+      g.TextDecoder = BrokenDecoder;
+      try {
+        const fresh = require('../src/sdk/utf8') as typeof import('../src/sdk/utf8');
+        // Valid UTF-8 must still produce a string.
+        expect(fresh.tryDecodeUtf8Strict(new Uint8Array([0x61]))).toBe('a');
+        // And invalid input must still be rejected.
+        expect(
+          fresh.tryDecodeUtf8Strict(new Uint8Array([0x92])),
+        ).toBeNull();
+      } finally {
+        g.TextDecoder = origDecoder;
+      }
+    });
   });
 });
 

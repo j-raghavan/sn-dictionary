@@ -86,6 +86,76 @@ const manualDecodeUtf8 = (bytes: Uint8Array): string => {
   return result;
 };
 
+// Strict UTF-8 validator+decoder. Returns null the moment it sees a
+// byte sequence that is not well-formed UTF-8, so callers can fall
+// back to a different encoding. Rejects: stray continuation bytes,
+// invalid leads (0xC0/0xC1/0xF5–0xFF), truncated multi-byte
+// sequences, overlong forms, and surrogate halves.
+const manualTryDecodeUtf8Strict = (bytes: Uint8Array): string | null => {
+  /* eslint-disable no-bitwise */
+  let result = '';
+  let i = 0;
+  while (i < bytes.length) {
+    const b1 = bytes[i++];
+    let codepoint: number;
+    if (b1 < 0x80) {
+      codepoint = b1;
+    } else if (b1 < 0xc2 || b1 > 0xf4) {
+      return null;
+    } else if (b1 < 0xe0) {
+      const b2 = bytes[i++];
+      if (b2 === undefined || (b2 & 0xc0) !== 0x80) {
+        return null;
+      }
+      codepoint = ((b1 & 0x1f) << 6) | (b2 & 0x3f);
+    } else if (b1 < 0xf0) {
+      const b2 = bytes[i++];
+      const b3 = bytes[i++];
+      if (
+        b2 === undefined ||
+        (b2 & 0xc0) !== 0x80 ||
+        b3 === undefined ||
+        (b3 & 0xc0) !== 0x80 ||
+        (b1 === 0xe0 && b2 < 0xa0) ||
+        (b1 === 0xed && b2 >= 0xa0)
+      ) {
+        return null;
+      }
+      codepoint = ((b1 & 0x0f) << 12) | ((b2 & 0x3f) << 6) | (b3 & 0x3f);
+    } else {
+      const b2 = bytes[i++];
+      const b3 = bytes[i++];
+      const b4 = bytes[i++];
+      if (
+        b2 === undefined ||
+        (b2 & 0xc0) !== 0x80 ||
+        b3 === undefined ||
+        (b3 & 0xc0) !== 0x80 ||
+        b4 === undefined ||
+        (b4 & 0xc0) !== 0x80 ||
+        (b1 === 0xf0 && b2 < 0x90) ||
+        (b1 === 0xf4 && b2 >= 0x90)
+      ) {
+        return null;
+      }
+      codepoint =
+        ((b1 & 0x07) << 18) |
+        ((b2 & 0x3f) << 12) |
+        ((b3 & 0x3f) << 6) |
+        (b4 & 0x3f);
+    }
+    if (codepoint < 0x10000) {
+      result += String.fromCharCode(codepoint);
+    } else {
+      const adjusted = codepoint - 0x10000;
+      result += String.fromCharCode(0xd800 | (adjusted >> 10));
+      result += String.fromCharCode(0xdc00 | (adjusted & 0x3ff));
+    }
+  }
+  /* eslint-enable no-bitwise */
+  return result;
+};
+
 export const encodeUtf8 = (s: string): Uint8Array => {
   if (hasTextEncoder) {
     try {
@@ -108,13 +178,26 @@ export const decodeUtf8 = (bytes: Uint8Array): string => {
   return manualDecodeUtf8(bytes);
 };
 
-// Strip a leading UTF-8 byte-order mark if present. The sequence is
-// EF BB BF in raw bytes, which decodes to U+FEFF as the first
-// character of the resulting string. Many text-editor saves and
-// some sync tools insert a BOM that callers don't want to see.
-export const stripBom = (s: string): string =>
-  s.charCodeAt(0) === 0xfeff ? s.slice(1) : s;
+// Strict variant: returns null when bytes are not well-formed UTF-8.
+// Used by encoding-detection paths to decide whether to fall back to
+// another charset (e.g. Windows-1252 for Excel-on-Windows CSV exports).
+export const tryDecodeUtf8Strict = (bytes: Uint8Array): string | null => {
+  if (hasTextDecoder) {
+    try {
+      return new TextDecoder('utf-8', {fatal: true}).decode(bytes);
+    } catch {
+      // Could be malformed input OR a broken host TextDecoder — the
+      // manual validator below resolves the ambiguity correctly: it
+      // returns null only on genuinely malformed input.
+    }
+  }
+  return manualTryDecodeUtf8Strict(bytes);
+};
 
 // Test-only escape hatch so we can exercise the manual path even when
 // TextEncoder/TextDecoder ARE available in the host.
-export const __testing__ = {manualEncodeUtf8, manualDecodeUtf8};
+export const __testing__ = {
+  manualEncodeUtf8,
+  manualDecodeUtf8,
+  manualTryDecodeUtf8Strict,
+};
