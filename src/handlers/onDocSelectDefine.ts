@@ -2,7 +2,7 @@ import {tryAcquire, release} from '../core/reentrancyGuard';
 import type {DictLookup, LookupResult} from '../core/lookup';
 import type {APIResponse, Logger} from '../sdk/types';
 import {unwrap} from '../sdk/unwrap';
-import {safeClosePluginView} from '../sdk/closeView';
+import {safeClosePluginView, type ClosablePluginView} from '../sdk/closeView';
 
 // Narrow DI surface — same shape style as onNoteLassoDefine.
 
@@ -10,13 +10,13 @@ export type DocAPILike = {
   getLastSelectedText: () => Promise<APIResponse<string>>;
 };
 
-export type CommAPILike = {
-  closePluginView: () => Promise<boolean>;
-};
-
 export type DocDefineDeps = {
   doc: DocAPILike;
-  comm: CommAPILike;
+  // PluginManager surface for closing the firmware overlay. Same
+  // split as the NOTE handler: closePluginView is NOT on
+  // PluginCommAPI, so wiring it through the comm dep would silently
+  // resolve to undefined at runtime.
+  view: ClosablePluginView;
   lookup: DictLookup;
   showResult: (result: LookupResult) => void;
   logger: Logger;
@@ -31,7 +31,7 @@ export const onDocSelectDefine = async (
   // Define mid-pipeline (across either context) is rejected cleanly.
   if (!tryAcquire()) {
     deps.logger.warn('[doc-define] pipeline already running — ignoring re-entry');
-    await safeClosePluginView(deps.comm, deps.logger);
+    await safeClosePluginView(deps.view, deps.logger);
     return 'busy';
   }
 
@@ -50,9 +50,16 @@ export const onDocSelectDefine = async (
       deps.logger.warn('[doc-define] no selection — nothing to define');
       return 'no-selection';
     }
-    const result = await deps.lookup.lookup(text);
-    deps.showResult(result);
+    // Streaming progress: open the popup immediately and re-render as
+    // each source resolves. popupShown flips only after the first
+    // emission so a synchronous throw inside lookup still closes the
+    // plugin view via the finally block.
+    const result = await deps.lookup.lookup(text, snapshot => {
+      popupShown = true;
+      deps.showResult(snapshot);
+    });
     popupShown = true;
+    deps.showResult(result);
     return 'ok';
   } catch (e) {
     deps.logger.error(`[doc-define] pipeline crashed: ${(e as Error).message}`);
@@ -62,7 +69,7 @@ export const onDocSelectDefine = async (
     // rationale as the NOTE handler — see src/handlers/onNoteLassoDefine.ts.
     release();
     if (!popupShown) {
-      await safeClosePluginView(deps.comm, deps.logger);
+      await safeClosePluginView(deps.view, deps.logger);
     }
   }
 };

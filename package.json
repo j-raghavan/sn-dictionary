@@ -16,6 +16,7 @@
     "build:sample-dicts": "node scripts/buildSampleDicts.mjs"
   },
   "dependencies": {
+    "@react-native-async-storage/async-storage": "^3.0.2",
     "pako": "^2.1.0",
     "react": "19.0.0",
     "react-native": "0.79.2",

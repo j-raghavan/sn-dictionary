@@ -9,6 +9,10 @@
 //   'wordnet' — parse with parseWordNetEntry + render SenseList
 //   'html'    — strip tags via htmlToPlainText and render as text
 //   'plain'   — render the definition string verbatim
+//
+// fontScale is the popup-level body-text multiplier (1.0 / 1.25 /
+// 1.5 for S / M / L). The badge is chrome and stays at its base
+// size; only definition body text scales.
 
 import React, {useMemo} from 'react';
 import {Text, View} from 'react-native';
@@ -22,12 +26,14 @@ type SourceSectionProps = {
   hit: SourceHit;
   showBadge: boolean;
   showDivider: boolean;
+  fontScale: number;
 };
 
 export const SourceSection = ({
   hit,
   showBadge,
   showDivider,
+  fontScale,
 }: SourceSectionProps): React.JSX.Element => {
   // Memoise the format-specific transformation. Key on the primitive
   // fields rather than the entry object so a parent re-creating
@@ -36,22 +42,26 @@ export const SourceSection = ({
   // only when a new lookup completes, but keying on primitives makes
   // that property explicit and footgun-free for future call sites.
   const {definition, format} = hit.entry;
+  const scaledDefinitionStyle = useMemo(
+    () => [styles.definition, {fontSize: styles.definition.fontSize * fontScale}],
+    [fontScale],
+  );
   const body = useMemo(() => {
     if (format === 'wordnet') {
       const parsed = parseWordNetEntry(definition);
       if (parsed && !parsed.parseFailed) {
-        return <SenseList senses={parsed.senses} />;
+        return <SenseList senses={parsed.senses} fontScale={fontScale} />;
       }
       // The source declared WordNet but the body didn't parse as one.
       // Fall back to plain rendering rather than dropping content.
-      return <Text style={styles.definition}>{definition}</Text>;
+      return <Text style={scaledDefinitionStyle}>{definition}</Text>;
     }
     if (format === 'html') {
-      return <Text style={styles.definition}>{htmlToPlainText(definition)}</Text>;
+      return <Text style={scaledDefinitionStyle}>{htmlToPlainText(definition)}</Text>;
     }
     // 'plain'
-    return <Text style={styles.definition}>{definition}</Text>;
-  }, [definition, format]);
+    return <Text style={scaledDefinitionStyle}>{definition}</Text>;
+  }, [definition, format, fontScale, scaledDefinitionStyle]);
 
   return (
     <View style={[styles.section, showDivider && styles.sectionDivider]}>

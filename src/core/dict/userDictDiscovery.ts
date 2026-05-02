@@ -21,6 +21,7 @@ import type {DictSource} from '../lookup';
 import {createCsvDictSource} from './csvDictSource';
 import {createJsonDictSource} from './jsonDictSource';
 import {createStardictLookup, type DictBytes} from './stardictLookup';
+import type {IndexCacheStorage} from './indexCacheStorage';
 
 export const DEFAULT_USER_DICT_ROOT = '/storage/emulated/0/MyStyle/SnDict';
 
@@ -42,6 +43,12 @@ export type DiscoveryDeps = {
   rootPath?: string;
   // Injected for tests; defaults to globalThis.fetch at runtime.
   fetchFn?: typeof fetch;
+  // Optional persistent index cache. Threaded into discovered
+  // StarDict sources so they hydrate from disk on subsequent loads
+  // instead of re-parsing the .idx + .syn from scratch. CSV / JSON
+  // sources don't get this — they parse fast enough to not justify
+  // the complexity.
+  cache?: IndexCacheStorage;
   logger?: Logger;
 };
 
@@ -202,6 +209,7 @@ const buildSourceForFolder = async (
   files: FileEntry[],
   fetchFn: typeof fetch,
   logger: Logger,
+  cache: IndexCacheStorage | undefined,
 ): Promise<DictSource | null> => {
   const folderName = basenameOf(folder.path);
   const detected = detectFormat(files);
@@ -251,6 +259,7 @@ const buildSourceForFolder = async (
         ]);
         return syn ? {ifo, idx, dict, syn} : {ifo, idx, dict};
       },
+      cache,
       logger,
     });
   }
@@ -401,6 +410,7 @@ export const discoverUserDicts = async (
         folderFiles,
         fetchFn,
         logger,
+        deps.cache,
       );
       if (source !== null) {
         sources.push(source);

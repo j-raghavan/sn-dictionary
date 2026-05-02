@@ -21,6 +21,7 @@ import {PluginManager} from 'sn-plugin-lib';
 import DefinitionPopup from '../src/ui/DefinitionPopup';
 import {
   showDefinition,
+  showRecognizing,
   hideDefinition,
   __testing__,
 } from '../src/ui/popupController';
@@ -36,11 +37,19 @@ const found = (
 ): LookupResult => ({
   queriedFor: word,
   hits: [{source, entry: {word, definition, format}}],
+  loading: [],
 });
 
 const notFound = (queriedFor: string): LookupResult => ({
   queriedFor,
   hits: [],
+  loading: [],
+});
+
+const loading = (queriedFor: string, sources: string[]): LookupResult => ({
+  queriedFor,
+  hits: [],
+  loading: sources,
 });
 
 beforeEach(() => {
@@ -129,7 +138,12 @@ describe('DefinitionPopup', () => {
       showDefinition(notFound('foo'));
     });
     expect(collectText(tree)).toContain('foo');
-    const closeBtn = tree.root.findByProps({accessibilityRole: 'button'});
+    // Multiple buttons exist (Close + font-size controls); find by
+    // the localised label.
+    const closeBtn = tree.root.findByProps({
+      accessibilityRole: 'button',
+      accessibilityLabel: 'Close',
+    });
     act(() => {
       closeBtn.props.onPress();
     });
@@ -222,7 +236,10 @@ describe('DefinitionPopup', () => {
     act(() => {
       showDefinition(notFound('foo'));
     });
-    const closeBtn = tree.root.findByProps({accessibilityRole: 'button'});
+    const closeBtn = tree.root.findByProps({
+      accessibilityRole: 'button',
+      accessibilityLabel: 'Close',
+    });
     expect(() => {
       act(() => {
         closeBtn.props.onPress();
@@ -246,6 +263,7 @@ describe('DefinitionPopup', () => {
               entry: {word: 'apple', definition: 'an edible fruit (WordNet)'},
             },
           ],
+          loading: [],
         },
         'OCR: apple',
       );
@@ -261,7 +279,7 @@ describe('DefinitionPopup', () => {
     expect(text).toContain('apple');
   });
 
-  test('uses the first hit\'s entry word as the popup headword', () => {
+  test("uses the first hit's entry word as the popup headword", () => {
     const tree = renderPopup();
     act(() => {
       showDefinition({
@@ -276,6 +294,7 @@ describe('DefinitionPopup', () => {
             entry: {word: 'WordNetCanonical', definition: 'def-b'},
           },
         ],
+        loading: [],
       });
     });
     const text = collectText(tree);
@@ -289,5 +308,270 @@ describe('DefinitionPopup', () => {
     // We assert the first canonical leads.
     const firstIdx = text.indexOf('CustomCanonical');
     expect(firstIdx).toBeGreaterThanOrEqual(0);
+  });
+
+  test('renders Loading… placeholder for each loading source while no hits have arrived', () => {
+    // The streaming variant of lookup() emits an initial snapshot
+    // with every source still loading. The popup must open with
+    // placeholders rather than a "no definition found" message.
+    const tree = renderPopup();
+    act(() => {
+      showDefinition(loading('apple', ['UserDict', 'WordNet']));
+    });
+    const text = collectText(tree);
+    // Both source badges appear.
+    expect(text).toContain('UserDict');
+    expect(text).toContain('WordNet');
+    // Loading label appears (en locale).
+    expect(text).toMatch(/Loading…/);
+    // Not-found message must NOT appear during the loading state.
+    expect(text).not.toMatch(/no definition found/i);
+    // Headword falls back to the queried text.
+    expect(text).toContain('apple');
+  });
+
+  test('renders both resolved hits and pending loading sections in the same snapshot', () => {
+    // Mid-resolution snapshot: one source has resolved, one is still
+    // loading. The popup shows the resolved hit AND a placeholder for
+    // the pending source so the layout doesn't flicker as the second
+    // source lands.
+    const tree = renderPopup();
+    act(() => {
+      showDefinition({
+        queriedFor: 'apple',
+        hits: [
+          {
+            source: 'WordNet',
+            entry: {word: 'apple', definition: 'an edible fruit', format: 'plain'},
+          },
+        ],
+        loading: ['UserDict'],
+      });
+    });
+    const text = collectText(tree);
+    expect(text).toContain('an edible fruit');
+    expect(text).toContain('UserDict');
+    expect(text).toMatch(/Loading…/);
+  });
+
+  test('loading-only snapshot with one source: no badge (single section)', () => {
+    const tree = renderPopup();
+    act(() => {
+      showDefinition(loading('apple', ['Solo']));
+    });
+    const text = collectText(tree);
+    // Single section — no badge label.
+    expect(text).not.toContain('Solo');
+    expect(text).toMatch(/Loading…/);
+  });
+
+  test('shows the localised "Recognizing…" message when the popup is in the recognizing kind', () => {
+    // Tap-to-popup speedup: the lasso flow opens the popup on tap,
+    // before any OCR or lookup result exists. The popup must render
+    // a recognizing message — not a stale prior result, not an
+    // empty card.
+    const tree = renderPopup();
+    act(() => {
+      showRecognizing();
+    });
+    const text = collectText(tree);
+    expect(text).toContain('Recognizing…');
+    // Must not surface lookup-result chrome that has no value here.
+    expect(text).not.toMatch(/no definition found/i);
+    expect(text).not.toMatch(/Loading…/);
+    // Close button is always available so the user can dismiss.
+    expect(text).toContain('Close');
+  });
+
+  test('renders the OCR label alongside Recognizing… when supplied', () => {
+    const tree = renderPopup();
+    act(() => {
+      showRecognizing('OCR: hello');
+    });
+    const text = collectText(tree);
+    expect(text).toContain('Recognizing…');
+    expect(text).toContain('OCR: hello');
+  });
+
+  describe('font-size ( − )( A )( + ) circular controls', () => {
+    const findFontBtn = (
+      tree: ReactTestRenderer,
+      label: 'Decrease text size' | 'Increase text size',
+    ) =>
+      tree.root.findAllByProps({
+        accessibilityRole: 'button',
+        accessibilityLabel: label,
+      })[0];
+
+    const tryFindFontBtn = (
+      tree: ReactTestRenderer,
+      label: 'Decrease text size' | 'Increase text size',
+    ) =>
+      tree.root.findAllByProps({
+        accessibilityRole: 'button',
+        accessibilityLabel: label,
+      });
+
+    test('both circles always render with constant layout', () => {
+      const tree = renderPopup();
+      act(() => {
+        showDefinition(found('WordNet', 'hello', 'a greeting'));
+      });
+      // Two distinct Pressables, always — never hidden, only greyed.
+      expect(tryFindFontBtn(tree, 'Decrease text size')).toHaveLength(1);
+      expect(tryFindFontBtn(tree, 'Increase text size')).toHaveLength(1);
+    });
+
+    test('default S: minus is greyed and disabled; plus is active', () => {
+      const tree = renderPopup();
+      act(() => {
+        showDefinition(found('WordNet', 'hello', 'a greeting'));
+      });
+      const minus = findFontBtn(tree, 'Decrease text size');
+      const plus = findFontBtn(tree, 'Increase text size');
+      expect(minus.props.disabled).toBe(true);
+      expect(plus.props.disabled).toBe(false);
+      // All three glyphs always rendered — minus, A indicator, plus.
+      const text = collectText(tree);
+      expect(text).toContain('−');
+      expect(text).toContain('A');
+      expect(text).toContain('+');
+    });
+
+    test('M: both buttons active, neither greyed', () => {
+      const tree = renderPopup();
+      act(() => {
+        showDefinition(found('WordNet', 'hello', 'a greeting'));
+      });
+      act(() => {
+        findFontBtn(tree, 'Increase text size').props.onPress();
+      });
+      const minus = findFontBtn(tree, 'Decrease text size');
+      const plus = findFontBtn(tree, 'Increase text size');
+      expect(minus.props.disabled).toBe(false);
+      expect(plus.props.disabled).toBe(false);
+    });
+
+    test('L: plus is greyed and disabled; minus is active', () => {
+      const tree = renderPopup();
+      act(() => {
+        showDefinition(found('WordNet', 'hello', 'a greeting'));
+      });
+      act(() => {
+        findFontBtn(tree, 'Increase text size').props.onPress();
+        findFontBtn(tree, 'Increase text size').props.onPress();
+      });
+      const minus = findFontBtn(tree, 'Decrease text size');
+      const plus = findFontBtn(tree, 'Increase text size');
+      expect(minus.props.disabled).toBe(false);
+      expect(plus.props.disabled).toBe(true);
+    });
+
+    test('round-trip: pressing plus twice then minus twice returns to S state', () => {
+      const tree = renderPopup();
+      act(() => {
+        showDefinition(found('WordNet', 'hello', 'a greeting'));
+      });
+      act(() => {
+        findFontBtn(tree, 'Increase text size').props.onPress();
+        findFontBtn(tree, 'Increase text size').props.onPress();
+      });
+      act(() => {
+        findFontBtn(tree, 'Decrease text size').props.onPress();
+        findFontBtn(tree, 'Decrease text size').props.onPress();
+      });
+      expect(findFontBtn(tree, 'Decrease text size').props.disabled).toBe(true);
+      expect(findFontBtn(tree, 'Increase text size').props.disabled).toBe(false);
+    });
+
+    test('font-size controls are NOT rendered during the recognizing kind', () => {
+      const tree = renderPopup();
+      act(() => {
+        showRecognizing();
+      });
+      expect(tryFindFontBtn(tree, 'Decrease text size')).toHaveLength(0);
+      expect(tryFindFontBtn(tree, 'Increase text size')).toHaveLength(0);
+    });
+
+    test('fontScale propagates to the definition body — Text fontSize grows on A+', () => {
+      const tree = renderPopup();
+      act(() => {
+        showDefinition(found('WordNet', 'hello', 'a greeting', 'plain'));
+      });
+      const findDefinitionFontSize = (): number => {
+        const json = tree.toJSON();
+        let captured: number | null = null;
+        const visit = (node: unknown): void => {
+          if (Array.isArray(node)) {
+            node.forEach(visit);
+            return;
+          }
+          if (
+            node &&
+            typeof node === 'object' &&
+            'props' in node &&
+            'children' in node
+          ) {
+            const obj = node as {
+              props: {style?: unknown};
+              children: unknown;
+              type?: string;
+            };
+            const text = JSON.stringify(obj.children);
+            if (text.includes('a greeting')) {
+              const flatten = (s: unknown): {fontSize?: number} => {
+                if (Array.isArray(s)) {
+                  return Object.assign({}, ...s.map(flatten));
+                }
+                if (s && typeof s === 'object') {
+                  return s as {fontSize?: number};
+                }
+                return {};
+              };
+              const flat = flatten(obj.props.style);
+              if (typeof flat.fontSize === 'number') {
+                captured = flat.fontSize;
+              }
+            }
+            visit(obj.children);
+          }
+        };
+        visit(json);
+        if (captured === null) {
+          throw new Error('definition Text not found');
+        }
+        return captured;
+      };
+      const baseFontSize = findDefinitionFontSize();
+      act(() => {
+        tree.root
+          .findAllByProps({
+            accessibilityRole: 'button',
+            accessibilityLabel: 'Increase text size',
+          })[0]
+          .props.onPress();
+      });
+      const mediumFontSize = findDefinitionFontSize();
+      expect(mediumFontSize).toBeGreaterThan(baseFontSize);
+    });
+  });
+
+  test('transitions cleanly from recognizing to result without a flicker of stale state', () => {
+    // Simulates the on-device lifecycle: tap → showRecognizing →
+    // OCR completes → showDefinition. The popup must end on the
+    // result kind with the freshly-emitted hits, not retain any
+    // recognizing chrome.
+    const tree = renderPopup();
+    act(() => {
+      showRecognizing();
+    });
+    expect(collectText(tree)).toContain('Recognizing…');
+    act(() => {
+      showDefinition(found('WordNet', 'hello', 'a greeting'), 'OCR: hello');
+    });
+    const text = collectText(tree);
+    expect(text).not.toContain('Recognizing…');
+    expect(text).toContain('hello');
+    expect(text).toContain('a greeting');
   });
 });

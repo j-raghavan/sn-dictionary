@@ -2,15 +2,27 @@
 // exposes a case-insensitive lookup that returns the raw definition
 // text for a word (or null when not found). Stays format-pure: no
 // React, no SDK, no I/O — easy to unit-test.
+//
+// Async build: the index-build pass over the parsed .idx (and the
+// optional .syn merge) is the dominant CPU cost on first lookup of
+// a large user dict. Awaiting parseIdx/parseSyn lets *those* yield;
+// the local merge loops here also yield every YIELD_PERIOD entries
+// to keep the JS thread responsive while user dicts warm up.
+//
+// Random-access dict: the .dict / .dict.dz body is held behind a
+// DictReader so dictzip-encoded files can inflate per-lookup chunks
+// instead of the whole body up-front. See dictReader.ts.
 
 import type {IfoMeta} from './parseIfo';
 import {parseIfo} from './parseIfo';
 import type {IdxEntry} from './parseIdx';
 import {parseIdx} from './parseIdx';
 import {parseSyn} from './parseSyn';
-import {decompressDict} from './decompressDict';
+import type {DictReader} from './dictReader';
+import {createDictReader} from './dictReader';
 import {decodeUtf8} from '../../../sdk/utf8';
 import {normalizeKey} from '../normalizeKey';
+import {shouldYield, yieldToEventLoop} from './yieldOften';
 
 export type ParsedDict = {
   meta: IfoMeta;
@@ -20,7 +32,7 @@ export type ParsedDict = {
   // same map pointing at their canonical .idx entry. If the source
   // has duplicate-key collisions, the first one wins (deterministic).
   index: Map<string, IdxEntry>;
-  dictBytes: Uint8Array;
+  dictReader: DictReader;
 };
 
 export type DictHit = {
@@ -28,7 +40,7 @@ export type DictHit = {
   definition: string;
 };
 
-export const buildDict = (
+export const buildDict = async (
   ifoBytes: Uint8Array,
   idxBytes: Uint8Array,
   dictBytes: Uint8Array,
@@ -38,20 +50,25 @@ export const buildDict = (
   // cross-script lookups (e.g. Wiktionary Hindi-English's Latin
   // transliterations live in .syn, not .idx).
   synBytes?: Uint8Array,
-): ParsedDict => {
+): Promise<ParsedDict> => {
   const meta = parseIfo(ifoBytes);
-  const entries = parseIdx(idxBytes, meta.idxoffsetbits);
-  const decompressed = decompressDict(dictBytes);
+  const entries = await parseIdx(idxBytes, meta.idxoffsetbits);
+  const dictReader = createDictReader(dictBytes);
   const index = new Map<string, IdxEntry>();
-  for (const e of entries) {
+  for (let i = 0; i < entries.length; i++) {
+    const e = entries[i];
     const key = normalizeKey(e.word);
     if (key.length > 0 && !index.has(key)) {
       index.set(key, e);
     }
+    if (shouldYield(i)) {
+      await yieldToEventLoop();
+    }
   }
   if (synBytes && synBytes.length > 0) {
-    const synEntries = parseSyn(synBytes);
-    for (const syn of synEntries) {
+    const synEntries = await parseSyn(synBytes);
+    for (let i = 0; i < synEntries.length; i++) {
+      const syn = synEntries[i];
       const target = entries[syn.originalWordIndex];
       if (target === undefined) {
         // Out-of-range index — skip silently rather than failing the
@@ -66,9 +83,12 @@ export const buildDict = (
         // not the synonym alias the user typed.
         index.set(key, target);
       }
+      if (shouldYield(i)) {
+        await yieldToEventLoop();
+      }
     }
   }
-  return {meta, index, dictBytes: decompressed};
+  return {meta, index, dictReader};
 };
 
 export const lookupDict = (
@@ -83,10 +103,7 @@ export const lookupDict = (
   if (!entry) {
     return null;
   }
-  const slice = dict.dictBytes.subarray(
-    entry.offset,
-    entry.offset + entry.length,
-  );
+  const slice = dict.dictReader.slice(entry.offset, entry.length);
   const definition = decodeUtf8(slice);
   return {canonicalWord: entry.word, definition};
 };

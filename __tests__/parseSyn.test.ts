@@ -1,4 +1,5 @@
 import {parseSyn} from '../src/core/dict/stardict/parseSyn';
+import {YIELD_PERIOD} from '../src/core/dict/stardict/yieldOften';
 
 const enc = (s: string) => new TextEncoder().encode(s);
 
@@ -20,51 +21,70 @@ const buildSyn = (entries: {word: string; index: number}[]): Uint8Array => {
 };
 
 describe('parseSyn', () => {
-  test('parses a simple sequence of synonym -> idx-index records', () => {
+  test('parses a simple sequence of synonym -> idx-index records', async () => {
     const bytes = buildSyn([
       {word: 'namaste', index: 5},
       {word: 'dhanyavad', index: 12},
       {word: 'paani', index: 200},
     ]);
-    expect(parseSyn(bytes)).toEqual([
+    expect(await parseSyn(bytes)).toEqual([
       {word: 'namaste', originalWordIndex: 5},
       {word: 'dhanyavad', originalWordIndex: 12},
       {word: 'paani', originalWordIndex: 200},
     ]);
   });
 
-  test('decodes UTF-8 multi-byte words', () => {
+  test('decodes UTF-8 multi-byte words', async () => {
     const bytes = buildSyn([
       {word: 'нет', index: 1}, // Cyrillic
       {word: 'नमस्ते', index: 2}, // Devanagari
     ]);
-    expect(parseSyn(bytes)).toEqual([
+    expect(await parseSyn(bytes)).toEqual([
       {word: 'нет', originalWordIndex: 1},
       {word: 'नमस्ते', originalWordIndex: 2},
     ]);
   });
 
-  test('handles a large 32-bit big-endian index', () => {
+  test('handles a large 32-bit big-endian index', async () => {
     const bytes = buildSyn([{word: 'big', index: 0x01020304}]);
-    expect(parseSyn(bytes)[0].originalWordIndex).toBe(0x01020304);
+    expect((await parseSyn(bytes))[0].originalWordIndex).toBe(0x01020304);
   });
 
-  test('returns [] for empty input', () => {
-    expect(parseSyn(new Uint8Array(0))).toEqual([]);
+  test('returns [] for empty input', async () => {
+    expect(await parseSyn(new Uint8Array(0))).toEqual([]);
   });
 
-  test('throws on a record with an empty word', () => {
+  test('throws on a record with an empty word', async () => {
     const bytes = new Uint8Array([0, 0, 0, 0, 0]); // \0 + 4 zero index bytes
-    expect(() => parseSyn(bytes)).toThrow(/empty word/);
+    await expect(parseSyn(bytes)).rejects.toThrow(/empty word/);
   });
 
-  test('throws on an unterminated word at end of buffer', () => {
+  test('throws on an unterminated word at end of buffer', async () => {
     const bytes = new Uint8Array([0x66, 0x6f, 0x6f]); // "foo" with no \0
-    expect(() => parseSyn(bytes)).toThrow(/unterminated word/);
+    await expect(parseSyn(bytes)).rejects.toThrow(/unterminated word/);
   });
 
-  test('throws on a truncated index (less than 4 bytes after \\0)', () => {
+  test('throws on a truncated index (less than 4 bytes after \\0)', async () => {
     const bytes = new Uint8Array([0x66, 0x6f, 0x6f, 0, 0, 0]); // "foo\0" + only 2 bytes
-    expect(() => parseSyn(bytes)).toThrow(/truncated record/);
+    await expect(parseSyn(bytes)).rejects.toThrow(/truncated record/);
+  });
+
+  test('yields cooperatively while parsing a large buffer', async () => {
+    const entries = Array.from({length: YIELD_PERIOD + 5}, (_, i) => ({
+      word: `s${String(i).padStart(4, '0')}`,
+      index: i,
+    }));
+    const bytes = buildSyn(entries);
+    const setTimeoutSpy = jest.spyOn(global, 'setTimeout');
+    try {
+      const out = await parseSyn(bytes);
+      expect(out.length).toBe(entries.length);
+      const zeroDelayCalls = setTimeoutSpy.mock.calls.filter(
+        c => c[1] === 0,
+      );
+      expect(zeroDelayCalls.length).toBeGreaterThanOrEqual(1);
+    } finally {
+      setTimeoutSpy.mockRestore();
+    }
   });
 });

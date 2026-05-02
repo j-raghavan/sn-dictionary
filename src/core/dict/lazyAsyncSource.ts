@@ -10,12 +10,18 @@
 //                                           lookup retries (transient
 //                                           errors must not permanently
 //                                           dead-end the session).
-//   - load() returns + parse() ok        -> 'success', sticks.
+//   - load() returns + parse() ok        -> 'ready', sticks.
 //
 // Concurrency: the load promise is memoised so concurrent first
-// lookups share one underlying load+parse pass instead of racing.
+// lookups (and any background prime() calls) share one underlying
+// load+parse pass instead of racing.
+//
+// Async parse: parse() may return a Promise so format-specific
+// parsers can yield to the event loop on large inputs (e.g.
+// StarDict .idx with 200k–2M entries) and keep the UI responsive
+// during background priming.
 
-import type {DictEntry, DictSource} from '../lookup';
+import type {DictEntry, DictSource, DictSourceStatus} from '../lookup';
 
 export type LazyAsyncSourceDeps<TLoaded, TParsed> = {
   // Display name for the popup section label.
@@ -29,8 +35,9 @@ export type LazyAsyncSourceDeps<TLoaded, TParsed> = {
   // (deliberate opt-out); throwing = transient failure (will retry).
   load: () => Promise<TLoaded | null>;
   // Format-specific parse. Size caps and any other validation belong
-  // here — the harness is format-agnostic.
-  parse: (loaded: TLoaded) => TParsed;
+  // here — the harness is format-agnostic. May return a Promise so
+  // large parses can yield to the event loop.
+  parse: (loaded: TLoaded) => TParsed | Promise<TParsed>;
   // Format-specific lookup against the parsed dict.
   lookup: (parsed: TParsed, word: string) => DictEntry | null;
   logger?: {warn: (msg: string) => void};
@@ -43,6 +50,10 @@ export const createLazyAsyncSource = <TLoaded, TParsed>(
   const tag = deps.logTag ?? deps.name;
   let parsed: TParsed | null = null;
   let absent = false;
+  // Tracks the last *settled* outcome for status(). 'idle' means
+  // nothing has been attempted yet; 'failed' is non-sticky and
+  // resets to 'idle' once the next attempt starts.
+  let lastOutcome: Exclude<DictSourceStatus, 'loading'> = 'idle';
   let inFlight: Promise<void> | null = null;
 
   const doLoad = async (): Promise<void> => {
@@ -58,7 +69,7 @@ export const createLazyAsyncSource = <TLoaded, TParsed>(
       return;
     }
     try {
-      parsed = deps.parse(loaded);
+      parsed = await deps.parse(loaded);
     } catch (e) {
       warn(`[${tag}] parse threw: ${(e as Error).message}`);
       throw e;
@@ -70,23 +81,46 @@ export const createLazyAsyncSource = <TLoaded, TParsed>(
       return;
     }
     if (inFlight === null) {
-      // Memoise the in-flight promise so concurrent callers wait on
-      // the same load. Clear on settle so a failed attempt can be
-      // retried by the NEXT lookup (not by the racing concurrent
-      // ones — they all observe the same failure here).
-      inFlight = doLoad().finally(() => {
-        inFlight = null;
-      });
+      // Memoise the in-flight promise so concurrent callers (lookup
+      // racing prime, two lookups at once) wait on the same load.
+      // Clear on settle so a failed attempt can be retried by the
+      // NEXT call. lastOutcome flips to 'loading' for the duration
+      // and lands on 'ready' / 'absent' / 'failed' on settle.
+      lastOutcome = 'idle';
+      inFlight = doLoad()
+        .then(() => {
+          lastOutcome = absent ? 'absent' : 'ready';
+        })
+        .catch(() => {
+          lastOutcome = 'failed';
+        })
+        .finally(() => {
+          inFlight = null;
+        });
     }
-    try {
-      await inFlight;
-    } catch {
-      // swallow — caller observes via parsed===null
+    await inFlight;
+  };
+
+  const status = (): DictSourceStatus => {
+    if (parsed !== null) {
+      return 'ready';
     }
+    if (absent) {
+      return 'absent';
+    }
+    if (inFlight !== null) {
+      return 'loading';
+    }
+    return lastOutcome;
   };
 
   return {
     name: deps.name,
+    status,
+    async prime(): Promise<void> {
+      // Same memoised path as lookup(); just doesn't probe a word.
+      await ensureLoaded();
+    },
     async lookup(word: string): Promise<DictEntry | null> {
       const trimmed = word.trim();
       if (!trimmed) {

@@ -273,4 +273,37 @@ describe('end-to-end (discovery → registry → popup)', () => {
     expect(next.hits.length).toBe(2);
     expect(next.hits[0].source).toBe('extra');
   });
+
+  test('streaming progress: popup renders Loading… placeholder before sources resolve', async () => {
+    // End-to-end exercise of the streaming pipeline. The slow source
+    // delays its response so the initial-emit snapshot reaches the
+    // popup with `loading: ['Slow']` before the hit arrives.
+    const slow: DictSource = {
+      name: 'Slow',
+      lookup: jest.fn(
+        () =>
+          new Promise(resolve =>
+            setTimeout(
+              () => resolve({word: 'apple', definition: 'fruit (slow)', format: 'plain'}),
+              30,
+            ),
+          ),
+      ),
+    };
+    const lookup = createMultiDictLookup([slow]);
+    const tree = renderPopup();
+    const initialAndIntermediate: string[] = [];
+    const finalPromise = lookup.lookup('apple', snapshot => {
+      act(() => {
+        showDefinition(snapshot);
+      });
+      initialAndIntermediate.push(collectText(tree));
+    });
+    // Wait for full resolution; the popup should have rendered
+    // Loading… before the final emission landed.
+    await finalPromise;
+    expect(initialAndIntermediate[0]).toMatch(/Loading…/);
+    // Final tree shows the resolved definition, not the loading text.
+    expect(collectText(tree)).toContain('fruit (slow)');
+  });
 });

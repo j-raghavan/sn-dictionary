@@ -16,6 +16,13 @@ export type PluginManagerLike = {
   ) => Promise<boolean>;
   registerButtonListener: (listener: ButtonListener) => unknown;
   getPluginDirPath: () => Promise<string | null | undefined>;
+  // Toggles the enable state of a previously-registered button.
+  // Used at startup to gate Lookup behind the base WordNet dict's
+  // prime: the button is registered disabled, then flipped on once
+  // the dict is parseable. Without this, a tap before priming
+  // completes would queue OCR + lookup behind the prime parse and
+  // exhibit the slow on-device latency.
+  setButtonState: (id: number, state: boolean) => Promise<boolean>;
 };
 
 export const ICON_FILENAME = 'icon.png';

@@ -49,17 +49,22 @@ export const popupStyles = StyleSheet.create({
   sectionHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 8,
+    marginBottom: 10,
   },
+  // Source-of-definition badge above each section. Bumped from
+  // fontSize 14 to 17 + heavier padding so the user can see at a
+  // glance which dict produced each definition. e-ink renders solid
+  // borders crisply at this size; the previous 14 / 8×3 padding was
+  // perceptually faint relative to the 28-pt headword above.
   sourceBadge: {
-    fontSize: 14,
+    fontSize: 17,
     fontWeight: '700',
     color: '#000000',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderWidth: 1.5,
     borderColor: '#000000',
-    borderRadius: 3,
+    borderRadius: 4,
   },
   definition: {
     fontSize: 17,
@@ -70,6 +75,18 @@ export const popupStyles = StyleSheet.create({
     fontSize: 18,
     color: '#555555',
     fontStyle: 'italic',
+  },
+  loading: {
+    fontSize: 16,
+    color: '#555555',
+    fontStyle: 'italic',
+  },
+  recognizing: {
+    fontSize: 18,
+    color: '#000000',
+    fontWeight: '600',
+    textAlign: 'center',
+    paddingVertical: 28,
   },
   sense: {
     paddingVertical: 10,
@@ -130,5 +147,62 @@ export const popupStyles = StyleSheet.create({
   closeLabel: {
     fontSize: 16,
     color: '#000000',
+  },
+  // Top-of-card row with the headword on the left and the font-size
+  // stepper on the right. Chrome, not body text — stepper sizes are
+  // NOT scaled by the user's selection.
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  headerWordWrap: {
+    // Lets the headword shrink before the stepper does when long
+    // words (e.g. de "Wörterbuch") would otherwise push it off-screen.
+    flexShrink: 1,
+    marginRight: 12,
+  },
+  // Body-text size selector: three circular elements in a row,
+  // ( − )( A )( + ). The outer two are Pressables; the middle is a
+  // static "A" indicator that anchors the meaning to "text size".
+  // Same paradigm as every browser zoom control, PDF / image
+  // viewer, etc. — universally recognised, direction unambiguous.
+  // At a bound the unusable button greys out instead of hiding so
+  // the layout never shifts.
+  fontSizeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  fontSizeButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#000000',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 6,
+  },
+  fontSizeButtonDisabled: {
+    borderColor: '#999999',
+  },
+  // The middle indicator is structurally a Text with no border — it
+  // sits between the two Pressables but isn't itself one. Keeps the
+  // touch targets unambiguous (only − and + are pressable).
+  fontSizeIndicator: {
+    width: 32,
+    height: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 6,
+  },
+  fontSizeLabel: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#000000',
+    lineHeight: 20,
+  },
+  fontSizeLabelDisabled: {
+    color: '#999999',
   },
 });

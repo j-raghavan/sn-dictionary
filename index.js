@@ -8,15 +8,27 @@ import {
   PluginFileAPI,
   PluginManager,
 } from 'sn-plugin-lib';
-import {registerNoteLassoButton} from './src/buttons/registerNoteLassoButton';
-import {registerDocSelectButton} from './src/buttons/registerDocSelectButton';
+import {
+  registerNoteLassoButton,
+  NOTE_LASSO_DEFINE_BUTTON_ID,
+} from './src/buttons/registerNoteLassoButton';
+import {
+  registerDocSelectButton,
+  DOC_SELECT_DEFINE_BUTTON_ID,
+} from './src/buttons/registerDocSelectButton';
 import {onNoteLassoDefine} from './src/handlers/onNoteLassoDefine';
 import {onDocSelectDefine} from './src/handlers/onDocSelectDefine';
 import {createStardictLookup} from './src/core/dict/stardictLookup';
 import {createMultiDictLookup} from './src/core/dict/multiDictLookup';
 import {discoverUserDicts} from './src/core/dict/userDictDiscovery';
+import {primeAllConcurrently} from './src/core/dict/primeAllConcurrently';
+import {getDefaultIndexCacheStorage} from './src/core/dict/indexCacheStorage';
 import {loadBaseDictFromGenerated} from './src/core/dict/data/baseDictData';
-import {showDefinition} from './src/ui/popupController';
+import {
+  hideDefinition,
+  showDefinition,
+  showRecognizing,
+} from './src/ui/popupController';
 
 AppRegistry.registerComponent(appName, () => App);
 
@@ -32,6 +44,15 @@ const logger = {
   error: msg => console.log(`[ERROR] ${msg}`),
 };
 
+// Persistent index cache. AsyncStorage if available, in-memory
+// otherwise — see getDefaultIndexCacheStorage for the lazy-require
+// rationale. Caches parsed StarDict indexes (lookup-key →
+// offset/length tuples) keyed by source name + idx fingerprint, so
+// subsequent JS-context reloads (firmware reloads on every note
+// open) skip parseIdx + parseSyn and complete in seconds instead of
+// minutes.
+const indexCache = getDefaultIndexCacheStorage(logger);
+
 // The base dict source. Bundled into the JS at build time, so the
 // loader is sync underneath; we wrap it in async to fit the shared
 // loadBase contract used by runtime-discovered user dicts. Explicit
@@ -41,6 +62,7 @@ const baseSource = createStardictLookup({
   name: 'WordNet',
   loadBase: async () => loadBaseDictFromGenerated(),
   format: 'wordnet',
+  cache: indexCache,
   logger,
 });
 
@@ -56,20 +78,47 @@ const lookup = createMultiDictLookup(sources, logger);
 // visible immediately in logcat rather than at first lookup. The
 // dict is memoised inside the loader, so this doesn't add per-lookup
 // cost.
+//
+// We ALSO use the init probe as the gate for enabling the Lookup
+// buttons. The buttons are registered with `enable: false` below; on
+// init probe resolution they flip to enabled via setButtonState. The
+// user can't tap before WordNet is parseable — which avoids the
+// 8-second OCR + lookup latency we observed on-device when a tap
+// raced active priming on the JS thread.
 lookup
   .lookup('__sndict_init__')
-  .then(() =>
-    logger.log('[stardict] base dict loaded ok (init probe complete)'),
-  )
+  .then(() => {
+    logger.log('[stardict] base dict loaded ok (init probe complete)');
+    return Promise.all([
+      PluginManager.setButtonState(NOTE_LASSO_DEFINE_BUTTON_ID, true),
+      PluginManager.setButtonState(DOC_SELECT_DEFINE_BUTTON_ID, true),
+    ])
+      .then(() => logger.log('[startup] Lookup buttons enabled'))
+      .catch(e =>
+        logger.warn(
+          `[startup] setButtonState threw: ${e.message} — buttons remain disabled until next reload`,
+        ),
+      );
+  })
   .catch(e => logger.error(`[stardict] init probe threw: ${e.message}`));
 
 // Discover sideloaded user dicts under /storage/emulated/0/MyStyle/SnDict.
-// Fire-and-forget at startup: the Lookup button is always enabled
-// (users can hit the base dict immediately) and discovery prepends
-// any found dicts into the registry as they become available. Each
-// individual user dict still parses lazily on its first lookup.
-discoverUserDicts({fileUtils: FileUtils, logger})
-  .then(userDicts => {
+// Fire-and-forget at startup: the Lookup buttons are registered
+// disabled (see initiallyEnabled:false below) and stay disabled
+// until the base WordNet init probe completes — that's when
+// setButtonState flips them on. Discovery runs in parallel with
+// the base prime; user dicts are prepended to the registry as
+// they're found and primed concurrently afterwards. Once base is
+// ready and the buttons enable, a tap returns hits from any
+// already-primed source and skips still-loading user dicts via
+// multiDictLookup's status gate.
+//
+// Priming is delegated to primeAllConcurrently — see that module
+// for the rationale on concurrent vs. serial. The contract is
+// covered by __tests__/primeAllConcurrently.test.ts so we can't
+// regress this without breaking the suite.
+discoverUserDicts({fileUtils: FileUtils, cache: indexCache, logger})
+  .then(async userDicts => {
     if (userDicts.length === 0) {
       return;
     }
@@ -79,20 +128,30 @@ discoverUserDicts({fileUtils: FileUtils, logger})
         .map(s => s.name)
         .join(', ')}]`,
     );
+    await primeAllConcurrently(userDicts, logger);
   })
   .catch(e => logger.error(`[discovery] dispatch crashed: ${e.message}`));
 
+// closePluginView lives on PluginManager, not PluginCommAPI, so the
+// handlers take a separate `view` dep. PluginManager satisfies the
+// ClosablePluginView interface structurally — no wrapper needed.
+// Wiring it via PluginCommAPI would silently resolve to undefined at
+// runtime — exactly the bug the on-device "[WARN] closePluginView
+// threw: undefined is not a function" reentrancy log surfaced.
 const noteHandlerDeps = {
   comm: PluginCommAPI,
+  view: PluginManager,
   file: PluginFileAPI,
   lookup,
+  showRecognizing,
   showResult: showDefinition,
+  hidePopup: hideDefinition,
   logger,
 };
 
 const docHandlerDeps = {
   doc: PluginDocAPI,
-  comm: PluginCommAPI,
+  view: PluginManager,
   lookup,
   showResult: showDefinition,
   logger,
@@ -100,6 +159,10 @@ const docHandlerDeps = {
 
 registerNoteLassoButton({
   pluginManager: PluginManager,
+  // Disabled until the base WordNet dict has primed. setButtonState
+  // flips it on after the init probe completes; see the lookup
+  // .then chain above.
+  initiallyEnabled: false,
   onPress: () => {
     onNoteLassoDefine(noteHandlerDeps).catch(e => {
       logger.error(`[define] dispatch crashed: ${e.message}`);
@@ -112,6 +175,7 @@ registerNoteLassoButton({
 
 registerDocSelectButton({
   pluginManager: PluginManager,
+  initiallyEnabled: false,
   onPress: () => {
     onDocSelectDefine(docHandlerDeps).catch(e => {
       logger.error(`[doc-define] dispatch crashed: ${e.message}`);

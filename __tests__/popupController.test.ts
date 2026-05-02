@@ -1,5 +1,6 @@
 import {
   showDefinition,
+  showRecognizing,
   hideDefinition,
   subscribe,
   getCurrentState,
@@ -21,26 +22,68 @@ describe('popupController', () => {
     expect(seen).toEqual([]);
   });
 
-  test('showDefinition broadcasts visible state with result and updates current', () => {
+  test('showDefinition broadcasts visible state with kind=result and updates current', () => {
     const seen: unknown[] = [];
     subscribe(s => seen.push(s));
     showDefinition(
-      {queriedFor: 'hello', hits: [{source: 'WordNet', entry: {word: 'hello', definition: 'greeting'}}]},
+      {
+        queriedFor: 'hello',
+        hits: [{source: 'WordNet', entry: {word: 'hello', definition: 'greeting'}}],
+        loading: [],
+      },
       'OCR: hello',
     );
     expect(seen).toHaveLength(1);
     expect(seen[0]).toEqual({
       visible: true,
+      kind: 'result',
       ocrLabel: 'OCR: hello',
-      result: {queriedFor: 'hello', hits: [{source: 'WordNet', entry: {word: 'hello', definition: 'greeting'}}]},
+      result: {
+        queriedFor: 'hello',
+        hits: [{source: 'WordNet', entry: {word: 'hello', definition: 'greeting'}}],
+        loading: [],
+      },
     });
     expect(getCurrentState()).toEqual(seen[0]);
+  });
+
+  test('showRecognizing broadcasts visible state with kind=recognizing and no result', () => {
+    const seen: unknown[] = [];
+    subscribe(s => seen.push(s));
+    showRecognizing();
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toEqual({visible: true, kind: 'recognizing'});
+  });
+
+  test('showRecognizing carries an OCR label when supplied', () => {
+    const seen: unknown[] = [];
+    subscribe(s => seen.push(s));
+    showRecognizing('OCR: hi');
+    expect(seen[0]).toEqual({
+      visible: true,
+      kind: 'recognizing',
+      ocrLabel: 'OCR: hi',
+    });
+  });
+
+  test('a recognizing-state can be replaced by a result-state without an interim hide', () => {
+    const seen: unknown[] = [];
+    subscribe(s => seen.push(s));
+    showRecognizing();
+    showDefinition(
+      {queriedFor: 'hi', hits: [], loading: []},
+      'OCR: hi',
+    );
+    expect(seen).toHaveLength(2);
+    expect((seen[0] as {kind: string}).kind).toBe('recognizing');
+    expect((seen[1] as {kind: string}).kind).toBe('result');
   });
 
   test('hideDefinition broadcasts not-visible state', () => {
     showDefinition({
       queriedFor: 'a',
       hits: [{source: 'WordNet', entry: {word: 'a', definition: 'b'}}],
+      loading: [],
     });
     const seen: unknown[] = [];
     subscribe(s => seen.push(s));
@@ -52,7 +95,7 @@ describe('popupController', () => {
     const seen: unknown[] = [];
     const unsub = subscribe(s => seen.push(s));
     unsub();
-    showDefinition({queriedFor: 'x', hits: []});
+    showDefinition({queriedFor: 'x', hits: [], loading: []});
     expect(seen).toEqual([]);
   });
 });
