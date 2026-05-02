@@ -393,7 +393,7 @@ describe('DefinitionPopup', () => {
     expect(text).toContain('OCR: hello');
   });
 
-  describe('font-size A− / A+ controls', () => {
+  describe('font-size stepper (single bordered widget, two touch zones)', () => {
     const findFontBtn = (
       tree: ReactTestRenderer,
       label: 'Decrease text size' | 'Increase text size',
@@ -412,29 +412,48 @@ describe('DefinitionPopup', () => {
         accessibilityLabel: label,
       });
 
-    test('default size is S — only A+ is rendered (no A−)', () => {
+    test('both stepper halves always render (constant layout) regardless of size', () => {
       const tree = renderPopup();
       act(() => {
         showDefinition(found('WordNet', 'hello', 'a greeting'));
       });
-      expect(tryFindFontBtn(tree, 'Decrease text size')).toHaveLength(0);
-      expect(tryFindFontBtn(tree, 'Increase text size')).toHaveLength(1);
-    });
-
-    test('M shows both A− and A+', () => {
-      const tree = renderPopup();
-      act(() => {
-        showDefinition(found('WordNet', 'hello', 'a greeting'));
-      });
-      const plus = findFontBtn(tree, 'Increase text size');
-      act(() => {
-        plus.props.onPress();
-      });
+      // S: down half is disabled, up half is active — both present.
       expect(tryFindFontBtn(tree, 'Decrease text size')).toHaveLength(1);
       expect(tryFindFontBtn(tree, 'Increase text size')).toHaveLength(1);
     });
 
-    test('L shows only A− (no A+)', () => {
+    test('default S: down half is disabled, arrow is hidden; up half active with ▲ glyph', () => {
+      const tree = renderPopup();
+      act(() => {
+        showDefinition(found('WordNet', 'hello', 'a greeting'));
+      });
+      const down = findFontBtn(tree, 'Decrease text size');
+      const up = findFontBtn(tree, 'Increase text size');
+      expect(down.props.disabled).toBe(true);
+      expect(up.props.disabled).toBe(false);
+      const text = collectText(tree);
+      expect(text).toContain('▲');
+      expect(text).not.toContain('▼');
+    });
+
+    test('M: both halves active, both arrows visible', () => {
+      const tree = renderPopup();
+      act(() => {
+        showDefinition(found('WordNet', 'hello', 'a greeting'));
+      });
+      act(() => {
+        findFontBtn(tree, 'Increase text size').props.onPress();
+      });
+      const down = findFontBtn(tree, 'Decrease text size');
+      const up = findFontBtn(tree, 'Increase text size');
+      expect(down.props.disabled).toBe(false);
+      expect(up.props.disabled).toBe(false);
+      const text = collectText(tree);
+      expect(text).toContain('▲');
+      expect(text).toContain('▼');
+    });
+
+    test('L: up half is disabled, arrow is hidden; down half active with ▼ glyph', () => {
       const tree = renderPopup();
       act(() => {
         showDefinition(found('WordNet', 'hello', 'a greeting'));
@@ -447,13 +466,16 @@ describe('DefinitionPopup', () => {
       act(() => {
         findFontBtn(tree, 'Increase text size').props.onPress();
       });
-      expect(tryFindFontBtn(tree, 'Decrease text size')).toHaveLength(1);
-      expect(tryFindFontBtn(tree, 'Increase text size')).toHaveLength(0);
+      const down = findFontBtn(tree, 'Decrease text size');
+      const up = findFontBtn(tree, 'Increase text size');
+      expect(down.props.disabled).toBe(false);
+      expect(up.props.disabled).toBe(true);
+      const text = collectText(tree);
+      expect(text).toContain('▼');
+      expect(text).not.toContain('▲');
     });
 
-    test('A+ at L is no-op (clamped) — but the test never reaches it because A+ is hidden at L', () => {
-      // Defensive: the stepper logic clamps at the bound, so even if
-      // the button were somehow re-pressed it wouldn't overflow.
+    test('round-trip: S → M → L → M → S restores all initial properties', () => {
       const tree = renderPopup();
       act(() => {
         showDefinition(found('WordNet', 'hello', 'a greeting'));
@@ -462,15 +484,17 @@ describe('DefinitionPopup', () => {
         findFontBtn(tree, 'Increase text size').props.onPress();
         findFontBtn(tree, 'Increase text size').props.onPress();
       });
-      // At L. A− back to M.
       act(() => {
         findFontBtn(tree, 'Decrease text size').props.onPress();
+        findFontBtn(tree, 'Decrease text size').props.onPress();
       });
-      expect(tryFindFontBtn(tree, 'Decrease text size')).toHaveLength(1);
-      expect(tryFindFontBtn(tree, 'Increase text size')).toHaveLength(1);
+      const down = findFontBtn(tree, 'Decrease text size');
+      const up = findFontBtn(tree, 'Increase text size');
+      expect(down.props.disabled).toBe(true);
+      expect(up.props.disabled).toBe(false);
     });
 
-    test('font-size buttons are NOT rendered during the recognizing kind', () => {
+    test('stepper is NOT rendered during the recognizing kind', () => {
       const tree = renderPopup();
       act(() => {
         showRecognizing();

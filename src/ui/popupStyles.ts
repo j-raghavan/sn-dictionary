@@ -149,34 +149,45 @@ export const popupStyles = StyleSheet.create({
     color: '#000000',
   },
   // Top-of-card row with the headword on the left and the font-size
-  // controls on the right. Chrome, not body text — fontButton sizes
-  // are NOT scaled by the user's selection.
+  // stepper on the right. Chrome, not body text — stepper sizes are
+  // NOT scaled by the user's selection.
   headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
   },
   headerWordWrap: {
-    // Lets the headword shrink before the buttons do when long words
-    // (e.g. de "Wörterbuch") would otherwise push them off-screen.
+    // Lets the headword shrink before the stepper does when long
+    // words (e.g. de "Wörterbuch") would otherwise push it off-screen.
     flexShrink: 1,
     marginRight: 12,
   },
-  fontControls: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  fontButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+  // Body-text size stepper (NN/g input-stepper pattern): one
+  // bordered widget visually, two stacked touch zones internally.
+  // The top half scales body text up; the bottom half scales it
+  // down. Arrows hide (not the whole zone) at the bounds so the
+  // widget's outer dimensions stay constant — no layout shift on
+  // press, no greyed-out states on e-ink.
+  fontStepper: {
+    width: 44,
     borderWidth: 1,
     borderColor: '#000000',
-    borderRadius: 4,
-    marginLeft: 8,
+    borderRadius: 6,
+    overflow: 'hidden',
   },
-  fontButtonLabel: {
-    fontSize: 16,
+  fontStepperHalf: {
+    minHeight: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  fontStepperDivider: {
+    height: 1,
+    backgroundColor: '#000000',
+  },
+  fontStepperArrow: {
+    fontSize: 14,
     fontWeight: '700',
     color: '#000000',
+    lineHeight: 14,
   },
 });

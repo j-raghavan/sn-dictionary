@@ -129,25 +129,24 @@ export default function DefinitionPopup(): React.JSX.Element {
           <Text style={[styles.word, styles.headerWordWrap]} numberOfLines={1}>
             {headerWord}
           </Text>
-          <View style={styles.fontControls}>
-            {canShrink ? (
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={t('popup.fontSmaller')}
-                onPress={handleSmaller}
-                style={styles.fontButton}>
-                <Text style={styles.fontButtonLabel}>A−</Text>
-              </Pressable>
-            ) : null}
-            {canGrow ? (
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={t('popup.fontLarger')}
-                onPress={handleLarger}
-                style={styles.fontButton}>
-                <Text style={styles.fontButtonLabel}>A+</Text>
-              </Pressable>
-            ) : null}
+          <View style={styles.fontStepper}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={t('popup.fontLarger')}
+              onPress={handleLarger}
+              disabled={!canGrow}
+              style={styles.fontStepperHalf}>
+              <Text style={styles.fontStepperArrow}>{canGrow ? '▲' : ' '}</Text>
+            </Pressable>
+            <View style={styles.fontStepperDivider} />
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={t('popup.fontSmaller')}
+              onPress={handleSmaller}
+              disabled={!canShrink}
+              style={styles.fontStepperHalf}>
+              <Text style={styles.fontStepperArrow}>{canShrink ? '▼' : ' '}</Text>
+            </Pressable>
           </View>
         </View>
         {state.ocrLabel ? (
