@@ -393,7 +393,7 @@ describe('DefinitionPopup', () => {
     expect(text).toContain('OCR: hello');
   });
 
-  describe('font-size two-circle a / A buttons (size-of-glyph IS the affordance)', () => {
+  describe('font-size ( − )( A )( + ) circular controls', () => {
     const findFontBtn = (
       tree: ReactTestRenderer,
       label: 'Decrease text size' | 'Increase text size',
@@ -422,22 +422,23 @@ describe('DefinitionPopup', () => {
       expect(tryFindFontBtn(tree, 'Increase text size')).toHaveLength(1);
     });
 
-    test('default S: small "a" is greyed and disabled; large "A" is active', () => {
+    test('default S: minus is greyed and disabled; plus is active', () => {
       const tree = renderPopup();
       act(() => {
         showDefinition(found('WordNet', 'hello', 'a greeting'));
       });
-      const small = findFontBtn(tree, 'Decrease text size');
-      const big = findFontBtn(tree, 'Increase text size');
-      expect(small.props.disabled).toBe(true);
-      expect(big.props.disabled).toBe(false);
-      // Both glyphs always present — only colour styling changes.
+      const minus = findFontBtn(tree, 'Decrease text size');
+      const plus = findFontBtn(tree, 'Increase text size');
+      expect(minus.props.disabled).toBe(true);
+      expect(plus.props.disabled).toBe(false);
+      // All three glyphs always rendered — minus, A indicator, plus.
       const text = collectText(tree);
-      expect(text).toContain('a');
+      expect(text).toContain('−');
       expect(text).toContain('A');
+      expect(text).toContain('+');
     });
 
-    test('M: both circles active, neither greyed', () => {
+    test('M: both buttons active, neither greyed', () => {
       const tree = renderPopup();
       act(() => {
         showDefinition(found('WordNet', 'hello', 'a greeting'));
@@ -445,13 +446,13 @@ describe('DefinitionPopup', () => {
       act(() => {
         findFontBtn(tree, 'Increase text size').props.onPress();
       });
-      const small = findFontBtn(tree, 'Decrease text size');
-      const big = findFontBtn(tree, 'Increase text size');
-      expect(small.props.disabled).toBe(false);
-      expect(big.props.disabled).toBe(false);
+      const minus = findFontBtn(tree, 'Decrease text size');
+      const plus = findFontBtn(tree, 'Increase text size');
+      expect(minus.props.disabled).toBe(false);
+      expect(plus.props.disabled).toBe(false);
     });
 
-    test('L: large "A" is greyed and disabled; small "a" is active', () => {
+    test('L: plus is greyed and disabled; minus is active', () => {
       const tree = renderPopup();
       act(() => {
         showDefinition(found('WordNet', 'hello', 'a greeting'));
@@ -460,13 +461,13 @@ describe('DefinitionPopup', () => {
         findFontBtn(tree, 'Increase text size').props.onPress();
         findFontBtn(tree, 'Increase text size').props.onPress();
       });
-      const small = findFontBtn(tree, 'Decrease text size');
-      const big = findFontBtn(tree, 'Increase text size');
-      expect(small.props.disabled).toBe(false);
-      expect(big.props.disabled).toBe(true);
+      const minus = findFontBtn(tree, 'Decrease text size');
+      const plus = findFontBtn(tree, 'Increase text size');
+      expect(minus.props.disabled).toBe(false);
+      expect(plus.props.disabled).toBe(true);
     });
 
-    test('round-trip: pressing big A twice then small a twice returns to S state', () => {
+    test('round-trip: pressing plus twice then minus twice returns to S state', () => {
       const tree = renderPopup();
       act(() => {
         showDefinition(found('WordNet', 'hello', 'a greeting'));
@@ -483,7 +484,7 @@ describe('DefinitionPopup', () => {
       expect(findFontBtn(tree, 'Increase text size').props.disabled).toBe(false);
     });
 
-    test('font-size circles are NOT rendered during the recognizing kind', () => {
+    test('font-size controls are NOT rendered during the recognizing kind', () => {
       const tree = renderPopup();
       act(() => {
         showRecognizing();

@@ -141,12 +141,15 @@ export default function DefinitionPopup(): React.JSX.Element {
               ]}>
               <Text
                 style={[
-                  styles.fontSizeLabelSmall,
+                  styles.fontSizeLabel,
                   !canShrink && styles.fontSizeLabelDisabled,
                 ]}>
-                a
+                −
               </Text>
             </Pressable>
+            <View style={styles.fontSizeIndicator}>
+              <Text style={styles.fontSizeLabel}>A</Text>
+            </View>
             <Pressable
               accessibilityRole="button"
               accessibilityLabel={t('popup.fontLarger')}
@@ -158,10 +161,10 @@ export default function DefinitionPopup(): React.JSX.Element {
               ]}>
               <Text
                 style={[
-                  styles.fontSizeLabelLarge,
+                  styles.fontSizeLabel,
                   !canGrow && styles.fontSizeLabelDisabled,
                 ]}>
-                A
+                +
               </Text>
             </Pressable>
           </View>

@@ -162,12 +162,12 @@ export const popupStyles = StyleSheet.create({
     flexShrink: 1,
     marginRight: 12,
   },
-  // Body-text size selector: two circular buttons side-by-side.
-  // The small "a" steps text size down; the large "A" steps it up.
-  // The visual size of the glyph IS the affordance — direction is
-  // unambiguous on first sight, no arrows or +/− needed. Same
-  // pattern Apple Books, Kindle, and Safari Reader Mode use.
-  // At a bound, the unusable button greys out instead of hiding so
+  // Body-text size selector: three circular elements in a row,
+  // ( − )( A )( + ). The outer two are Pressables; the middle is a
+  // static "A" indicator that anchors the meaning to "text size".
+  // Same paradigm as every browser zoom control, PDF / image
+  // viewer, etc. — universally recognised, direction unambiguous.
+  // At a bound the unusable button greys out instead of hiding so
   // the layout never shifts.
   fontSizeRow: {
     flexDirection: 'row',
@@ -181,22 +181,26 @@ export const popupStyles = StyleSheet.create({
     borderColor: '#000000',
     alignItems: 'center',
     justifyContent: 'center',
-    marginLeft: 8,
+    marginLeft: 6,
   },
   fontSizeButtonDisabled: {
     borderColor: '#999999',
   },
-  fontSizeLabelSmall: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#000000',
-    lineHeight: 16,
+  // The middle indicator is structurally a Text with no border — it
+  // sits between the two Pressables but isn't itself one. Keeps the
+  // touch targets unambiguous (only − and + are pressable).
+  fontSizeIndicator: {
+    width: 32,
+    height: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 6,
   },
-  fontSizeLabelLarge: {
-    fontSize: 20,
+  fontSizeLabel: {
+    fontSize: 18,
     fontWeight: '700',
     color: '#000000',
-    lineHeight: 22,
+    lineHeight: 20,
   },
   fontSizeLabelDisabled: {
     color: '#999999',
