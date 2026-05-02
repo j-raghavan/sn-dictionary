@@ -102,8 +102,26 @@ export const createMultiDictLookup = (
       // Concurrent fan-out, then walk in snapshot order so the popup
       // section ordering is deterministic regardless of which source
       // resolved first.
+      //
+      // Sources whose prime is currently in flight (status='loading')
+      // are NOT awaited: their lookup() would share the in-flight
+      // prime promise and block the entire fan-out for ~60–80 s on a
+      // Wiktionary-class dict. We leave them in `loading` and let
+      // the user re-tap once the prime finishes (logcat
+      // [startup] primed user dict "<name>" announces readiness).
+      // We deliberately do NOT subscribe to a background resolution
+      // here — popup state is global, and a stale emission from a
+      // prior lookup would clobber a fresh tap's popup.
+      //
+      // 'idle' sources go through the normal lookup path: lazy
+      // semantics still hold — first user query triggers the load.
+      // This preserves behaviour for sources that never had prime()
+      // called (test fixtures, sources skipped by the prime loop).
       await Promise.all(
         snapshot.map(async (source, i) => {
+          if (source.status?.() === 'loading') {
+            return;
+          }
           const entry = await safeLookup(source, trimmed, warn);
           resolved[i] = entry;
           emit(onUpdate, buildSnapshot());

@@ -276,4 +276,87 @@ describe('createMultiDictLookup', () => {
       expect(final.loading).toEqual([]);
     });
   });
+
+  describe('skip-still-priming behaviour', () => {
+    // Regression: a real on-device tap blocked for >32 s waiting on
+    // a Wiktionary-class user dict that was still finishing its
+    // initial prime. The reentrancy guard rejected the user's
+    // retap. Lookups must NOT await sources whose status() reports
+    // they are still loading.
+
+    test('does NOT await a source whose status is loading', async () => {
+      let resolveSlow: (v: DictEntry | null) => void = () => {};
+      const slow: DictSource = {
+        name: 'Slow',
+        status: () => 'loading',
+        lookup: jest.fn(
+          () =>
+            new Promise<DictEntry | null>(resolve => {
+              resolveSlow = resolve;
+            }),
+        ),
+      };
+      const fast = stubSource('Fast', {apple: 'fruit'});
+      const lookup = createMultiDictLookup([slow, fast]);
+      // The lookup must resolve without ever hearing back from Slow.
+      const result = await lookup.lookup('apple');
+      // Slow is reported as still-loading; Fast contributed a hit.
+      expect(result.loading).toEqual(['Slow']);
+      expect(result.hits.map(h => h.source)).toEqual(['Fast']);
+      // Slow.lookup was never invoked — no risk of a stale
+      // background emission landing in a future popup.
+      expect(slow.lookup).not.toHaveBeenCalled();
+      // Cleanup so jest doesn't hold the promise forever.
+      resolveSlow(null);
+    });
+
+    test('DOES await a source whose status is idle (lazy first-lookup compat)', async () => {
+      // 'idle' means prime() was never called — typical of test
+      // fixtures and any source that the runtime warm-up loop didn't
+      // touch. Lookups must still trigger the load via the normal
+      // lazy path; otherwise idle sources would be permanently
+      // unreachable.
+      const idle = stubSource('Idle', {apple: 'fruit'});
+      Object.assign(idle, {status: () => 'idle'});
+      const lookup = createMultiDictLookup([idle]);
+      const result = await lookup.lookup('apple');
+      expect(idle.lookup).toHaveBeenCalledWith('apple');
+      expect(result.hits.map(h => h.source)).toEqual(['Idle']);
+      expect(result.loading).toEqual([]);
+    });
+
+    test('still awaits a source whose status is ready / absent / failed', async () => {
+      // 'absent' and 'failed' both resolve quickly via lookup() — no
+      // reason to skip them. Verify the gate only triggers for
+      // loading/idle.
+      const ready = stubSource('Ready', {apple: 'fruit'});
+      Object.assign(ready, {status: () => 'ready'});
+      const absent: DictSource = {
+        name: 'Absent',
+        status: () => 'absent',
+        lookup: jest.fn(async () => null),
+      };
+      const failed: DictSource = {
+        name: 'Failed',
+        status: () => 'failed',
+        lookup: jest.fn(async () => null),
+      };
+      const lookup = createMultiDictLookup([ready, absent, failed]);
+      const result = await lookup.lookup('apple');
+      expect(result.loading).toEqual([]);
+      expect(absent.lookup).toHaveBeenCalled();
+      expect(failed.lookup).toHaveBeenCalled();
+    });
+
+    test('a source with no status() method is treated as ready (compat)', async () => {
+      // Existing tests build sources without a status hook. Those
+      // must continue to be queried normally — only sources that
+      // explicitly report loading/idle should be skipped.
+      const a = stubSource('A', {apple: 'fruit'}); // no status()
+      const lookup = createMultiDictLookup([a]);
+      const result = await lookup.lookup('apple');
+      expect(result.hits.map(h => h.source)).toEqual(['A']);
+      expect(result.loading).toEqual([]);
+    });
+  });
 });
