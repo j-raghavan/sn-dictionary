@@ -68,6 +68,20 @@ describe('normalizeKey', () => {
     expect(normalizeKey('Café')).toBe('café');
   });
 
+  test('astral-plane characters (emoji) survive intact, not split into surrogates', () => {
+    // 🚀 = U+1F680 — encoded as a UTF-16 surrogate pair in JS strings.
+    // A naive charCodeAt loop would emit two code units separately;
+    // the codepoint-aware iterator preserves the character.
+    const out = normalizeKey('rocket🚀ship');
+    expect(out).toBe('rocket🚀ship');
+    // Spot-check: the rocket is exactly one Array.from element.
+    expect(Array.from(out).length).toBe('rocket'.length + 1 + 'ship'.length);
+  });
+
+  test('astral characters around folded punctuation still fold correctly', () => {
+    expect(normalizeKey('🚀’hi’🛸')).toBe("🚀'hi'🛸");
+  });
+
   test('does not touch ASCII punctuation that already matches', () => {
     expect(normalizeKey("don't")).toBe("don't");
     expect(normalizeKey('a-b')).toBe('a-b');

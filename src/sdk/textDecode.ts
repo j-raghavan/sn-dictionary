@@ -16,6 +16,25 @@
 // to some codepoint), so step 3 cannot fail. UTF-8 with random bytes
 // almost always fails strict validation within the first few bytes,
 // so misclassification is vanishingly unlikely in practice.
+//
+// Documented tradeoffs (intentionally not addressed):
+//
+// * UTF-16 without a BOM is not detected. Excel and the standard
+//   "Unicode Text" exports always include the BOM, so this is rare
+//   in practice. Heuristic detection (e.g. "every other byte is
+//   0x00") is noisy enough that we'd rather have a false negative
+//   than a false positive — users hit by this can re-save with a
+//   BOM, the universal fix.
+//
+// * Strict UTF-8 is all-or-nothing: a single bad byte in an
+//   otherwise-UTF-8 file routes the WHOLE buffer to CP1252.
+//   Mid-file corruption of an emoji or CJK character would be
+//   re-decoded as Latin-1 mojibake. The alternative — falling back
+//   to permissive UTF-8 (U+FFFD substitution) — re-introduces the
+//   v1.0.4 black-diamond bug for the dominant Excel-CP1252 case,
+//   which is the whole reason this module exists. We pick the
+//   tradeoff that fixes the reported failure mode and accept the
+//   edge case of partially-damaged UTF-8 files.
 
 import {tryDecodeUtf8Strict} from './utf8';
 

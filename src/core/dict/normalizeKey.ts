@@ -42,15 +42,20 @@ const ELLIPSIS_REPLACEMENT = '...';
 export const normalizeKey = (word: string): string => {
   const nfc =
     typeof word.normalize === 'function' ? word.normalize('NFC') : word;
+  // Iterate by codepoint, not UTF-16 code unit, so astral characters
+  // (U+10000+, e.g. emoji or CJK ext-B) pass through as a single
+  // unit instead of being split into surrogate halves. The fold map
+  // only contains BMP punctuation today, but iterating by codepoint
+  // keeps the function correct if astral codepoints are ever added.
   let out = '';
-  for (let i = 0; i < nfc.length; i++) {
-    const cp = nfc.charCodeAt(i);
+  for (const ch of nfc) {
+    const cp = ch.codePointAt(0) as number;
     if (cp === 0x2026) {
       out += ELLIPSIS_REPLACEMENT;
       continue;
     }
     const sub = PUNCT_FOLD[cp];
-    out += sub !== undefined ? sub : nfc[i];
+    out += sub !== undefined ? sub : ch;
   }
   return out.trim().toLowerCase();
 };
