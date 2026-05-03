@@ -14,7 +14,7 @@
 // the UI.
 
 import {decodeUtf8} from '../../../sdk/utf8';
-import {shouldYield, yieldToEventLoop} from './yieldOften';
+import {shouldYield, yieldToEventLoop} from '../yieldOften';
 
 export type IdxEntry = {
   word: string;

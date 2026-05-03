@@ -1,9 +1,10 @@
-// Cooperative-yield helper for long synchronous loops (StarDict
-// `.idx` parsing, `.syn` parsing, the index-build pass over hundreds
-// of thousands of entries). Hermes runs every loop on the JS thread,
-// so a multi-second loop blocks UI input — the visible "5-minute
-// freeze on first lookup" symptom users hit with large user-supplied
-// dictionaries.
+// Cooperative-yield helper for long synchronous loops. Used by every
+// dict format (StarDict `.idx` / `.syn` / index-build, CSV row parse,
+// JSON array-of-entries iteration) — anywhere a multi-MB user file
+// would otherwise spin the JS thread for several seconds. Hermes runs
+// every loop on the JS thread, so without yielding the visible
+// symptom is "freezing/locking input" the moment the user taps to
+// look up a word and triggers first-load of a large dictionary.
 //
 // Yielding via a macrotask (setTimeout 0) — not a microtask — gives
 // the JS thread room to drain pending UI events and spinners between

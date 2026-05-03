@@ -22,7 +22,7 @@ import type {DictReader} from './dictReader';
 import {createDictReader} from './dictReader';
 import {decodeUtf8} from '../../../sdk/utf8';
 import {normalizeKey} from '../normalizeKey';
-import {shouldYield, yieldToEventLoop} from './yieldOften';
+import {shouldYield, yieldToEventLoop} from '../yieldOften';
 
 export type ParsedDict = {
   meta: IfoMeta;
