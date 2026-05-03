@@ -7,11 +7,23 @@
 // Folder layout, per dict:
 //
 //   <SnDict-root>/<name>/
-//     ├── meta.json                      (optional; just `{name}` today)
+//     ├── meta.json                      (optional)
 //     ├── *.ifo + *.idx + *.dict[.dz]    -> StarDict
 //     ├── *.csv                          -> CSV
 //     ├── *.json                         -> JSON
 //     └── *.mdx                          -> logged as deferred (skipped)
+//
+// meta.json schema (all fields optional):
+//
+//   {
+//     "name": "Display Name",
+//     "csv": {
+//       "headwordCol": 0,
+//       "definitionCol": 1,
+//       "phoneticCol": 2,
+//       "hasHeader": false
+//     }
+//   }
 //
 // Per-folder failures are isolated and logged — one bad dict folder
 // doesn't break discovery for the others.
@@ -93,28 +105,84 @@ const basenameOf = (path: string): string => {
   return slash >= 0 ? path.slice(slash + 1) : path;
 };
 
-const readMetaName = async (
+type CsvMetaConfig = {
+  headwordCol?: number;
+  definitionCol?: number;
+  phoneticCol?: number;
+  hasHeader?: boolean;
+};
+
+type FolderMeta = {
+  name?: string;
+  csv?: CsvMetaConfig;
+};
+
+const isPlainObject = (v: unknown): v is Record<string, unknown> =>
+  typeof v === 'object' && v !== null && !Array.isArray(v);
+
+// Pick a non-negative integer field from a parsed meta blob. Anything
+// non-numeric, negative, or non-integer is dropped — there's no
+// meaningful interpretation, and silently ignoring lets a typo in
+// meta.json fall back to defaults instead of crashing discovery.
+const pickNonNegInt = (
+  obj: Record<string, unknown>,
+  key: string,
+): number | undefined => {
+  const v = obj[key];
+  if (typeof v !== 'number' || !Number.isInteger(v) || v < 0) {
+    return undefined;
+  }
+  return v;
+};
+
+const parseCsvMeta = (raw: unknown): CsvMetaConfig | undefined => {
+  if (!isPlainObject(raw)) {
+    return undefined;
+  }
+  const cfg: CsvMetaConfig = {};
+  const hw = pickNonNegInt(raw, 'headwordCol');
+  if (hw !== undefined) {
+    cfg.headwordCol = hw;
+  }
+  const def = pickNonNegInt(raw, 'definitionCol');
+  if (def !== undefined) {
+    cfg.definitionCol = def;
+  }
+  const phon = pickNonNegInt(raw, 'phoneticCol');
+  if (phon !== undefined) {
+    cfg.phoneticCol = phon;
+  }
+  if (typeof raw.hasHeader === 'boolean') {
+    cfg.hasHeader = raw.hasHeader;
+  }
+  return cfg;
+};
+
+const readFolderMeta = async (
   files: FileEntry[],
   fetchFn: typeof fetch,
-): Promise<string | undefined> => {
+): Promise<FolderMeta> => {
   const meta = files.find(f => f.type === 1 && basenameOf(f.path) === 'meta.json');
   if (!meta) {
-    return undefined;
+    return {};
   }
   try {
     const text = decodeUtf8(await fetchAsUint8(meta.path, fetchFn));
-    const parsed = JSON.parse(text) as unknown;
-    if (
-      parsed !== null &&
-      typeof parsed === 'object' &&
-      typeof (parsed as {name?: unknown}).name === 'string' &&
-      (parsed as {name: string}).name.trim().length > 0
-    ) {
-      return (parsed as {name: string}).name.trim();
+    const parsed: unknown = JSON.parse(text);
+    if (!isPlainObject(parsed)) {
+      return {};
     }
-    return undefined;
+    const out: FolderMeta = {};
+    if (typeof parsed.name === 'string' && parsed.name.trim().length > 0) {
+      out.name = parsed.name.trim();
+    }
+    const csv = parseCsvMeta(parsed.csv);
+    if (csv !== undefined) {
+      out.csv = csv;
+    }
+    return out;
   } catch {
-    return undefined;
+    return {};
   }
 };
 
@@ -233,8 +301,8 @@ const buildSourceForFolder = async (
     return null;
   }
 
-  const metaName = await readMetaName(files, fetchFn);
-  const displayName = metaName ?? folderName;
+  const meta = await readFolderMeta(files, fetchFn);
+  const displayName = meta.name ?? folderName;
 
   if (detected.kind === 'stardict') {
     const synPath = detected.syn;
@@ -267,6 +335,10 @@ const buildSourceForFolder = async (
     return createCsvDictSource({
       name: displayName,
       loadBytes: () => fetchAsArrayBuffer(detected.path, fetchFn),
+      headwordCol: meta.csv?.headwordCol,
+      definitionCol: meta.csv?.definitionCol,
+      phoneticCol: meta.csv?.phoneticCol,
+      hasHeader: meta.csv?.hasHeader,
       logger,
     });
   }

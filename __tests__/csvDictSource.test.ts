@@ -238,6 +238,55 @@ describe('createCsvDictSource', () => {
     expect((await src.lookup('k'))?.definition).toBe('v');
   });
 
+  test('phoneticCol: surfaces a third column as DictEntry.phonetic', async () => {
+    const src = createCsvDictSource({
+      name: 'test',
+      loadBytes: async () =>
+        enc('ARRAKIS,the planet known as Dune,uh-RAK-is\n'),
+      phoneticCol: 2,
+    });
+    expect(await src.lookup('arrakis')).toEqual({
+      word: 'ARRAKIS',
+      definition: 'the planet known as Dune',
+      format: 'plain',
+      phonetic: 'uh-RAK-is',
+    });
+  });
+
+  test('phoneticCol: omitted in entries with empty phonetic field', async () => {
+    const src = createCsvDictSource({
+      name: 'test',
+      loadBytes: async () => enc('apple,fruit,\nbanana,yellow,buh-NAN-uh\n'),
+      phoneticCol: 2,
+    });
+    const apple = await src.lookup('apple');
+    // Empty third column means no phonetic — field is omitted, not ''.
+    expect(apple).toEqual({word: 'apple', definition: 'fruit', format: 'plain'});
+    expect(apple).not.toHaveProperty('phonetic');
+    const banana = await src.lookup('banana');
+    expect(banana?.phonetic).toBe('buh-NAN-uh');
+  });
+
+  test('phoneticCol: out-of-range column is treated as no phonetic, not a crash', async () => {
+    const src = createCsvDictSource({
+      name: 'test',
+      loadBytes: async () => enc('apple,fruit\n'),
+      phoneticCol: 9, // row only has 2 cells
+    });
+    const hit = await src.lookup('apple');
+    expect(hit).toEqual({word: 'apple', definition: 'fruit', format: 'plain'});
+    expect(hit).not.toHaveProperty('phonetic');
+  });
+
+  test('phoneticCol omitted: no phonetic surfaces even if extra cols exist', async () => {
+    // Backwards-compatibility: a CSV that happens to have a third
+    // column shouldn't accidentally leak it as phonetic when the
+    // caller never asked for one.
+    const src = fromCsv('ARRAKIS,the planet,uh-RAK-is\n');
+    const hit = await src.lookup('arrakis');
+    expect(hit).not.toHaveProperty('phonetic');
+  });
+
   test('lazy: loader fires once across many lookups', async () => {
     const loadBytes = jest.fn(async () => enc('apple,fruit\n'));
     const src = createCsvDictSource({name: 'test', loadBytes});
