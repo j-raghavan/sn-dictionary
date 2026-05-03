@@ -26,6 +26,12 @@ export type DictEntry = {
   word: string;
   definition: string;
   format: DefinitionFormat;
+  // Optional phonetic transcription (IPA, respelling, Herbert-style
+  // syllable stress markers, etc.). Sources fill this when the data
+  // they read carries a separate pronunciation field; the popup
+  // renders it under the headword. Absent for sources that only
+  // know word + definition.
+  phonetic?: string;
 };
 
 // One source's contribution to the result. `source` is the name of

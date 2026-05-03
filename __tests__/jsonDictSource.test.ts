@@ -168,6 +168,58 @@ describe('createJsonDictSource', () => {
     expect((await src.lookup('apple'))?.definition).toBe('a fruit, it’s red');
   });
 
+  test('array shape: surfaces phonetic field on the entry', async () => {
+    const src = fromJson(
+      JSON.stringify([
+        {word: 'arrakis', definition: 'the planet', phonetic: 'uh-RAK-is'},
+      ]),
+    );
+    expect(await src.lookup('arrakis')).toEqual({
+      word: 'arrakis',
+      definition: 'the planet',
+      format: 'plain',
+      phonetic: 'uh-RAK-is',
+    });
+  });
+
+  test('array shape: accepts pronunciation/ipa as phonetic aliases', async () => {
+    const src = fromJson(
+      JSON.stringify([
+        {word: 'a', definition: 'd', pronunciation: 'AY'},
+        {word: 'b', definition: 'd', ipa: 'biː'},
+        {word: 'c', definition: 'd', phon: 'see'},
+      ]),
+    );
+    expect((await src.lookup('a'))?.phonetic).toBe('AY');
+    expect((await src.lookup('b'))?.phonetic).toBe('biː');
+    expect((await src.lookup('c'))?.phonetic).toBe('see');
+  });
+
+  test('array shape: blank/whitespace phonetic is treated as absent', async () => {
+    const src = fromJson(
+      JSON.stringify([
+        {word: 'a', definition: 'd', phonetic: '   '},
+        {word: 'b', definition: 'd', phonetic: ''},
+      ]),
+    );
+    expect(await src.lookup('a')).not.toHaveProperty('phonetic');
+    expect(await src.lookup('b')).not.toHaveProperty('phonetic');
+  });
+
+  test('array shape: non-string phonetic is ignored', async () => {
+    const src = fromJson(
+      JSON.stringify([{word: 'a', definition: 'd', phonetic: 42}]),
+    );
+    expect(await src.lookup('a')).not.toHaveProperty('phonetic');
+  });
+
+  test('object-map shape: never produces a phonetic (no place to put it)', async () => {
+    const src = fromJson(JSON.stringify({apple: 'fruit'}));
+    const hit = await src.lookup('apple');
+    expect(hit).toEqual({word: 'apple', definition: 'fruit', format: 'plain'});
+    expect(hit).not.toHaveProperty('phonetic');
+  });
+
   test('lazy: loader fires once across many lookups', async () => {
     const loadBytes = jest.fn(async () => enc(JSON.stringify({apple: 'fruit'})));
     const src = createJsonDictSource({name: 'test', loadBytes});

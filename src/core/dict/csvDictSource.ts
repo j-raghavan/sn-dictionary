@@ -1,7 +1,9 @@
 // CSV-backed DictSource. Two columns by default: headword (col 0)
 // and definition (col 1). Configurable for files with extra
-// metadata columns. Quoted fields and embedded commas / newlines /
-// escaped quotes are handled per RFC 4180.
+// metadata columns — including an optional phonetic column that
+// gets rendered under the headword in the popup. Quoted fields and
+// embedded commas / newlines / escaped quotes are handled per RFC
+// 4180.
 //
 // Lookup is case-insensitive. First occurrence of a key wins (later
 // duplicates are ignored), matching StarDict's behaviour.
@@ -17,8 +19,13 @@ export type CsvDictDeps = {
   name: string;
   loadBytes: LoadBytes;
   // Column indices (0-based). Defaults: headword=0, definition=1.
+  // phoneticCol is opt-in: a number selects that column as the
+  // pronunciation field; omitted (or out-of-range / empty in a row)
+  // means no phonetic. Set via meta.json by users whose CSVs carry
+  // a third column (term, def, phonetic).
   headwordCol?: number;
   definitionCol?: number;
+  phoneticCol?: number;
   // True = first row is a header and is skipped at parse time.
   hasHeader?: boolean;
   // Reject files larger than this. Default 10 MB. Tuned to the
@@ -93,17 +100,21 @@ const parseRow = (
   }
 };
 
+type CsvRow = {word: string; definition: string; phonetic?: string};
+
 type ParsedCsv = {
-  // Lowercase headword -> {canonical word, definition}.
-  index: Map<string, {word: string; definition: string}>;
+  // Lowercase headword -> {canonical word, definition, phonetic?}.
+  index: Map<string, CsvRow>;
 };
 
 const buildCsv = (
-  deps: Required<Pick<CsvDictDeps, 'headwordCol' | 'definitionCol' | 'hasHeader'>>,
+  deps: Required<
+    Pick<CsvDictDeps, 'headwordCol' | 'definitionCol' | 'hasHeader'>
+  > & {phoneticCol: number | undefined},
 ) =>
   (bytes: Uint8Array): ParsedCsv => {
     const text = decodeText(bytes);
-    const index = new Map<string, {word: string; definition: string}>();
+    const index = new Map<string, CsvRow>();
     let cursor = 0;
     let rowIdx = 0;
     while (cursor < text.length) {
@@ -121,7 +132,14 @@ const buildCsv = (
       }
       const key = normalizeKey(word);
       if (key.length > 0 && !index.has(key)) {
-        index.set(key, {word, definition});
+        const row: CsvRow = {word, definition};
+        if (deps.phoneticCol !== undefined) {
+          const phonetic = next.row[deps.phoneticCol]?.trim() ?? '';
+          if (phonetic.length > 0) {
+            row.phonetic = phonetic;
+          }
+        }
+        index.set(key, row);
       }
     }
     return {index};
@@ -129,9 +147,18 @@ const buildCsv = (
 
 const lookupCsv = (parsed: ParsedCsv, word: string): DictEntry | null => {
   const hit = parsed.index.get(normalizeKey(word));
-  return hit
-    ? {word: hit.word, definition: hit.definition, format: 'plain'}
-    : null;
+  if (!hit) {
+    return null;
+  }
+  const entry: DictEntry = {
+    word: hit.word,
+    definition: hit.definition,
+    format: 'plain',
+  };
+  if (hit.phonetic !== undefined) {
+    entry.phonetic = hit.phonetic;
+  }
+  return entry;
 };
 
 export const createCsvDictSource = (deps: CsvDictDeps): DictSource => {
@@ -139,6 +166,7 @@ export const createCsvDictSource = (deps: CsvDictDeps): DictSource => {
   const parseCsv = buildCsv({
     headwordCol: deps.headwordCol ?? 0,
     definitionCol: deps.definitionCol ?? 1,
+    phoneticCol: deps.phoneticCol,
     hasHeader: deps.hasHeader ?? false,
   });
   return createLazyAsyncSource<Uint8Array, ParsedCsv>({

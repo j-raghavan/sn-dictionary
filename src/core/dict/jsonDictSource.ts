@@ -23,8 +23,10 @@ export type JsonDictDeps = {
 
 const DEFAULT_MAX_BYTES = 10 * 1024 * 1024;
 
+type JsonRow = {word: string; definition: string; phonetic?: string};
+
 type ParsedJson = {
-  index: Map<string, {word: string; definition: string}>;
+  index: Map<string, JsonRow>;
 };
 
 const pickHeadword = (row: Record<string, unknown>): string | undefined => {
@@ -49,22 +51,43 @@ const pickDefinition = (row: Record<string, unknown>): string | undefined => {
   return undefined;
 };
 
+// Recognise the common spellings users (and AI agents asked to
+// produce a glossary) reach for first. Whichever shows up first
+// wins. Trimmed; empty strings are treated as absent.
+const pickPhonetic = (row: Record<string, unknown>): string | undefined => {
+  const candidates = ['phonetic', 'pronunciation', 'ipa', 'phon'];
+  for (const k of candidates) {
+    const v = row[k];
+    if (typeof v === 'string') {
+      const trimmed = v.trim();
+      if (trimmed.length > 0) {
+        return trimmed;
+      }
+    }
+  }
+  return undefined;
+};
+
 const isPlainObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v);
 
 const buildJson = (bytes: Uint8Array): ParsedJson => {
   const text = decodeText(bytes);
   const data: unknown = JSON.parse(text);
-  const index = new Map<string, {word: string; definition: string}>();
+  const index = new Map<string, JsonRow>();
 
-  const insert = (word: string, definition: string): void => {
+  const insert = (word: string, definition: string, phonetic?: string): void => {
     const w = word.trim();
     if (w.length === 0) {
       return;
     }
     const key = normalizeKey(w);
     if (key.length > 0 && !index.has(key)) {
-      index.set(key, {word: w, definition});
+      const row: JsonRow = {word: w, definition};
+      if (phonetic !== undefined) {
+        row.phonetic = phonetic;
+      }
+      index.set(key, row);
     }
   };
 
@@ -75,8 +98,9 @@ const buildJson = (bytes: Uint8Array): ParsedJson => {
       }
       const w = pickHeadword(row);
       const d = pickDefinition(row);
+      const p = pickPhonetic(row);
       if (typeof w === 'string' && typeof d === 'string') {
-        insert(w, d);
+        insert(w, d, p);
       }
     }
   } else if (isPlainObject(data)) {
@@ -94,9 +118,18 @@ const buildJson = (bytes: Uint8Array): ParsedJson => {
 
 const lookupJson = (parsed: ParsedJson, word: string): DictEntry | null => {
   const hit = parsed.index.get(normalizeKey(word));
-  return hit
-    ? {word: hit.word, definition: hit.definition, format: 'plain'}
-    : null;
+  if (!hit) {
+    return null;
+  }
+  const entry: DictEntry = {
+    word: hit.word,
+    definition: hit.definition,
+    format: 'plain',
+  };
+  if (hit.phonetic !== undefined) {
+    entry.phonetic = hit.phonetic;
+  }
+  return entry;
 };
 
 export const createJsonDictSource = (deps: JsonDictDeps): DictSource => {

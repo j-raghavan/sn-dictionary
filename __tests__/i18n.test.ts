@@ -57,6 +57,16 @@ describe('t (popup string lookup)', () => {
       }
     }
   });
+
+  test('every locale defines a non-empty popup.pronunciation', () => {
+    // Catches a missing translation when a future locale is added —
+    // the a11y label would silently fall back to en otherwise.
+    for (const locale of Object.keys(STRINGS)) {
+      const value = t('popup.pronunciation', locale);
+      expect(typeof value).toBe('string');
+      expect(value.length).toBeGreaterThan(0);
+    }
+  });
 });
 
 describe('detectLocale', () => {

@@ -229,6 +229,100 @@ describe('discoverUserDicts', () => {
     expect(sources[0].name).toBe('Pretty Name');
   });
 
+  test('meta.json csv.phoneticCol routes a third column into DictEntry.phonetic', async () => {
+    const deps = baseDeps({
+      [`${ROOT}/dune/glossary.csv`]: enc(
+        'ARRAKIS,the planet known as Dune,uh-RAK-is\n',
+      ),
+      [`${ROOT}/dune/meta.json`]: enc(
+        JSON.stringify({name: 'Dune', csv: {phoneticCol: 2}}),
+      ),
+    });
+    const sources = await discoverUserDicts(deps);
+    expect(sources.length).toBe(1);
+    expect(sources[0].name).toBe('Dune');
+    const hit = await sources[0].lookup('arrakis');
+    expect(hit?.phonetic).toBe('uh-RAK-is');
+    expect(hit?.definition).toBe('the planet known as Dune');
+  });
+
+  test('meta.json csv config: hasHeader skips the first row', async () => {
+    const deps = baseDeps({
+      [`${ROOT}/g/words.csv`]: enc('term,definition,phonetic\napple,fruit,AP-ul\n'),
+      [`${ROOT}/g/meta.json`]: enc(
+        JSON.stringify({csv: {phoneticCol: 2, hasHeader: true}}),
+      ),
+    });
+    const sources = await discoverUserDicts(deps);
+    expect(await sources[0].lookup('term')).toBeNull();
+    const apple = await sources[0].lookup('apple');
+    expect(apple?.phonetic).toBe('AP-ul');
+  });
+
+  test('meta.json csv config: headwordCol + definitionCol re-route to other columns', async () => {
+    // CSV with id, term, definition, phonetic — headword is col 1,
+    // definition col 2, phonetic col 3.
+    const deps = baseDeps({
+      [`${ROOT}/g/words.csv`]: enc('1,arrakis,the planet,uh-RAK-is\n'),
+      [`${ROOT}/g/meta.json`]: enc(
+        JSON.stringify({
+          csv: {
+            headwordCol: 1,
+            definitionCol: 2,
+            phoneticCol: 3,
+          },
+        }),
+      ),
+    });
+    const sources = await discoverUserDicts(deps);
+    expect(await sources[0].lookup('1')).toBeNull();
+    const hit = await sources[0].lookup('arrakis');
+    expect(hit?.definition).toBe('the planet');
+    expect(hit?.phonetic).toBe('uh-RAK-is');
+  });
+
+  test('meta.json with a non-object root is ignored, defaults apply', async () => {
+    // E.g. someone writes `[]` or `"name"` at the root. We tolerate
+    // it instead of crashing — fall back to folder name + defaults.
+    const deps = baseDeps({
+      [`${ROOT}/g/words.csv`]: enc('apple,fruit\n'),
+      [`${ROOT}/g/meta.json`]: enc(JSON.stringify([])),
+    });
+    const sources = await discoverUserDicts(deps);
+    expect(sources[0].name).toBe('g');
+    expect((await sources[0].lookup('apple'))?.definition).toBe('fruit');
+  });
+
+  test('meta.json csv config: invalid types are dropped, defaults survive', async () => {
+    // Garbage values shouldn't crash discovery — they fall back to
+    // the source's own defaults.
+    const deps = baseDeps({
+      [`${ROOT}/g/words.csv`]: enc('apple,fruit\n'),
+      [`${ROOT}/g/meta.json`]: enc(
+        JSON.stringify({
+          csv: {
+            headwordCol: 'zero',
+            definitionCol: -1,
+            phoneticCol: 1.5,
+            hasHeader: 'yes',
+          },
+        }),
+      ),
+    });
+    const sources = await discoverUserDicts(deps);
+    expect((await sources[0].lookup('apple'))?.definition).toBe('fruit');
+  });
+
+  test('meta.json without a csv field still yields a working CSV source', async () => {
+    const deps = baseDeps({
+      [`${ROOT}/g/words.csv`]: enc('apple,fruit\n'),
+      [`${ROOT}/g/meta.json`]: enc(JSON.stringify({name: 'G'})),
+    });
+    const sources = await discoverUserDicts(deps);
+    expect(sources[0].name).toBe('G');
+    expect((await sources[0].lookup('apple'))?.definition).toBe('fruit');
+  });
+
   test('falls back to folder name when meta.json is malformed', async () => {
     const deps = baseDeps({
       [`${ROOT}/folder-name/words.csv`]: enc('apple,fruit\n'),

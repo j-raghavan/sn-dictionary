@@ -33,6 +33,16 @@ export const popupStyles = StyleSheet.create({
     fontSize: 14,
     color: '#555555',
   },
+  // Phonetic line under the headword. Italic + medium grey so it
+  // reads as supplementary chrome (like a real dictionary), not body
+  // copy. Sized between the OCR label and the definition body so
+  // it's clearly secondary to the headword but still scannable.
+  phonetic: {
+    marginTop: 2,
+    fontSize: 16,
+    fontStyle: 'italic',
+    color: '#555555',
+  },
   body: {
     marginTop: 12,
     marginBottom: 16,

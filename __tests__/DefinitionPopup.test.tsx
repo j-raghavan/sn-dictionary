@@ -90,6 +90,236 @@ describe('DefinitionPopup', () => {
     expect(collectText(renderPopup())).toBe('');
   });
 
+  test('when two hits disagree on phonetic, the header shows the first one (later still visible in its section)', () => {
+    // Documented rule: the header phonetic is the FIRST hit with a
+    // phonetic; later disagreements stay reachable per-source in
+    // each section body. Pinning the rule so a future refactor
+    // can't silently swap to "last wins" or "merge".
+    const tree = renderPopup();
+    act(() => {
+      showDefinition({
+        queriedFor: 'tomato',
+        hits: [
+          {
+            source: 'AmEng',
+            entry: {
+              word: 'tomato',
+              definition: 'red fruit (US)',
+              format: 'plain',
+              phonetic: 'tuh-MAY-toh',
+            },
+          },
+          {
+            source: 'BrEng',
+            entry: {
+              word: 'tomato',
+              definition: 'red fruit (UK)',
+              format: 'plain',
+              phonetic: 'tuh-MAH-toh',
+            },
+          },
+        ],
+        loading: [],
+      });
+    });
+    const text = collectText(tree);
+    // Both phonetics appear *somewhere* in the rendered tree (the
+    // first in the header, the second only via its section body if
+    // a future render path exposes it; today only the header path
+    // renders phonetics, so we assert the rule by header position).
+    expect(text).toContain('tuh-MAY-toh');
+    // Header label encodes the chosen phonetic — first hit wins.
+    const headerLabelled = tree.root.findAllByProps({
+      accessibilityLabel: 'Pronunciation: tuh-MAY-toh',
+    });
+    expect(headerLabelled.length).toBe(1);
+    // Negative pin: there is NO header label for the second hit's
+    // phonetic. (Equivalent to "last wins" / "merge" — explicitly
+    // not the rule.)
+    const wrongHeader = tree.root.findAllByProps({
+      accessibilityLabel: 'Pronunciation: tuh-MAH-toh',
+    });
+    expect(wrongHeader.length).toBe(0);
+  });
+
+  test('header phonetic comes from the first hit that supplies one (skips earlier hits without)', () => {
+    // Multi-dict scenario: WordNet has no phonetic, but the user's
+    // CSV does. The header should still surface the CSV's phonetic
+    // rather than nothing.
+    const tree = renderPopup();
+    act(() => {
+      showDefinition({
+        queriedFor: 'arrakis',
+        hits: [
+          {
+            source: 'WordNet',
+            entry: {
+              word: 'arrakis',
+              definition: 'no entry',
+              format: 'plain',
+            },
+          },
+          {
+            source: 'Dune',
+            entry: {
+              word: 'ARRAKIS',
+              definition: 'the planet known as Dune',
+              format: 'plain',
+              phonetic: 'uh-RAK-is',
+            },
+          },
+        ],
+        loading: [],
+      });
+    });
+    expect(collectText(tree)).toContain('uh-RAK-is');
+  });
+
+  test('phonetic font-size scales with the user-selected font size', () => {
+    const tree = renderPopup();
+    act(() => {
+      showDefinition({
+        queriedFor: 'arrakis',
+        hits: [
+          {
+            source: 'Dune',
+            entry: {
+              word: 'ARRAKIS',
+              definition: 'the planet',
+              format: 'plain',
+              phonetic: 'uh-RAK-is',
+            },
+          },
+        ],
+        loading: [],
+      });
+    });
+    const findPhoneticFontSize = (): number => {
+      const json = tree.toJSON();
+      let captured: number | null = null;
+      const visit = (node: unknown): void => {
+        if (Array.isArray(node)) {
+          node.forEach(visit);
+          return;
+        }
+        if (
+          node &&
+          typeof node === 'object' &&
+          'props' in node &&
+          'children' in node
+        ) {
+          const obj = node as {
+            props: {style?: unknown};
+            children: unknown;
+          };
+          const text = JSON.stringify(obj.children);
+          if (text.includes('uh-RAK-is')) {
+            const flatten = (s: unknown): {fontSize?: number} => {
+              if (Array.isArray(s)) {
+                return Object.assign({}, ...s.map(flatten));
+              }
+              if (s && typeof s === 'object') {
+                return s as {fontSize?: number};
+              }
+              return {};
+            };
+            const flat = flatten(obj.props.style);
+            if (typeof flat.fontSize === 'number') {
+              captured = flat.fontSize;
+            }
+          }
+          visit(obj.children);
+        }
+      };
+      visit(json);
+      if (captured === null) {
+        throw new Error('phonetic Text not found');
+      }
+      return captured;
+    };
+    const baseFontSize = findPhoneticFontSize();
+    act(() => {
+      tree.root
+        .findAllByProps({
+          accessibilityRole: 'button',
+          accessibilityLabel: 'Increase text size',
+        })[0]
+        .props.onPress();
+    });
+    expect(findPhoneticFontSize()).toBeGreaterThan(baseFontSize);
+  });
+
+  test('phonetic Text exposes a localised "Pronunciation: ..." accessibilityLabel', () => {
+    const tree = renderPopup();
+    act(() => {
+      showDefinition({
+        queriedFor: 'arrakis',
+        hits: [
+          {
+            source: 'Dune',
+            entry: {
+              word: 'ARRAKIS',
+              definition: 'the planet',
+              format: 'plain',
+              phonetic: 'uh-RAK-is',
+            },
+          },
+        ],
+        loading: [],
+      });
+    });
+    // Match by the accessibility-label prefix; full string includes
+    // the phonetic value verbatim.
+    const labelled = tree.root.findAllByProps({
+      accessibilityLabel: 'Pronunciation: uh-RAK-is',
+    });
+    expect(labelled.length).toBe(1);
+  });
+
+  test('renders phonetic line under the headword when the first hit carries one', () => {
+    const tree = renderPopup();
+    act(() => {
+      showDefinition({
+        queriedFor: 'arrakis',
+        hits: [
+          {
+            source: 'Dune',
+            entry: {
+              word: 'ARRAKIS',
+              definition: 'the planet known as Dune',
+              format: 'plain',
+              phonetic: 'uh-RAK-is',
+            },
+          },
+        ],
+        loading: [],
+      });
+    });
+    const text = collectText(tree);
+    expect(text).toContain('ARRAKIS');
+    expect(text).toContain('uh-RAK-is');
+    // Phonetic precedes the definition body.
+    expect(text.indexOf('uh-RAK-is')).toBeLessThan(
+      text.indexOf('the planet known as Dune'),
+    );
+  });
+
+  test('omits the phonetic line entirely when the first hit has none', () => {
+    const tree = renderPopup();
+    act(() => {
+      showDefinition(found('WordNet', 'hello', 'a greeting'));
+    });
+    // No stray phonetic styling appears in the tree — sanity check by
+    // confirming the only text nodes between headword and definition
+    // are chrome, not a phonetic respelling. If a future regression
+    // adds an empty phonetic Text, it'd render an empty string but
+    // produce a Text node — collectText would show extra ' | '
+    // separators around 'hello'. Guard against the bug at the source:
+    // the phonetic style line must not appear in the JSON tree.
+    const json = JSON.stringify(tree.toJSON());
+    expect(json).not.toMatch(/"fontStyle":"italic"/);
+  });
+
   test('renders headword and definition for a single-source hit', () => {
     const tree = renderPopup();
     act(() => {

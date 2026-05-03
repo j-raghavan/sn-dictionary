@@ -28,7 +28,8 @@ export type StringId =
   | 'popup.loading'
   | 'popup.recognizing'
   | 'popup.fontSmaller'
-  | 'popup.fontLarger';
+  | 'popup.fontLarger'
+  | 'popup.pronunciation';
 
 // Locale codes use the firmware's convention: en, zh_CN, zh_TW, ja,
 // th, nl. Underscore (not hyphen) matches PluginButton.nameMap shape
@@ -43,6 +44,7 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.recognizing': 'Recognizing…',
     'popup.fontSmaller': 'Decrease text size',
     'popup.fontLarger': 'Increase text size',
+    'popup.pronunciation': 'Pronunciation',
   },
   zh_CN: {
     'popup.synonyms': '同义词',
@@ -53,6 +55,7 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.recognizing': '识别中…',
     'popup.fontSmaller': '缩小文字',
     'popup.fontLarger': '放大文字',
+    'popup.pronunciation': '发音',
   },
   zh_TW: {
     'popup.synonyms': '同義詞',
@@ -63,6 +66,7 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.recognizing': '辨識中…',
     'popup.fontSmaller': '縮小文字',
     'popup.fontLarger': '放大文字',
+    'popup.pronunciation': '發音',
   },
   ja: {
     'popup.synonyms': '類義語',
@@ -73,6 +77,7 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.recognizing': '認識中…',
     'popup.fontSmaller': '文字を小さく',
     'popup.fontLarger': '文字を大きく',
+    'popup.pronunciation': '発音',
   },
   th: {
     'popup.synonyms': 'คำพ้องความหมาย',
@@ -83,6 +88,7 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.recognizing': 'กำลังรู้จำ…',
     'popup.fontSmaller': 'ลดขนาดตัวอักษร',
     'popup.fontLarger': 'เพิ่มขนาดตัวอักษร',
+    'popup.pronunciation': 'การออกเสียง',
   },
   nl: {
     'popup.synonyms': 'Synoniemen',
@@ -93,6 +99,7 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.recognizing': 'Bezig met herkennen…',
     'popup.fontSmaller': 'Tekst verkleinen',
     'popup.fontLarger': 'Tekst vergroten',
+    'popup.pronunciation': 'Uitspraak',
   },
   de: {
     'popup.synonyms': 'Synonyme',
@@ -103,6 +110,7 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.recognizing': 'Wird erkannt…',
     'popup.fontSmaller': 'Schrift verkleinern',
     'popup.fontLarger': 'Schrift vergrößern',
+    'popup.pronunciation': 'Aussprache',
   },
 };
 
