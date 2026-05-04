@@ -79,14 +79,59 @@ export const htmlToPlainText = (html: string): string => {
       const name = tagNameOf(html.slice(i + 1, end));
       // Layout substitutions for the structural tags Wiktionary-style
       // dicts use. Other tags (i, b, span, font, …) drop, content stays.
+      const isClose = html.slice(i + 1, end).trim().startsWith('/');
       if (name === 'br') {
         out += '\n';
-      } else if (name === 'li' && !html.slice(i + 1, end).trim().startsWith('/')) {
+      } else if (name === 'li' && !isClose) {
         // Opening <li>: introduce a bullet on its own line.
         out += '\n• ';
-      } else if (name === 'p' && !html.slice(i + 1, end).trim().startsWith('/')) {
+      } else if (name === 'p' && !isClose) {
         // Opening <p>: paragraph break.
         out += '\n\n';
+      } else if (name === 'div') {
+        // <div> is Wikdict's wrapper for translation lines AND the
+        // outer container for the whole entry. Treat it as a soft
+        // block boundary so `...sichtbar ist<div>astre</div>` no
+        // longer renders as the glued `istastre` (issue #15).
+        //
+        // Rule: insert a newline on open <div> unless we're already
+        // at the start of a line (or of the entry). Determining that
+        // means looking past any trailing inline whitespace at the
+        // last meaningful character:
+        //   - empty output       → at start of entry, skip (no leading blank)
+        //   - last non-space '\n' → at line start, skip
+        //   - last non-space '•' → inside an <li> bullet ("\n• "),
+        //                          skip so the bullet keeps its content
+        //   - anything else      → inside text content, INSERT '\n'
+        //                          (covers both the no-trailing-space
+        //                          Gestirn case and the trailing-space
+        //                          variant `…ist <div>astre</div>`,
+        //                          where space alone is not enough to
+        //                          un-glue the translation).
+        //
+        // Closing </div> always emits '\n' so adjacent <div> siblings
+        // in <ol>/<li> structures separate cleanly; the post-pass
+        // collapses any \n{2,} so this never produces double-blanks.
+        if (isClose) {
+          out += '\n';
+        } else {
+          // Walk back past any inline whitespace — including NBSP
+          // (U+00A0), which decodeEntity emits for `&nbsp;`. A
+          // future Wikdict shape with `…ist&nbsp;<div>astre</div>`
+          // would otherwise be treated as "still inside text" and
+          // glue translation onto the line. Treating NBSP as
+          // whitespace here keeps the discriminator robust.
+          let j = out.length - 1;
+          while (
+            j >= 0 &&
+            (out[j] === ' ' || out[j] === '\t' || out[j] === ' ')
+          ) {
+            j--;
+          }
+          if (j >= 0 && out[j] !== '\n' && out[j] !== '•') {
+            out += '\n';
+          }
+        }
       }
       // /li, /ol, /ul, ol, ul, /p, and all unknown tags: no output.
       i = end + 1;

@@ -1,4 +1,5 @@
 import {createCsvDictSource} from '../src/core/dict/csvDictSource';
+import {YIELD_PERIOD} from '../src/core/dict/yieldOften';
 
 const enc = (s: string) => new TextEncoder().encode(s).buffer;
 
@@ -285,6 +286,43 @@ describe('createCsvDictSource', () => {
     const src = fromCsv('ARRAKIS,the planet,uh-RAK-is\n');
     const hit = await src.lookup('arrakis');
     expect(hit).not.toHaveProperty('phonetic');
+  });
+
+  test('yields cooperatively while parsing a large CSV (UI-blocking guard)', async () => {
+    // Generate YIELD_PERIOD + a few rows so the parser hits at least
+    // one in-loop yield boundary. Without yielding, this loop would
+    // block input on Hermes for several seconds on multi-MB user
+    // CSVs — exactly the freeze users reported.
+    const total = YIELD_PERIOD + 5;
+    const lines: string[] = [];
+    for (let i = 0; i < total; i++) {
+      lines.push(`w${i},def${i}`);
+    }
+    const csv = lines.join('\n') + '\n';
+
+    const setTimeoutSpy = jest.spyOn(global, 'setTimeout');
+    try {
+      const src = fromCsv(csv);
+      // Trigger parse via a lookup (the harness lazy-loads).
+      const hit = await src.lookup('w0');
+      expect(hit?.definition).toBe('def0');
+      // Last row also kept — the loop yielded but resumed correctly.
+      const last = await src.lookup(`w${total - 1}`);
+      expect(last?.definition).toBe(`def${total - 1}`);
+      // Minimum yield budget: one after decodeText (boundary
+      // between native TextDecoder and JS iteration), plus one per
+      // YIELD_PERIOD rows during iteration. For total = period + 5
+      // that's 1 + 1 = 2. Asserting the floor catches a regression
+      // that drops EITHER the boundary yield or the in-loop yield —
+      // ≥1 would only catch the all-or-nothing case.
+      const zeroDelayCalls = setTimeoutSpy.mock.calls.filter(
+        c => c[1] === 0,
+      );
+      const expectedMin = 1 + Math.floor(total / YIELD_PERIOD);
+      expect(zeroDelayCalls.length).toBeGreaterThanOrEqual(expectedMin);
+    } finally {
+      setTimeoutSpy.mockRestore();
+    }
   });
 
   test('lazy: loader fires once across many lookups', async () => {

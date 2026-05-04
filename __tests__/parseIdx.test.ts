@@ -1,6 +1,6 @@
 import {parseIdx} from '../src/core/dict/stardict/parseIdx';
 import {buildSyntheticStarDict} from './_helpers/buildSyntheticStarDict';
-import {YIELD_PERIOD} from '../src/core/dict/stardict/yieldOften';
+import {YIELD_PERIOD} from '../src/core/dict/yieldOften';
 
 describe('parseIdx', () => {
   test('parses a synthetic 32-bit index back into ordered (word, offset, length)', async () => {

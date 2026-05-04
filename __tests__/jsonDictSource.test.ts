@@ -1,4 +1,5 @@
 import {createJsonDictSource} from '../src/core/dict/jsonDictSource';
+import {YIELD_PERIOD} from '../src/core/dict/yieldOften';
 
 const enc = (s: string) => new TextEncoder().encode(s).buffer;
 
@@ -218,6 +219,62 @@ describe('createJsonDictSource', () => {
     const hit = await src.lookup('apple');
     expect(hit).toEqual({word: 'apple', definition: 'fruit', format: 'plain'});
     expect(hit).not.toHaveProperty('phonetic');
+  });
+
+  test('array shape: yields cooperatively over a large array (UI-blocking guard)', async () => {
+    const total = YIELD_PERIOD + 5;
+    const arr: Array<{word: string; definition: string}> = [];
+    for (let i = 0; i < total; i++) {
+      arr.push({word: `w${i}`, definition: `def${i}`});
+    }
+    const setTimeoutSpy = jest.spyOn(global, 'setTimeout');
+    try {
+      const src = fromJson(JSON.stringify(arr));
+      expect((await src.lookup('w0'))?.definition).toBe('def0');
+      expect((await src.lookup(`w${total - 1}`))?.definition).toBe(
+        `def${total - 1}`,
+      );
+      // Minimum yield budget for the array shape:
+      //   1 after decodeText
+      // + 1 after JSON.parse
+      // + ⌊total / YIELD_PERIOD⌋ during iteration
+      // = 3 for total = period + 5.
+      const zeroDelayCalls = setTimeoutSpy.mock.calls.filter(
+        c => c[1] === 0,
+      );
+      const expectedMin = 2 + Math.floor(total / YIELD_PERIOD);
+      expect(zeroDelayCalls.length).toBeGreaterThanOrEqual(expectedMin);
+    } finally {
+      setTimeoutSpy.mockRestore();
+    }
+  });
+
+  test('object-map shape: yields cooperatively over a large map (UI-blocking guard)', async () => {
+    const obj: Record<string, string> = {};
+    const total = YIELD_PERIOD + 5;
+    for (let i = 0; i < total; i++) {
+      obj[`w${i}`] = `def${i}`;
+    }
+    const setTimeoutSpy = jest.spyOn(global, 'setTimeout');
+    try {
+      const src = fromJson(JSON.stringify(obj));
+      expect((await src.lookup('w0'))?.definition).toBe('def0');
+      // Minimum yield budget for the object-map shape:
+      //   1 after decodeText
+      // + 1 after JSON.parse
+      // + 1 after Object.keys (the only remaining non-yieldable
+      //   allocation — explicitly bounded so a regression that
+      //   drops it shows up here)
+      // + ⌊total / YIELD_PERIOD⌋ during iteration
+      // = 4 for total = period + 5.
+      const zeroDelayCalls = setTimeoutSpy.mock.calls.filter(
+        c => c[1] === 0,
+      );
+      const expectedMin = 3 + Math.floor(total / YIELD_PERIOD);
+      expect(zeroDelayCalls.length).toBeGreaterThanOrEqual(expectedMin);
+    } finally {
+      setTimeoutSpy.mockRestore();
+    }
   });
 
   test('lazy: loader fires once across many lookups', async () => {

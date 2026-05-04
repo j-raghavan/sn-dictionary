@@ -1,5 +1,5 @@
 import {parseSyn} from '../src/core/dict/stardict/parseSyn';
-import {YIELD_PERIOD} from '../src/core/dict/stardict/yieldOften';
+import {YIELD_PERIOD} from '../src/core/dict/yieldOften';
 
 const enc = (s: string) => new TextEncoder().encode(s);
 

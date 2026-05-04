@@ -90,3 +90,8 @@ src/core/dict/data/baseDictData.ts
 
 # Local logcat dumps used while debugging on-device sessions.
 logcat.txt
+
+# Integration-test scratch space — populated by scripts/runIntegrationTests.mjs
+# (downloaded StarDict zips + extracts, removed automatically after each run
+# unless --keep is passed).
+.cache/

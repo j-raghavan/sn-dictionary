@@ -7,11 +7,19 @@
 //
 // Lookup is case-insensitive. First occurrence of a key wins (later
 // duplicates are ignored), matching StarDict's behaviour.
+//
+// Async + cooperative-yield: a multi-MB CSV (10 MB cap below) means
+// ~100k row iterations. On Hermes the JS thread runs everything;
+// without yielding, parse blocks input on the e-ink overlay for the
+// duration. We yield to the event loop every YIELD_PERIOD rows so
+// the popup ("Loading…") can paint and tap input stays live during
+// first-load priming.
 
 import {decodeText} from '../../sdk/textDecode';
 import type {DictEntry, DictSource} from '../lookup';
 import {createLazyAsyncSource} from './lazyAsyncSource';
 import {normalizeKey} from './normalizeKey';
+import {shouldYield, yieldToEventLoop} from './yieldOften';
 
 export type LoadBytes = () => Promise<ArrayBuffer | null>;
 
@@ -112,8 +120,15 @@ const buildCsv = (
     Pick<CsvDictDeps, 'headwordCol' | 'definitionCol' | 'hasHeader'>
   > & {phoneticCol: number | undefined},
 ) =>
-  (bytes: Uint8Array): ParsedCsv => {
+  async (bytes: Uint8Array): Promise<ParsedCsv> => {
+    // decodeText runs the native TextDecoder over the full buffer in
+    // one synchronous chunk — fast (~tens of ms even at 10 MB) but
+    // still non-yieldable. A yield here bounds the worst-case
+    // pre-iteration pause, so anything queued on the JS thread
+    // (popup paint, "Loading…" placeholder) gets to land before we
+    // start the row loop.
     const text = decodeText(bytes);
+    await yieldToEventLoop();
     const index = new Map<string, CsvRow>();
     let cursor = 0;
     let rowIdx = 0;
@@ -127,19 +142,23 @@ const buildCsv = (
       rowIdx++;
       const word = next.row[deps.headwordCol]?.trim() ?? '';
       const definition = next.row[deps.definitionCol] ?? '';
-      if (word.length === 0) {
-        continue;
-      }
-      const key = normalizeKey(word);
-      if (key.length > 0 && !index.has(key)) {
-        const row: CsvRow = {word, definition};
-        if (deps.phoneticCol !== undefined) {
-          const phonetic = next.row[deps.phoneticCol]?.trim() ?? '';
-          if (phonetic.length > 0) {
-            row.phonetic = phonetic;
+      if (word.length > 0) {
+        const key = normalizeKey(word);
+        if (key.length > 0 && !index.has(key)) {
+          const row: CsvRow = {word, definition};
+          if (deps.phoneticCol !== undefined) {
+            const phonetic = next.row[deps.phoneticCol]?.trim() ?? '';
+            if (phonetic.length > 0) {
+              row.phonetic = phonetic;
+            }
           }
+          index.set(key, row);
         }
-        index.set(key, row);
+      }
+      // Yield based on rows *seen* (rowIdx), not entries kept, so a
+      // file full of skipped/duplicate rows still yields on schedule.
+      if (shouldYield(rowIdx)) {
+        await yieldToEventLoop();
       }
     }
     return {index};

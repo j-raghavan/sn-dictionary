@@ -126,11 +126,114 @@ describe('discoverUserDicts', () => {
     ).toMatch(/looks like StarDict — put it in a subfolder/);
   });
 
-  test('ignores meta.json at the root (only meaningful inside a folder)', async () => {
+  test('a lone meta.json at the root with no dict files yields nothing', async () => {
     const deps = baseDeps({
       [`${ROOT}/meta.json`]: enc(JSON.stringify({name: 'Stray'})),
     });
+    // No CSV/JSON to bind it to — meta.json alone is config, not a dict.
     expect(await discoverUserDicts(deps)).toEqual([]);
+  });
+
+  test('shared meta.json at root applies csv.phoneticCol to a flat-layout CSV (mavproductions/Dune issue)', async () => {
+    // Real-world layout from issue #2: user drops a CSV plus a single
+    // meta.json side by side at SnDict root, no subfolder. The third
+    // CSV column is a pronunciation, surfaced via meta.json. Before
+    // this wiring, phoneticCol was silently dropped at root level.
+    const deps = baseDeps({
+      [`${ROOT}/Dune.csv`]: enc(
+        'CALADAN,third planet of Delta Pavonis,KAL-ah-dan\n' +
+          'ARRAKIS,the planet known as Dune,uh-RAK-is\n',
+      ),
+      [`${ROOT}/meta.json`]: enc(JSON.stringify({csv: {phoneticCol: 2}})),
+    });
+    const sources = await discoverUserDicts(deps);
+    expect(sources.length).toBe(1);
+    expect(sources[0].name).toBe('Dune');
+    const caladan = await sources[0].lookup('caladan');
+    expect(caladan?.phonetic).toBe('KAL-ah-dan');
+    expect(caladan?.definition).toBe('third planet of Delta Pavonis');
+    const arrakis = await sources[0].lookup('ARRAKIS');
+    expect(arrakis?.phonetic).toBe('uh-RAK-is');
+  });
+
+  test('shared root meta.json `name` is NOT broadcast to flat-layout files (would collide)', async () => {
+    // Shared meta would otherwise force two CSVs into the same display
+    // name. Only `csv.*` schema config is shared; `name` requires a
+    // per-file sidecar to apply.
+    const deps = baseDeps({
+      [`${ROOT}/Dune.csv`]: enc('ARRAKIS,the planet,uh-RAK-is\n'),
+      [`${ROOT}/medical.csv`]: enc('apple,fruit,AP-ul\n'),
+      [`${ROOT}/meta.json`]: enc(
+        JSON.stringify({name: 'Shared', csv: {phoneticCol: 2}}),
+      ),
+    });
+    const sources = await discoverUserDicts(deps);
+    expect(sources.map(s => s.name).sort()).toEqual(['Dune', 'medical']);
+    // csv.phoneticCol still propagates to both.
+    expect((await sources[0].lookup('arrakis'))?.phonetic).toBe('uh-RAK-is');
+    expect((await sources[1].lookup('apple'))?.phonetic).toBe('AP-ul');
+  });
+
+  test('per-file `<base>.meta.json` sidecar overrides the shared root meta.json', async () => {
+    // Sidecar gives Dune.csv phoneticCol=2 + a custom display name;
+    // medical.csv has no sidecar so it inherits the shared meta's
+    // hasHeader=true.
+    const deps = baseDeps({
+      [`${ROOT}/Dune.csv`]: enc(
+        'CALADAN,third planet,KAL-ah-dan\nARRAKIS,Dune,uh-RAK-is\n',
+      ),
+      [`${ROOT}/Dune.meta.json`]: enc(
+        JSON.stringify({name: 'Dune (Frank Herbert)', csv: {phoneticCol: 2}}),
+      ),
+      [`${ROOT}/medical.csv`]: enc('term,definition\napple,fruit\n'),
+      [`${ROOT}/meta.json`]: enc(JSON.stringify({csv: {hasHeader: true}})),
+    });
+    const sources = await discoverUserDicts(deps);
+    expect(sources.map(s => s.name)).toEqual(['Dune (Frank Herbert)', 'medical']);
+    const caladan = await sources[0].lookup('caladan');
+    expect(caladan?.phonetic).toBe('KAL-ah-dan');
+    // medical.csv used hasHeader=true from the shared meta, so the
+    // header row "term,definition" was skipped.
+    expect(await sources[1].lookup('term')).toBeNull();
+    expect((await sources[1].lookup('apple'))?.definition).toBe('fruit');
+  });
+
+  test('a `*.meta.json` sidecar is never itself treated as a JSON dict', async () => {
+    // Without isMetaJsonName guarding root-file detection, Dune.meta.json
+    // would be picked up as a JSON dict and confuse the popup.
+    const deps = baseDeps({
+      [`${ROOT}/Dune.csv`]: enc('A,definition,A-fonetik\n'),
+      [`${ROOT}/Dune.meta.json`]: enc(JSON.stringify({csv: {phoneticCol: 2}})),
+    });
+    const sources = await discoverUserDicts(deps);
+    expect(sources.map(s => s.name)).toEqual(['Dune']);
+  });
+
+  test('shared root meta.json is not read at all when no flat-layout dict files exist', async () => {
+    // Subfolder dicts must not pick up the root meta as a sneak override
+    // — that meta belongs to flat-layout files only. Subfolder discovery
+    // continues to use its own per-folder meta.json.
+    const deps = baseDeps({
+      [`${ROOT}/meta.json`]: enc(JSON.stringify({csv: {phoneticCol: 99}})),
+      [`${ROOT}/sub/words.csv`]: enc('apple,fruit,A-pul\n'),
+    });
+    const sources = await discoverUserDicts(deps);
+    expect(sources.length).toBe(1);
+    // phonetic is undefined: the subfolder dict didn't have its own
+    // meta.json, so phoneticCol stays at the default (none).
+    expect((await sources[0].lookup('apple'))?.phonetic).toBeUndefined();
+  });
+
+  test('per-file sidecar with malformed JSON falls back to defaults, dict still loads', async () => {
+    const deps = baseDeps({
+      [`${ROOT}/Dune.csv`]: enc('ARRAKIS,the planet,uh-RAK-is\n'),
+      [`${ROOT}/Dune.meta.json`]: enc('{not valid'),
+    });
+    const sources = await discoverUserDicts(deps);
+    expect(sources.length).toBe(1);
+    expect(sources[0].name).toBe('Dune');
+    // No phonetic since the sidecar couldn't be parsed.
+    expect((await sources[0].lookup('arrakis'))?.phonetic).toBeUndefined();
   });
 
   test('ignores unrecognised root files silently (e.g. README.md)', async () => {

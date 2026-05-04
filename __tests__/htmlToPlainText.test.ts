@@ -138,4 +138,97 @@ describe('htmlToPlainText', () => {
     const plain = 'A simple definition that uses no HTML at all.';
     expect(htmlToPlainText(plain)).toBe(plain);
   });
+
+  describe('Wikdict <div>-translation shape (issue #15)', () => {
+    // Verbatim definition extracted from wikdict-de-fr.zip's
+    // stardict.dict for headword "Gestirn" (offset 5002035, len 222).
+    // Wikdict wraps each translation in <div>...</div> directly after
+    // the German definition text, with no <br> or other separator —
+    // so v1.0.6's renderer concatenated "ist" and "astre" into
+    // "istastre". This test pins the fix.
+    const wikdictGestirn =
+      '<div>/<font color="gray">ɡəˈʃtɪʁn</font>/<br>\n' +
+      '<font color="green">noun, neutral</font><br>' +
+      'Astronomie, gehoben, meist im Plural: Himmelskörper im ' +
+      'Allgemeinen, welcher am Nachthimmel sichtbar ist' +
+      '<div>astre</div></div>';
+
+    test('does not glue definition text to the following <div> translation', () => {
+      const out = htmlToPlainText(wikdictGestirn);
+      // The smoking-gun regression: "istastre" must not appear.
+      expect(out).not.toMatch(/istastre/);
+      // Translation appears separated from the definition body.
+      expect(out).toMatch(/sichtbar ist\s*\n+\s*astre/);
+    });
+
+    test('preserves all upstream content (IPA, POS, definition, translation)', () => {
+      const out = htmlToPlainText(wikdictGestirn);
+      expect(out).toContain('ɡəˈʃtɪʁn');
+      expect(out).toContain('noun, neutral');
+      expect(out).toContain(
+        'Astronomie, gehoben, meist im Plural: Himmelskörper im Allgemeinen',
+      );
+      expect(out).toContain('astre');
+    });
+
+    test('outer <div> wrapper does not produce a leading blank line', () => {
+      // The whole entry is wrapped in <div>...</div>; the open tag
+      // sits at position 0 with no prior content. The renderer must
+      // not emit a leading newline that would make the popup look
+      // like it had an empty first line.
+      const out = htmlToPlainText(wikdictGestirn);
+      expect(out.startsWith('\n')).toBe(false);
+    });
+
+    test('trailing &nbsp; before <div> still un-glues translation (NBSP variant)', () => {
+      // Belt-and-suspenders for the trailing-space heuristic. A
+      // future upstream shape with `&nbsp;` (decoded to U+00A0)
+      // immediately before <div>...</div> would, with a naive
+      // "skip space and tab only" walkback, still be treated as
+      // mid-text and gain a newline — but only because the NBSP
+      // itself isn't whitespace to that walker. The discriminator
+      // explicitly includes U+00A0 so the result is identical to
+      // the regular-space case.
+      const nbspBeforeDiv =
+        '<div>Definition body&nbsp;<div>translation</div></div>';
+      const out = htmlToPlainText(nbspBeforeDiv);
+      expect(out).toMatch(/Definition body\s*\n+\s*translation/);
+      expect(out).not.toMatch(/body translation/);
+    });
+
+    test('trailing-space-before-<div> variant still un-glues translation (e.g. "…ist <div>astre</div>")', () => {
+      // Defensive: a future Wikdict export might emit a trailing
+      // space between the definition text and the translation block.
+      // The naive "skip newline if last char is whitespace" rule
+      // would still glue these as `…ist astre` (joined with just a
+      // space). The implementation looks past trailing spaces at the
+      // last meaningful character, so the newline still fires.
+      const trailingSpace =
+        '<div>Astronomie: Himmelskörper, welcher am Nachthimmel sichtbar ist ' +
+        '<div>astre</div></div>';
+      const out = htmlToPlainText(trailingSpace);
+      // Translation appears on a fresh line, not glued behind a
+      // single space.
+      expect(out).toMatch(/sichtbar ist\s*\n+\s*astre/);
+      expect(out).not.toMatch(/ist astre/);
+    });
+
+    test('multi-translation entries (Wikdict <ol><li><div>...</div></li>) keep bullets and break translations onto their own lines', () => {
+      // Real-world shape from wikdict-de-fr "Hund": two translations
+      // under the same sense, each in <li><div>...</div></li>. The
+      // bullet must survive (• chien on its own line) AND the bullets
+      // must not glue to surrounding text.
+      const wikdictHund =
+        '<div><font color="green">noun, male</font><br><ol>' +
+        '<li>Haustier, dessen Vorfahre der Wolf ist<ol>' +
+        '<li><div>chien</div></li>' +
+        '<li><div>chienne</div></li>' +
+        '</ol></li></ol></div>';
+      const out = htmlToPlainText(wikdictHund);
+      expect(out).toContain('• chien');
+      expect(out).toContain('• chienne');
+      // Bullets are on separate lines (not "• chien• chienne").
+      expect(out).toMatch(/• chien\s*\n\s*• chienne/);
+    });
+  });
 });

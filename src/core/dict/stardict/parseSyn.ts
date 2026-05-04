@@ -17,7 +17,7 @@
 // hundreds of thousands of entries. Same yield discipline as parseIdx.
 
 import {decodeUtf8} from '../../../sdk/utf8';
-import {shouldYield, yieldToEventLoop} from './yieldOften';
+import {shouldYield, yieldToEventLoop} from '../yieldOften';
 
 export type SynEntry = {
   word: string;

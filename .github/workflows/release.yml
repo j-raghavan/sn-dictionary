@@ -55,6 +55,17 @@ jobs:
       - name: Test
         run: npx jest
 
+      - name: Real-StarDict regression suite
+        # MANDATORY release gate. Downloads the StarDicts pinned in
+        # __tests__/integration/manifest.ts, SHA-verifies them, runs
+        # the full StarDict→htmlToPlainText pipeline against real
+        # entries (Gestirn, chien, Buch, …), then cleans up. A
+        # non-zero exit blocks the release. If wikdict.com is
+        # unreachable, the release is blocked deliberately — we'd
+        # rather not ship without confirming real upstream content
+        # still renders correctly.
+        run: npm run test:integration
+
       - name: Determine release version
         id: ver
         env:
