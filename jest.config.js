@@ -2,7 +2,25 @@ module.exports = {
   preset: 'react-native',
   passWithNoTests: true,
   // __tests__/_helpers/* are shared test utilities (not test suites).
-  testPathIgnorePatterns: ['/node_modules/', '/__tests__/_helpers/'],
+  // __tests__/integration/manifest.ts is the typed data manifest for
+  // the integration suite — a sibling to the test file, not a suite
+  // itself; jest's default testMatch glob ('__tests__/**') would
+  // otherwise try to load it as a (zero-test) suite and fail.
+  // The actual integration test file (wikdictRegression.test.ts) is
+  // NOT excluded — it gates on SNDICT_INTEGRATION=1 internally and
+  // describe.skip's when the var is missing, so `npm test` runs it
+  // in ~ms (all skipped).
+  testPathIgnorePatterns: [
+    '/node_modules/',
+    '/__tests__/_helpers/',
+    '/__tests__/integration/manifest\\.ts$',
+  ],
+  // Integration tests exercise the full StarDict→htmlToPlainText
+  // pipeline against real downloaded dicts (run only via
+  // `npm run test:integration`). They are an end-to-end gate, not a
+  // coverage source — exclude from coverage measurement so they
+  // can't skew the unit-test gate either way.
+  coveragePathIgnorePatterns: ['/__tests__/integration/'],
   collectCoverageFrom: [
     'src/**/*.{ts,tsx}',
     // Pure-types files have no executable code; istanbul reports

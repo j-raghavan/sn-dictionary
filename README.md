@@ -147,11 +147,13 @@ Concrete copy-pasteable starting points live at [`assets/sample-dicts/`](assets/
 
 ### Where to find dictionaries
 
-Most users won't author a StarDict from scratch — there are huge corpora of pre-built dicts in the wild. Three sources cover the long tail:
+Most users won't author a StarDict from scratch — there are huge corpora of pre-built dicts in the wild. Five sources cover the long tail:
 
 - **[FreeDict](https://freedict.org/)** — open-source bilingual dictionaries, native StarDict format, MIT/CC-licensed. Direct downloads at [freedict.org/freedict-database.json](https://freedict.org/freedict-database.json) (machine-readable) or browse the per-language pages. Covers German, French, Italian, Spanish, Portuguese, Dutch, Russian, Japanese, Czech, Polish, Hungarian, Swedish, Turkish, Arabic, Hebrew, and more.
-- **[Wiktionary-Dictionaries (Vuizur)](https://github.com/Vuizur/Wiktionary-Dictionaries)** — actively-maintained Wiktionary dumps converted to StarDict, ~100+ language pairs including monolingual entries. CC-BY-SA. The most comprehensive single source for non-English content.
-- **[huzheng.org](http://download.huzheng.org/)** — the historical StarDict archive. Heavy on Chinese and Japanese options; mixed licensing (check each entry). Site is occasionally slow or down — Wiktionary-Dictionaries is the modern alternative for most languages.
+- **[WikDict](https://download.wikdict.com/dictionaries/stardict/)** — translation dictionaries between non-English language pairs (de↔fr, fr↔de, it↔es, la↔fr, …) plus FreeDict cross-language pairs, derived from Wiktionary via DBnary. CC-BY-SA. Particularly useful for language learners who want a non-English source/target without going through English. Native StarDict format.
+- **[xxyzz/wiktionary_stardict](https://xxyzz.github.io/wiktionary_stardict/)** — Wiktionary-derived StarDict bundles for 100+ language pairs, including monolingual heavyweight dicts (~100 MB+ for full-language Wiktionaries). Actively maintained. Native StarDict format, CC-BY-SA. *(Thanks to [@alioth9](https://github.com/alioth9) for the pointer.)*
+- **[Wiktionary-Dictionaries (Vuizur)](https://github.com/Vuizur/Wiktionary-Dictionaries)** — actively-maintained Wiktionary dumps converted to StarDict, ~100+ language pairs including monolingual entries. CC-BY-SA. Comparable to xxyzz's collection — try whichever has better coverage for your specific pair.
+- **[huzheng.org](http://download.huzheng.org/)** — the historical StarDict archive. Heavy on Chinese and Japanese options; mixed licensing (check each entry). Site is occasionally slow or down — Wiktionary-Dictionaries / xxyzz are the modern alternatives for most languages.
 
 #### Quick pointers per language
 
@@ -161,9 +163,9 @@ Most users won't author a StarDict from scratch — there are huge corpora of pr
 | **Japanese (ja)** | JMdict / EDICT (Japanese ↔ English) on huzheng or Vuizur. KANJIDIC for kanji-specific lookups. |
 | **Italian (it)** | FreeDict `eng-ita` and `ita-eng` for bilingual; Wiktionary it on Vuizur for monolingual definitions. |
 | **Dutch (nl)** | FreeDict `eng-nld` and `nld-eng`; Wiktionary nl on Vuizur. |
-| **German (de)** | FreeDict `eng-deu` and `deu-eng` for bilingual; Wiktionary de on Vuizur for monolingual. |
-| **French (fr)** | FreeDict `eng-fra` and `fra-eng`; Wiktionary fr on Vuizur. |
-| **Spanish (es)** | FreeDict `eng-spa` and `spa-eng`; Wiktionary es on Vuizur. |
+| **German (de)** | FreeDict `eng-deu` and `deu-eng` for bilingual via English; **WikDict `de-fr`/`fr-de`** or `de-es`/`es-de` for direct non-English pairs; Wiktionary de on Vuizur or xxyzz for monolingual. |
+| **French (fr)** | FreeDict `eng-fra` and `fra-eng`; WikDict has `fr-de`, `fr-it`, `fr-es`, `la-fr`; Wiktionary fr on Vuizur or xxyzz. |
+| **Spanish (es)** | FreeDict `eng-spa` and `spa-eng`; WikDict has `es-de`, `es-it`, `es-fr`; Wiktionary es on Vuizur or xxyzz. |
 | **Russian (ru)** | FreeDict `eng-rus` and `rus-eng`; Wiktionary ru on Vuizur. |
 | **Korean (ko)** | Wiktionary ko on Vuizur. |
 | **Polish, Czech, Hungarian, Swedish, Portuguese, Turkish, Arabic, Hebrew, …** | FreeDict has bilingual pairs against English; Wiktionary-Dictionaries has monolingual + many cross-language pairs. |
@@ -171,6 +173,7 @@ Most users won't author a StarDict from scratch — there are huge corpora of pr
 #### A few notes worth knowing before you grab one
 
 - **Most downloads ship as `.tar.bz2` or `.zip`.** Extract first, then drop the resulting folder (or its files) into `MyStyle/SnDict/`. A typical extracted layout matches the organised layout described above — `.ifo` + `.idx` + `.dict.dz` together.
+- **Wikdict / Wiktionary-derived dicts use HTML formatting** (`sametypesequence=h` in the `.ifo`). The popup strips the tags and lays out the resulting blocks — IPA on its own line, part-of-speech on its own line, definition body, then translations on separate lines. v1.0.6 and earlier had a bug where translation blocks (`<div>...</div>`) glued to the definition text above (e.g. `…sichtbar istastre`); v1.0.7+ renders them on their own lines correctly.
 - **Licensing.** For personal use on your own device, every source above is fine. If you plan to redistribute (e.g., bundle into a custom `.snplg`), check the per-dict license — FreeDict is permissive, Wiktionary-derived dicts are CC-BY-SA, huzheng entries vary.
 - **Morphology / inflected forms.** Highly inflected languages (German declensions, Italian conjugations) are only as good as the dict's headword coverage. Wiktionary-derived dicts generally include inflected forms; FreeDict's coverage varies. If lassoing `Häuser` returns "no entry," try lassoing the lemma `Haus` to confirm the dict simply lacks form folding rather than your sideloading being broken.
 - **If you have a dict in a different format** (MDX, EPUB-based, SDictionary, Babylon, …), [`pyglossary`](https://github.com/ilius/pyglossary) is the gold-standard CLI converter — it reads ~50 formats and writes StarDict. One-line install via `pip install pyglossary`, then `pyglossary --read-format=mdx --write-format=stardict input.mdx`.
@@ -301,6 +304,18 @@ To regenerate the coverage report:
 ```sh
 npm run coverage
 ```
+
+## Real-StarDict regression suite
+
+```sh
+npm run test:integration
+```
+
+End-to-end tests that download real Wikdict StarDicts (German↔French, French↔German, German↔English), SHA-verify each archive against the pins in `__tests__/integration/manifest.ts`, run the full StarDict→`htmlToPlainText` pipeline against real entries (`Gestirn`, `Hund`, `chien`, `maison`, `Buch`, …), then auto-clean the cache. Pass `--keep` (`npm run test:integration -- --keep`) to retain the downloads in `.cache/integration-dicts/` while iterating on assertions.
+
+Why a separate command: the default `npm test` runs only the synthetic-fixture unit suite — fast, offline, deterministic. The integration suite needs network and ~12 MB of downloads, so it's opt-in for local development. **It is mandatory for releases**: `release.yml` runs it as a hard gate before producing any artifact, and a non-zero exit (test failure, SHA mismatch, or wikdict.com unreachable) blocks the release.
+
+To add a new dict to the suite, capture its SHA-256 (`shasum -a 256 file.zip`), add it to `MANIFEST` in `manifest.ts` with a few headword expectations, mirror the entry in `scripts/runIntegrationTests.mjs`'s `MANIFEST_MIRROR` (the runner checks for drift between the two and fails loudly on mismatch), and re-run.
 
 ## Linting
 

@@ -9,6 +9,7 @@
     "lint": "eslint .",
     "start": "react-native start",
     "test": "jest",
+    "test:integration": "node scripts/runIntegrationTests.mjs",
     "coverage": "jest --coverage",
     "fetch:dict": "node scripts/fetchBaseDict.mjs",
     "build:dict": "node scripts/buildBaseDict.mjs",
