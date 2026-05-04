@@ -5,7 +5,7 @@
 ![Lint](https://img.shields.io/badge/lint-passing-brightgreen)
 ![Platform](https://img.shields.io/badge/platform-Supernote-blue)
 ![License](https://img.shields.io/badge/license-MIT-blue)
-![Version](https://img.shields.io/badge/version-1.0.6-blue)
+![Version](https://img.shields.io/badge/version-1.0.8-blue)
 
 A Supernote plugin that adds offline English-word lookup to handwritten notes and PDFs. Lasso a word in your notes (handwritten or recognised) or select text in the PDF reader, tap **Lookup**, and the plugin shows the WordNet definition — multiple senses, part-of-speech, synonyms, and example sentences — in a centred popup. Everything runs on-device; no companion app, no cloud, no network calls at lookup time.
 
