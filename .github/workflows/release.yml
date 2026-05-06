@@ -1,10 +1,23 @@
 name: Release
 
-# Manually-triggered release. The `version` input is optional:
-#   - Leave blank to auto-bump the latest `v*` tag by patch
-#     (e.g. v0.1.0 -> v0.1.1). If no tag exists yet, the first release
-#     is v0.1.0.
-#   - Or type a specific MAJOR.MINOR.PATCH (with or without leading `v`).
+# Manually-triggered release. Inputs:
+#   version     — optional. Leave blank to auto-bump the latest `v*`
+#                 tag by patch (e.g. v0.1.0 -> v0.1.1). If no tag
+#                 exists yet, the first release is v0.1.0. Or type a
+#                 specific MAJOR.MINOR.PATCH (with or without `v`).
+#   prerelease  — when true, publishes the GitHub Release flagged as
+#                 a pre-release (the "Pre-release" badge appears on
+#                 the release page). Useful for shipping `-rc` /
+#                 testing builds without affecting users on stable.
+#                 Defaults to false. Independent of the version
+#                 string — we don't enforce a `-rc` suffix here.
+#   make_latest — when true, GitHub marks this release as the
+#                 repo's "Latest" release. Set false when shipping a
+#                 hot-patch on an older line, or any pre-release
+#                 you don't want to surface as the headline
+#                 download. Defaults to true. GitHub also auto-
+#                 demotes pre-releases from "Latest" regardless,
+#                 but pinning it explicitly is clearer.
 #
 # The workflow:
 #   1. Runs lint + tests as gates.
@@ -15,7 +28,8 @@ name: Release
 #      creates an annotated `vX.Y.Z` tag, pushes both.
 #   6. Generates release notes (changes + contributors, excluding
 #      GitHub Copilot and the github-actions release bot itself).
-#   7. Publishes a GitHub Release with the notes and the .snplg.
+#   7. Publishes a GitHub Release with the notes and the .snplg,
+#      respecting the `prerelease` / `make_latest` flags.
 
 on:
   workflow_dispatch:
@@ -24,6 +38,16 @@ on:
         description: 'Release version (e.g. 0.1.1). Leave blank to auto-bump patch from the latest v* tag. First release is v0.1.0.'
         required: false
         default: ''
+      prerelease:
+        description: 'Mark this release as a pre-release on GitHub.'
+        type: boolean
+        required: false
+        default: false
+      make_latest:
+        description: 'Mark this release as "Latest" on the repo. Uncheck to publish without bumping the Latest badge (e.g. hot-patches or pre-releases).'
+        type: boolean
+        required: false
+        default: true
 
 permissions:
   contents: write
@@ -223,3 +247,9 @@ jobs:
           name: ${{ steps.ver.outputs.tag }}
           body: ${{ steps.notes.outputs.notes }}
           files: build/outputs/SnDict.snplg
+          # workflow_dispatch boolean inputs surface as the strings
+          # "true" / "false". The action accepts a boolean for
+          # `prerelease` and one of "true" / "false" / "legacy" for
+          # `make_latest`, so passing the raw string for both works.
+          prerelease: ${{ github.event.inputs.prerelease }}
+          make_latest: ${{ github.event.inputs.make_latest }}
