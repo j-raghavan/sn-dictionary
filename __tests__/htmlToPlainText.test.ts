@@ -35,9 +35,32 @@ describe('htmlToPlainText', () => {
     expect(htmlToPlainText('a<br>b<br/>c<br />d')).toBe('a\nb\nc\nd');
   });
 
-  test('converts <li> to bulleted line', () => {
+  test('numbers <ol> items with "N. " markers (v1.0.9)', () => {
     expect(htmlToPlainText('<ol><li>first</li><li>second</li></ol>')).toBe(
+      '1. first\n2. second',
+    );
+  });
+
+  test('keeps "• " bullets for <ul> items', () => {
+    expect(htmlToPlainText('<ul><li>first</li><li>second</li></ul>')).toBe(
       '• first\n• second',
+    );
+  });
+
+  test('indents nested <ol> items by 2 spaces per nesting level', () => {
+    const html =
+      '<ol><li>outer one<ol><li>inner a</li><li>inner b</li></ol></li>' +
+      '<li>outer two</li></ol>';
+    expect(htmlToPlainText(html)).toBe(
+      '1. outer one\n  1. inner a\n  2. inner b\n2. outer two',
+    );
+  });
+
+  test('mixed <ol> + <ul> nest each maintain their own marker style', () => {
+    const html =
+      '<ol><li>numbered<ul><li>bullet a</li><li>bullet b</li></ul></li></ol>';
+    expect(htmlToPlainText(html)).toBe(
+      '1. numbered\n  • bullet a\n  • bullet b',
     );
   });
 
@@ -49,10 +72,12 @@ describe('htmlToPlainText', () => {
       'namaste</li></ol>';
     const out = htmlToPlainText(html);
     expect(out).toContain('intj');
-    expect(out).toContain('• A salutation; a greeting used for most purposes');
+    expect(out).toContain('1. A salutation; a greeting used for most purposes');
     expect(out).toContain('noun');
+    // Nested under an outer <ol> opened just before <i>noun</i>: the
+    // inner <ol>'s items show at depth 2 (two-space indent).
     expect(out).toContain(
-      '• greeting, salutation, an instance of the interjection namaste',
+      '  1. greeting, salutation, an instance of the interjection namaste',
     );
     // No tags leak through.
     expect(out).not.toMatch(/<\/?[a-z]/i);
@@ -63,7 +88,7 @@ describe('htmlToPlainText', () => {
     expect(htmlToPlainText('1 &lt; 2 &gt; 0')).toBe('1 < 2 > 0');
     expect(htmlToPlainText('&quot;hi&quot;')).toBe('"hi"');
     expect(htmlToPlainText('it&apos;s')).toBe("it's");
-    expect(htmlToPlainText('a&nbsp;b')).toBe('a b');
+    expect(htmlToPlainText('a&nbsp;b')).toBe('a\u00a0b');
   });
 
   test('decodes numeric HTML entities (decimal and hex)', () => {
@@ -75,7 +100,7 @@ describe('htmlToPlainText', () => {
   test('drops unknown / malformed entities cleanly', () => {
     // Unknown name -> empty string.
     expect(htmlToPlainText('a &totallymadeup; b')).toBe('a b');
-    // No semicolon within 10 chars -> treat & as literal.
+    // No semicolon within 20 chars -> treat & as literal.
     expect(htmlToPlainText('use & for and')).toBe('use & for and');
   });
 
@@ -139,13 +164,19 @@ describe('htmlToPlainText', () => {
     expect(htmlToPlainText(plain)).toBe(plain);
   });
 
-  describe('Wikdict <div>-translation shape (issue #15)', () => {
+  describe('Wikdict <div>-translation shape (issues #15 + #19)', () => {
     // Verbatim definition extracted from wikdict-de-fr.zip's
     // stardict.dict for headword "Gestirn" (offset 5002035, len 222).
     // Wikdict wraps each translation in <div>...</div> directly after
-    // the German definition text, with no <br> or other separator —
-    // so v1.0.6's renderer concatenated "ist" and "astre" into
-    // "istastre". This test pins the fix.
+    // the German definition text, with no <br> or other separator.
+    //
+    //   - Pre-v1.0.7 the renderer concatenated "ist" and "astre" into
+    //     "istastre" (issue #15).
+    //   - v1.0.8 split them onto two lines (`ist\nastre`).
+    //   - v1.0.9 joins them inline with an em-dash separator
+    //     (`ist — astre`) per alioth9's follow-up on issue #15: "I
+    //     think it would be better to have the translation on the
+    //     same line and rather have some separator like em-dash".
     const wikdictGestirn =
       '<div>/<font color="gray">ɡəˈʃtɪʁn</font>/<br>\n' +
       '<font color="green">noun, neutral</font><br>' +
@@ -153,12 +184,15 @@ describe('htmlToPlainText', () => {
       'Allgemeinen, welcher am Nachthimmel sichtbar ist' +
       '<div>astre</div></div>';
 
-    test('does not glue definition text to the following <div> translation', () => {
+    test('joins definition text and translation with " — " separator', () => {
       const out = htmlToPlainText(wikdictGestirn);
       // The smoking-gun regression: "istastre" must not appear.
       expect(out).not.toMatch(/istastre/);
-      // Translation appears separated from the definition body.
-      expect(out).toMatch(/sichtbar ist\s*\n+\s*astre/);
+      // Translation joins inline with em-dash, not a newline.
+      expect(out).toMatch(/sichtbar ist — astre/);
+      // And explicitly NOT the v1.0.8 newline shape — pin the format
+      // so a future revert can't quietly regress.
+      expect(out).not.toMatch(/sichtbar ist\nastre/);
     });
 
     test('preserves all upstream content (IPA, POS, definition, translation)', () => {
@@ -173,51 +207,43 @@ describe('htmlToPlainText', () => {
 
     test('outer <div> wrapper does not produce a leading blank line', () => {
       // The whole entry is wrapped in <div>...</div>; the open tag
-      // sits at position 0 with no prior content. The renderer must
-      // not emit a leading newline that would make the popup look
-      // like it had an empty first line.
+      // sits at position 0 with no prior content. Inline-vs-block
+      // discrimination must pick block-mode here so the popup
+      // doesn't render a leading empty first line.
       const out = htmlToPlainText(wikdictGestirn);
       expect(out.startsWith('\n')).toBe(false);
     });
 
-    test('trailing &nbsp; before <div> still un-glues translation (NBSP variant)', () => {
-      // Belt-and-suspenders for the trailing-space heuristic. A
-      // future upstream shape with `&nbsp;` (decoded to U+00A0)
-      // immediately before <div>...</div> would, with a naive
-      // "skip space and tab only" walkback, still be treated as
-      // mid-text and gain a newline — but only because the NBSP
-      // itself isn't whitespace to that walker. The discriminator
-      // explicitly includes U+00A0 so the result is identical to
-      // the regular-space case.
+    test('NBSP before <div> still triggers the inline em-dash join', () => {
+      // Belt-and-suspenders: a future Wikdict shape with `&nbsp;`
+      // (decoded to U+00A0) immediately before <div>...</div> should
+      // still pass the "content on this line → inline em-dash" test.
+      // The contentOnLine tracker treats NBSP as whitespace so the
+      // last meaningful char (the body word) wins.
       const nbspBeforeDiv =
         '<div>Definition body&nbsp;<div>translation</div></div>';
       const out = htmlToPlainText(nbspBeforeDiv);
-      expect(out).toMatch(/Definition body\s*\n+\s*translation/);
+      expect(out).toMatch(/Definition body — translation/);
       expect(out).not.toMatch(/body translation/);
     });
 
-    test('trailing-space-before-<div> variant still un-glues translation (e.g. "…ist <div>astre</div>")', () => {
-      // Defensive: a future Wikdict export might emit a trailing
-      // space between the definition text and the translation block.
-      // The naive "skip newline if last char is whitespace" rule
-      // would still glue these as `…ist astre` (joined with just a
-      // space). The implementation looks past trailing spaces at the
-      // last meaningful character, so the newline still fires.
+    test('trailing-space-before-<div> still triggers em-dash join', () => {
+      // Defensive: `…ist <div>astre</div>` (trailing single space
+      // between definition and translation) collapses through the
+      // post-pass — the em-dash separator is what un-glues them.
       const trailingSpace =
         '<div>Astronomie: Himmelskörper, welcher am Nachthimmel sichtbar ist ' +
         '<div>astre</div></div>';
       const out = htmlToPlainText(trailingSpace);
-      // Translation appears on a fresh line, not glued behind a
-      // single space.
-      expect(out).toMatch(/sichtbar ist\s*\n+\s*astre/);
+      expect(out).toMatch(/sichtbar ist — astre/);
       expect(out).not.toMatch(/ist astre/);
     });
 
-    test('multi-translation entries (Wikdict <ol><li><div>...</div></li>) keep bullets and break translations onto their own lines', () => {
-      // Real-world shape from wikdict-de-fr "Hund": two translations
-      // under the same sense, each in <li><div>...</div></li>. The
-      // bullet must survive (• chien on its own line) AND the bullets
-      // must not glue to surrounding text.
+    test('multi-translation Wikdict <ol><li><div>...</div></li> shape numbers items and bullets are gone', () => {
+      // Real shape from wikdict-de-fr "Hund": two translations under
+      // a nested <ol>. Each translation is the only content of its
+      // <li>, so each renders as a numbered item without an em-dash
+      // (block-mode div, line-start at the marker).
       const wikdictHund =
         '<div><font color="green">noun, male</font><br><ol>' +
         '<li>Haustier, dessen Vorfahre der Wolf ist<ol>' +
@@ -225,10 +251,87 @@ describe('htmlToPlainText', () => {
         '<li><div>chienne</div></li>' +
         '</ol></li></ol></div>';
       const out = htmlToPlainText(wikdictHund);
-      expect(out).toContain('• chien');
-      expect(out).toContain('• chienne');
-      // Bullets are on separate lines (not "• chien• chienne").
-      expect(out).toMatch(/• chien\s*\n\s*• chienne/);
+      // Outer <li> still gets its number; inner <li>s get nested
+      // depth-2 numbering.
+      expect(out).toMatch(/^noun, male/);
+      expect(out).toContain('1. Haustier, dessen Vorfahre der Wolf ist');
+      expect(out).toContain('  1. chien');
+      expect(out).toContain('  2. chienne');
+      // Pre-v1.0.7 glue: "istchien" must never appear.
+      expect(out).not.toMatch(/istchien/);
+      // Nested numbered items on consecutive lines (no blank gap
+      // between them after post-pass).
+      expect(out).toMatch(/ {2}1\. chien\n {2}2\. chienne/);
+    });
+
+    test('Himmel-style: <li>body<div>translation</div></li> joins inline', () => {
+      // The exact "Astronomie: der Kosmos<div>ciel</div>" shape from
+      // issue #19: the <div> follows real text WITHIN the same <li>,
+      // so it should join with an em-dash producing
+      // "2. Astronomie: der Kosmos — ciel" (depending on the outer
+      // numbering at the time of render).
+      const html =
+        '<ol><li>Astronomie: der Kosmos<div>ciel</div></li></ol>';
+      expect(htmlToPlainText(html)).toBe('1. Astronomie: der Kosmos — ciel');
+    });
+
+    test('multiple sibling <div> translations in one <li> join with comma', () => {
+      // alioth9's ideal in issue #19: "Decke aus Stoff oder ähnlichem
+      // Material — ciel, dais". Comma-join is the sibling-translation
+      // shape; this test pins it.
+      const html =
+        '<ol><li>Decke aus Stoff oder ähnlichem Material' +
+        '<div>ciel</div><div>dais</div></li></ol>';
+      expect(htmlToPlainText(html)).toBe(
+        '1. Decke aus Stoff oder ähnlichem Material — ciel, dais',
+      );
+    });
+
+    test('outer <li> with only a nested <ol> renders the outer marker on its own line', () => {
+      // Known-imperfect rendering for the Himmel shape where the
+      // outer <li> wraps two siblings <ol>s with no direct text.
+      // alioth9 acknowledged this is a file-level structural issue
+      // and even OSS-Dict can't pair them. We pin the simple "marker
+      // on its own line" output so behaviour is at least predictable.
+      const html =
+        '<ol>' +
+        '<li><ol><li>inner one</li><li>inner two</li></ol></li>' +
+        '<li>second top<div>tr</div></li>' +
+        '</ol>';
+      const out = htmlToPlainText(html);
+      expect(out).toContain('1.');
+      expect(out).toContain('  1. inner one');
+      expect(out).toContain('  2. inner two');
+      expect(out).toContain('2. second top — tr');
+    });
+  });
+
+  describe('inline-div translation edge cases', () => {
+    test('em-dash never doubles up: a sole <div> at the start renders block-mode', () => {
+      // The outer wrapper case: `<div>x</div>` has no preceding
+      // content, so block-mode selects and we don't emit a leading
+      // " — ".
+      expect(htmlToPlainText('<div>x</div>')).toBe('x');
+    });
+
+    test('three sibling translations: " — a, b, c"', () => {
+      // Stress the comma-list path past two siblings.
+      const html =
+        '<ol><li>body<div>a</div><div>b</div><div>c</div></li></ol>';
+      expect(htmlToPlainText(html)).toBe('1. body — a, b, c');
+    });
+
+    test('<br> between translations resets the comma-list state', () => {
+      // After a <br>, we're on a new line; even if a <div> follows
+      // some text, it's a fresh em-dash group, not a continuation
+      // of the previous <div> run.
+      const html = '<ol><li>a<div>x</div><br>b<div>y</div></li></ol>';
+      expect(htmlToPlainText(html)).toBe('1. a — x\nb — y');
+    });
+
+    test('paragraph-mode <p>x</p><p>y</p> preserves paragraph break', () => {
+      // <p> intent is two newlines collapsed to one by post-pass.
+      expect(htmlToPlainText('<p>x</p><p>y</p>')).toBe('x\ny');
     });
   });
 });

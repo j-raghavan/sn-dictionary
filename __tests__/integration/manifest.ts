@@ -63,9 +63,10 @@ export const MANIFEST: DictManifest[] = [
     description: 'WikDict German→French (Wiktionary-derived, CC-BY-SA)',
     entries: [
       {
-        // The exact entry from issue #15. Pre-fix output glued
-        // "ist" and "astre" into "istastre"; post-fix the
-        // translation lands on its own line.
+        // The exact entry from issue #15.
+        //   - v1.0.6 glued "ist" and "astre" into "istastre".
+        //   - v1.0.8 split them onto separate lines.
+        //   - v1.0.9 (issue #19) joins them inline with " — ".
         word: 'Gestirn',
         contains: [
           'ɡəˈʃtɪʁn', // IPA
@@ -74,19 +75,27 @@ export const MANIFEST: DictManifest[] = [
           'astre', // French translation
         ],
         notContains: ['istastre'],
-        matches: [/sichtbar ist\s*\n+\s*astre/],
+        // Em-dash separator between body and translation. The pin
+        // is loose around whitespace either side of "—" because
+        // upstream sometimes carries NBSP / multi-space before
+        // the translation; the renderer normalises but the regex
+        // shouldn't fight it.
+        matches: [/sichtbar ist\s+—\s+astre/],
       },
       {
         // Multi-translation entry under <ol><li><div>...</div></li>.
-        // Bullets must survive AND each translation must be on its
-        // own line.
+        // Each translation is the SOLE content of an inner <li>, so
+        // the renderer keeps them as numbered (block-mode) items
+        // rather than em-dash inline. v1.0.9 numbering replaces the
+        // v1.0.8 "• " bullets.
         word: 'Hund',
-        contains: ['noun, male', '• chien', '• chienne'],
+        contains: ['noun, male', '1. chien', '2. chienne'],
         // Pre-fix forms: "ist<div>chien" produced "istchien" type
-        // glue; the bullets should never collapse into a single
-        // run of text.
-        notContains: ['istchien', 'chien• chienne'],
-        matches: [/• chien\s*\n\s*• chienne/],
+        // glue; the numbered items must never collapse into a
+        // single run of text.
+        notContains: ['istchien', 'chien2. chienne', '• chien'],
+        // Inner <ol> renders at depth 2 (two-space indent).
+        matches: [/ {2}1\. chien\n {2}2\. chienne/],
       },
     ],
   },
@@ -102,18 +111,19 @@ export const MANIFEST: DictManifest[] = [
         // first match for "chien" is the (Astrologie) zodiac entry,
         // not the canine — both are present, and which is "first" is
         // a property of the .idx ordering pinned by the SHA above.
-        // Either way, the glue invariant is what matters: definition
-        // body must not run into the German translation.
+        // The glue invariant is what matters: definition body must
+        // not run into the German translation. v1.0.9 expects
+        // em-dash join.
         word: 'chien',
         contains: ['ʃjɛ̃', 'Astrologie', 'zodiaque chinois', 'Hund'],
         notContains: ['chinoisHund'],
-        matches: [/chinois\s*\n+\s*Hund/],
+        matches: [/chinois\s+—\s+Hund/],
       },
       {
         word: 'maison',
         contains: ['mɛ.zɔ̃', 'adjective', 'Familier', 'hausgemacht'],
         notContains: ['maisonhausgemacht'],
-        matches: [/maison\s*\n+\s*hausgemacht/],
+        matches: [/maison\s+—\s+hausgemacht/],
       },
     ],
   },
@@ -126,9 +136,11 @@ export const MANIFEST: DictManifest[] = [
     entries: [
       {
         word: 'Buch',
-        contains: ['buːx', 'noun, neutral', 'Schriftwerk', '• book'],
-        notContains: ['Blattgold<', 'Blattgoldbook'],
-        matches: [/• book/],
+        // v1.0.9: translations under nested <ol><li><div>book</div></li>
+        // render as numbered items at depth 2 (block-mode div).
+        contains: ['buːx', 'noun, neutral', 'Schriftwerk', 'book'],
+        notContains: ['Blattgold<', 'Blattgoldbook', '• book'],
+        matches: [/ {2}\d+\. book/],
       },
     ],
   },
