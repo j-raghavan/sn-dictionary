@@ -241,6 +241,81 @@ describe('htmlToSpans — full Wikdict + Wiktionary entry shape', () => {
       'green',
     );
   });
+
+  test('Himmel (issue #19 verbatim wikdict-de-fr HTML) renders with proper styling', () => {
+    // Verbatim HTML alioth9 pasted into issue #19. Pinned here at
+    // the span level so the bold / colour / numbering decisions
+    // for this exact upstream shape can't drift without a test
+    // failing.
+    const himmelHtml =
+      '<div>/<font color="gray">ˈhɪml̩</font>/<br>\n' +
+      '<font color="green">noun, male</font><br>\n' +
+      '  <ol>\n' +
+      '\t<li>\n' +
+      '\t  <ol>\n' +
+      '\t\t<li>Luftraum, Gewölbe über der Erde</li>\n' +
+      '\t\t<li>Religion: Aufenthaltsort im Jenseits mit Gott und den ' +
+      'Engeln, in den die Seligen nach ihrem Tode aufgenommen werden</li>\n' +
+      '\t  </ol>\n' +
+      '\t  <ol>\n' +
+      '\t\t<li><div>ciel</div></li>\n' +
+      '\t\t<li><div>paradis</div></li>\n' +
+      '\t  </ol>\n' +
+      '\t</li>\n' +
+      '\t<li>Astronomie: der Kosmos<div>ciel</div></li>\n' +
+      '\t<li>Decke aus Stoff oder ähnlichem Material\n' +
+      '\t  <ol><li><div>ciel</div></li>\n' +
+      '\t\t<li><div>dais</div></li>\n' +
+      '\t  </ol></li>\n' +
+      '  </ol>\n' +
+      '</div>';
+    const spans = htmlToSpans(himmelHtml);
+    // IPA wraps in the gray colour hint.
+    const ipa = spans.find((s) => s.text === 'ˈhɪml̩');
+    expect(ipa?.style.color).toBe('gray');
+    // POS in green.
+    const pos = spans.find((s) => s.text === 'noun, male');
+    expect(pos?.style.color).toBe('green');
+    // Sense 2's inline-div translation is bold (it's the only
+    // truly inline-mode <div> in this entry — sense 1's `ciel`/
+    // `paradis` and sense 3's `ciel`/`dais` are sole children of
+    // their <li>s, so they render in block-mode and stay un-bold).
+    const senseTwo = spans.find(
+      (s) =>
+        s.text === 'ciel' &&
+        s.style.bold === true &&
+        !s.style.color &&
+        !s.style.italic,
+    );
+    expect(senseTwo).toBeDefined();
+    // Block-mode `dais` (sole content of its <li>) is NOT bold —
+    // pin so a future renderer change can't accidentally embolden
+    // every leaf <div>. The block-mode word coalesces into the
+    // surrounding unstyled layout chunk, so we assert via "any
+    // span containing 'dais' is not bold" rather than an exact
+    // text match.
+    const daisCarriers = spans.filter((s) => s.text.includes('dais'));
+    expect(daisCarriers.length).toBeGreaterThan(0);
+    for (const carrier of daisCarriers) {
+      expect(carrier.style.bold).toBeFalsy();
+    }
+    // Visible text matches the plain-text path snapshot.
+    expect(concatText(spans)).toBe(
+      [
+        '/ˈhɪml̩/',
+        'noun, male',
+        '1.',
+        '  1. Luftraum, Gewölbe über der Erde',
+        '  2. Religion: Aufenthaltsort im Jenseits mit Gott und den Engeln, in den die Seligen nach ihrem Tode aufgenommen werden',
+        '  1. ciel',
+        '  2. paradis',
+        '2. Astronomie: der Kosmos — ciel',
+        '3. Decke aus Stoff oder ähnlichem Material',
+        '  1. ciel',
+        '  2. dais',
+      ].join('\n'),
+    );
+  });
 });
 
 describe('htmlToSpans — trim + edge cases (coverage)', () => {

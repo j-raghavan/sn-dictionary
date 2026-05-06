@@ -97,6 +97,45 @@ export const MANIFEST: DictManifest[] = [
         // Inner <ol> renders at depth 2 (two-space indent).
         matches: [/ {2}1\. chien\n {2}2\. chienne/],
       },
+      {
+        // Issue #19's worked example. Mixes all three v1.0.9 cases
+        // in one entry:
+        //   - sense 2 has a `body<div>tr</div>` inline em-dash join,
+        //   - sense 1 has a sibling `<ol>` of pure-<div> translations
+        //     (block-mode numbered items at depth 2),
+        //   - sense 3 has a body line followed by a nested numbered
+        //     list of translations.
+        // Single integration entry covering the whole shape so a
+        // future renderer change against the real .dict body is a
+        // visible failure here.
+        word: 'Himmel',
+        contains: [
+          'ˈhɪml̩', // IPA
+          'noun, male', // POS
+          'Luftraum', // sense 1 inner item 1
+          'Religion:', // sense 1 inner item 2
+          'Astronomie: der Kosmos — ciel', // sense 2 inline em-dash
+          'Decke aus Stoff', // sense 3 body
+          '  1. ciel',
+          '  2. dais',
+        ],
+        notContains: [
+          // No glue across the inline-translation boundary.
+          'Kosmosciel',
+          // No v1.0.8 newline-only shape for the inline case.
+          'Kosmos\nciel',
+          // Bullets are gone in v1.0.9.
+          '• ciel',
+          '• dais',
+        ],
+        matches: [
+          // Sense 2 em-dash join.
+          /Astronomie: der Kosmos\s+—\s+ciel/,
+          // Sense 3 body followed immediately by depth-2 numbered
+          // translations (no blank line, no fall-through bullet).
+          /Decke aus Stoff[^\n]*\n {2}1\. ciel\n {2}2\. dais/,
+        ],
+      },
     ],
   },
   {

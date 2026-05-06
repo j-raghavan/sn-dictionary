@@ -306,6 +306,100 @@ describe('htmlToPlainText', () => {
     });
   });
 
+  describe('issue #19 verbatim Himmel HTML (wikdict-de-fr)', () => {
+    // Exact .dict-section HTML alioth9 pasted into issue #19 for
+    // headword "Himmel". Pinned verbatim (whitespace-formatted with
+    // the same tabs and newlines the upstream emits) so any future
+    // change to the renderer's whitespace handling shows up against
+    // the source-of-truth shape rather than a hand-massaged variant.
+    const himmelHtml =
+      '<div>/<font color="gray">ˈhɪml̩</font>/<br>\n' +
+      '<font color="green">noun, male</font><br>\n' +
+      '  <ol>\n' +
+      '\t<li>\n' +
+      '\t  <ol>\n' +
+      '\t\t<li>Luftraum, Gewölbe über der Erde</li>\n' +
+      '\t\t<li>Religion: Aufenthaltsort im Jenseits mit Gott und den ' +
+      'Engeln, in den die Seligen nach ihrem Tode aufgenommen werden</li>\n' +
+      '\t  </ol>\n' +
+      '\t  <ol>\n' +
+      '\t\t<li><div>ciel</div></li>\n' +
+      '\t\t<li><div>paradis</div></li>\n' +
+      '\t  </ol>\n' +
+      '\t</li>\n' +
+      '\t<li>Astronomie: der Kosmos<div>ciel</div></li>\n' +
+      '\t<li>Decke aus Stoff oder ähnlichem Material\n' +
+      '\t  <ol><li><div>ciel</div></li>\n' +
+      '\t\t<li><div>dais</div></li>\n' +
+      '\t  </ol></li>\n' +
+      '  </ol>\n' +
+      '</div>';
+
+    test('chrome (IPA + POS) appears once in order, no leading blank', () => {
+      const out = htmlToPlainText(himmelHtml);
+      expect(out.startsWith('\n')).toBe(false);
+      // IPA on its own line, POS on the next.
+      expect(out).toMatch(/^\/ˈhɪml̩\/\nnoun, male\n/);
+    });
+
+    test('top-level senses are numbered 1./2./3. and inner items indent at depth 2', () => {
+      const out = htmlToPlainText(himmelHtml);
+      // alioth9 acknowledged the file structurally puts the two
+      // sibling inner <ol>s under one outer <li>, so the outer
+      // "1." appears on its own line — even OSS-Dict can't pair
+      // them. We pin that predictable shape rather than fight it.
+      expect(out).toContain('1.');
+      // Sense 1 inner items (German definitions).
+      expect(out).toContain('  1. Luftraum, Gewölbe über der Erde');
+      expect(out).toContain(
+        '  2. Religion: Aufenthaltsort im Jenseits mit Gott und den Engeln',
+      );
+      // Sense 1 inner translations (still as their own depth-2 list).
+      expect(out).toContain('  1. ciel');
+      expect(out).toContain('  2. paradis');
+      // Sense 2: body + inline em-dash translation in one line.
+      expect(out).toContain('2. Astronomie: der Kosmos — ciel');
+      // Sense 3: body line, then nested numbered translations.
+      expect(out).toContain('3. Decke aus Stoff oder ähnlichem Material');
+      expect(out).toMatch(/3\. Decke[^\n]*\n {2}1\. ciel\n {2}2\. dais/);
+    });
+
+    test('does not emit any v1.0.6 / v1.0.8 glue regressions', () => {
+      const out = htmlToPlainText(himmelHtml);
+      // Pre-v1.0.7 glue forms.
+      expect(out).not.toMatch(/Erdeciel/);
+      expect(out).not.toMatch(/Materialciel/);
+      expect(out).not.toMatch(/Kosmosciel/);
+      // v1.0.8 newline-only shape that v1.0.9 replaces with em-dash
+      // for the inline translation case.
+      expect(out).not.toMatch(/Kosmos\nciel/);
+      // No HTML residue.
+      expect(out).not.toMatch(/<\/?[a-z]/i);
+    });
+
+    test('full snapshot of the rendered Himmel entry', () => {
+      // The full deterministic shape, as the popup body would
+      // display it. If a future change shifts whitespace or
+      // numbering, this assertion fails with a one-character diff.
+      // Update intentionally only in lockstep with a UX decision.
+      expect(htmlToPlainText(himmelHtml)).toBe(
+        [
+          '/ˈhɪml̩/',
+          'noun, male',
+          '1.',
+          '  1. Luftraum, Gewölbe über der Erde',
+          '  2. Religion: Aufenthaltsort im Jenseits mit Gott und den Engeln, in den die Seligen nach ihrem Tode aufgenommen werden',
+          '  1. ciel',
+          '  2. paradis',
+          '2. Astronomie: der Kosmos — ciel',
+          '3. Decke aus Stoff oder ähnlichem Material',
+          '  1. ciel',
+          '  2. dais',
+        ].join('\n'),
+      );
+    });
+  });
+
   describe('inline-div translation edge cases', () => {
     test('em-dash never doubles up: a sole <div> at the start renders block-mode', () => {
       // The outer wrapper case: `<div>x</div>` has no preceding
