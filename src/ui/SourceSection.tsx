@@ -19,7 +19,7 @@ import {Text, View} from 'react-native';
 import type {SourceHit} from '../core/lookup';
 import {parseWordNetEntry} from './wordnetFormatter';
 import {SenseList} from './senseBlocks';
-import {htmlToPlainText} from './htmlToPlainText';
+import {HtmlText} from './HtmlText';
 import {popupStyles as styles} from './popupStyles';
 
 type SourceSectionProps = {
@@ -57,7 +57,9 @@ export const SourceSection = ({
       return <Text style={scaledDefinitionStyle}>{definition}</Text>;
     }
     if (format === 'html') {
-      return <Text style={scaledDefinitionStyle}>{htmlToPlainText(definition)}</Text>;
+      // Rich path (v1.0.9): translations bold, POS italic / coloured,
+      // numbered lists indented. See HtmlText.tsx + htmlToSpans.ts.
+      return <HtmlText html={definition} style={scaledDefinitionStyle} />;
     }
     // 'plain'
     return <Text style={scaledDefinitionStyle}>{definition}</Text>;

@@ -398,7 +398,7 @@ describe('DefinitionPopup', () => {
     // Tags stripped, layout preserved as bullet/newline.
     expect(text).not.toMatch(/<\/?[a-z]/i);
     expect(text).toContain('intj');
-    expect(text).toContain('• A salutation');
+    expect(text).toContain('1. A salutation');
   });
 
   test('format=plain: definition renders verbatim (no parser, no strip)', () => {

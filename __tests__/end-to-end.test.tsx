@@ -219,7 +219,7 @@ describe('end-to-end (discovery → registry → popup)', () => {
     const text = collectText(tree);
     expect(text).not.toMatch(/<\/?[a-z]/i);
     expect(text).toContain('intj');
-    expect(text).toContain('• greeting');
+    expect(text).toContain('1. greeting');
   });
 
   test('mid-flight discovery prepend does not break in-flight lookups (regression)', async () => {
