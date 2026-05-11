@@ -85,26 +85,27 @@ export const MANIFEST: DictManifest[] = [
       {
         // Multi-translation entry under <ol><li><div>...</div></li>.
         // Each translation is the SOLE content of an inner <li>, so
-        // the renderer keeps them as numbered (block-mode) items
-        // rather than em-dash inline. v1.0.9 numbering replaces the
-        // v1.0.8 "• " bullets.
+        // the renderer keeps them as block-mode items rather than
+        // em-dash inline. v1.0.10: depth-2 markers are alpha
+        // (a./b./…) at 4-space indent, replacing v1.0.9's depth-2
+        // numeric and 2-space indent.
         word: 'Hund',
-        contains: ['noun, male', '1. chien', '2. chienne'],
+        contains: ['noun, male', 'a. chien', 'b. chienne'],
         // Pre-fix forms: "ist<div>chien" produced "istchien" type
-        // glue; the numbered items must never collapse into a
-        // single run of text.
-        notContains: ['istchien', 'chien2. chienne', '• chien'],
-        // Inner <ol> renders at depth 2 (two-space indent).
-        matches: [/ {2}1\. chien\n {2}2\. chienne/],
+        // glue; the alpha items must never collapse into a single
+        // run of text. v1.0.9 depth-2 numeric markers are gone.
+        notContains: ['istchien', 'chienb. chienne', '• chien', '  1. chien'],
+        // Inner <ol> renders at depth 2 (4-space indent, alpha).
+        matches: [/ {4}a\. chien\n {4}b\. chienne/],
       },
       {
-        // Issue #19's worked example. Mixes all three v1.0.9 cases
+        // Issue #19's worked example. Mixes all three v1.0.10 cases
         // in one entry:
         //   - sense 2 has a `body<div>tr</div>` inline em-dash join,
         //   - sense 1 has a sibling `<ol>` of pure-<div> translations
-        //     (block-mode numbered items at depth 2),
-        //   - sense 3 has a body line followed by a nested numbered
-        //     list of translations.
+        //     (block-mode alpha-marker items at depth 2, all bold),
+        //   - sense 3 has a body line followed by a nested alpha
+        //     list of translations (also block-mode bold).
         // Single integration entry covering the whole shape so a
         // future renderer change against the real .dict body is a
         // visible failure here.
@@ -116,24 +117,28 @@ export const MANIFEST: DictManifest[] = [
           'Religion:', // sense 1 inner item 2
           'Astronomie: der Kosmos — ciel', // sense 2 inline em-dash
           'Decke aus Stoff', // sense 3 body
-          '  1. ciel',
-          '  2. dais',
+          '    a. ciel',
+          '    b. dais',
         ],
         notContains: [
           // No glue across the inline-translation boundary.
           'Kosmosciel',
           // No v1.0.8 newline-only shape for the inline case.
           'Kosmos\nciel',
-          // Bullets are gone in v1.0.9.
+          // Bullets at depth ≤3 are gone (v1.0.9 dropped them; v1.0.10
+          // kept that property — bullets only fire at depth ≥4).
           '• ciel',
           '• dais',
+          // v1.0.9 depth-2 numeric markers must not appear either.
+          '  1. ciel',
+          '  2. dais',
         ],
         matches: [
           // Sense 2 em-dash join.
           /Astronomie: der Kosmos\s+—\s+ciel/,
-          // Sense 3 body followed immediately by depth-2 numbered
+          // Sense 3 body followed immediately by depth-2 alpha-marker
           // translations (no blank line, no fall-through bullet).
-          /Decke aus Stoff[^\n]*\n {2}1\. ciel\n {2}2\. dais/,
+          /Decke aus Stoff[^\n]*\n {4}a\. ciel\n {4}b\. dais/,
         ],
       },
     ],
@@ -175,11 +180,19 @@ export const MANIFEST: DictManifest[] = [
     entries: [
       {
         word: 'Buch',
-        // v1.0.9: translations under nested <ol><li><div>book</div></li>
-        // render as numbered items at depth 2 (block-mode div).
+        // v1.0.10: translations under nested <ol><li><div>book</div></li>
+        // render as block-mode alpha items at depth 2 (4-space indent).
         contains: ['buːx', 'noun, neutral', 'Schriftwerk', 'book'],
-        notContains: ['Blattgold<', 'Blattgoldbook', '• book'],
-        matches: [/ {2}\d+\. book/],
+        notContains: [
+          'Blattgold<',
+          'Blattgoldbook',
+          '• book',
+          // v1.0.9 depth-2 numeric form must not reappear.
+          '  1. book',
+        ],
+        // Depth-2 alpha marker, 4-space indent. The first translation
+        // at depth 2 is `a.`; further siblings climb the alphabet.
+        matches: [/ {4}[a-z]+\. book/],
       },
     ],
   },

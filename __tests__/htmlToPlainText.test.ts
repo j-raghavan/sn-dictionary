@@ -47,20 +47,85 @@ describe('htmlToPlainText', () => {
     );
   });
 
-  test('indents nested <ol> items by 2 spaces per nesting level', () => {
+  test('indents nested <ol> items by 4 spaces and switches to alpha (a./b.) at depth 2', () => {
+    // alioth9's issue #19 follow-up: nested numbered lists were
+    // confusing because every depth read as "1. 2. 3." Switched to
+    // outline style (1. → a. → i.) so depth is visually obvious.
     const html =
       '<ol><li>outer one<ol><li>inner a</li><li>inner b</li></ol></li>' +
       '<li>outer two</li></ol>';
     expect(htmlToPlainText(html)).toBe(
-      '1. outer one\n  1. inner a\n  2. inner b\n2. outer two',
+      '1. outer one\n    a. inner a\n    b. inner b\n2. outer two',
     );
   });
 
-  test('mixed <ol> + <ul> nest each maintain their own marker style', () => {
+  test('depth-3 <ol> renders lowercase roman (i./ii./iii.) under depth-2 alpha', () => {
+    // Outline cycle: 1. → a. → i. Triple-deep nesting is rare in
+    // dict HTML but possible (e.g. compound entries with nested
+    // sense lists). Pin the marker rotation so a future change
+    // can't silently drift the cycle.
+    const html =
+      '<ol><li>L1<ol><li>L2<ol><li>L3a</li><li>L3b</li><li>L3c</li>' +
+      '<li>L3d</li></ol></li></ol></li></ol>';
+    expect(htmlToPlainText(html)).toBe(
+      '1. L1\n    a. L2\n        i. L3a\n        ii. L3b\n        iii. L3c\n        iv. L3d',
+    );
+  });
+
+  test('depth-4+ <ol> falls back to bullet (•) — pathological depth still readable', () => {
+    // Depth ≥4 is pathological in dict HTML; rather than introduce
+    // a fourth marker style (uppercase alpha?) the renderer falls
+    // back to bullets so deep nesting stays readable.
+    const html =
+      '<ol><li>L1<ol><li>L2<ol><li>L3<ol><li>L4a</li><li>L4b</li>' +
+      '</ol></li></ol></li></ol></li></ol>';
+    expect(htmlToPlainText(html)).toBe(
+      '1. L1\n    a. L2\n        i. L3\n            • L4a\n            • L4b',
+    );
+  });
+
+  test('alpha cycle wraps past 26 (z. → aa. → ab.) at depth 2', () => {
+    // Spreadsheet-style cycle covers >26 items at depth 2 without
+    // running off the alphabet. Real dicts never reach 27 sub-senses,
+    // but the wrap rule is part of the contract.
+    const items = Array.from({length: 28}, (_, i) => `<li>n${i + 1}</li>`).join('');
+    const html = `<ol><li>top<ol>${items}</ol></li></ol>`;
+    const out = htmlToPlainText(html);
+    expect(out).toContain('    a. n1');
+    expect(out).toContain('    z. n26');
+    expect(out).toContain('    aa. n27');
+    expect(out).toContain('    ab. n28');
+  });
+
+  test('roman markers extend past x. correctly (xi./xii./xiii./xiv./xix./xx.)', () => {
+    // Pin the descending-additive roman expansion so a 20-item
+    // depth-3 list reads cleanly.
+    const items = Array.from({length: 20}, (_, i) => `<li>r${i + 1}</li>`).join('');
+    const html = `<ol><li>L1<ol><li>L2<ol>${items}</ol></li></ol></li></ol>`;
+    const out = htmlToPlainText(html);
+    expect(out).toContain('        x. r10');
+    expect(out).toContain('        xi. r11');
+    expect(out).toContain('        xiii. r13');
+    expect(out).toContain('        xiv. r14');
+    expect(out).toContain('        xix. r19');
+    expect(out).toContain('        xx. r20');
+  });
+
+  test('mixed <ol> + <ul> nest each maintain their own marker style at the new indent', () => {
     const html =
       '<ol><li>numbered<ul><li>bullet a</li><li>bullet b</li></ul></li></ol>';
     expect(htmlToPlainText(html)).toBe(
-      '1. numbered\n  • bullet a\n  • bullet b',
+      '1. numbered\n    • bullet a\n    • bullet b',
+    );
+  });
+
+  test('<ul> stays bulleted at every depth — nested <ul> does not rotate marker', () => {
+    // Only <ol> rotates; <ul> at any depth is "•". Pin so a future
+    // marker-cycle change to <ol> doesn't accidentally apply to <ul>.
+    const html =
+      '<ul><li>top<ul><li>mid<ul><li>deep</li></ul></li></ul></li></ul>';
+    expect(htmlToPlainText(html)).toBe(
+      '• top\n    • mid\n        • deep',
     );
   });
 
@@ -75,9 +140,10 @@ describe('htmlToPlainText', () => {
     expect(out).toContain('1. A salutation; a greeting used for most purposes');
     expect(out).toContain('noun');
     // Nested under an outer <ol> opened just before <i>noun</i>: the
-    // inner <ol>'s items show at depth 2 (two-space indent).
+    // inner <ol>'s items show at depth 2 (4-space indent, alpha
+    // marker per the v1.0.10 outline cycle).
     expect(out).toContain(
-      '  1. greeting, salutation, an instance of the interjection namaste',
+      '    a. greeting, salutation, an instance of the interjection namaste',
     );
     // No tags leak through.
     expect(out).not.toMatch(/<\/?[a-z]/i);
@@ -239,11 +305,12 @@ describe('htmlToPlainText', () => {
       expect(out).not.toMatch(/ist astre/);
     });
 
-    test('multi-translation Wikdict <ol><li><div>...</div></li> shape numbers items and bullets are gone', () => {
+    test('multi-translation Wikdict <ol><li><div>...</div></li> shape uses depth-2 alpha markers', () => {
       // Real shape from wikdict-de-fr "Hund": two translations under
       // a nested <ol>. Each translation is the only content of its
-      // <li>, so each renders as a numbered item without an em-dash
-      // (block-mode div, line-start at the marker).
+      // <li>, so each renders as a depth-2 alpha item without an
+      // em-dash (block-mode div, line-start at the marker). v1.0.10:
+      // depth-2 markers are now `a./b./...`, not `1./2./...`.
       const wikdictHund =
         '<div><font color="green">noun, male</font><br><ol>' +
         '<li>Haustier, dessen Vorfahre der Wolf ist<ol>' +
@@ -252,16 +319,16 @@ describe('htmlToPlainText', () => {
         '</ol></li></ol></div>';
       const out = htmlToPlainText(wikdictHund);
       // Outer <li> still gets its number; inner <li>s get nested
-      // depth-2 numbering.
+      // depth-2 alpha markers at the 4-space indent.
       expect(out).toMatch(/^noun, male/);
       expect(out).toContain('1. Haustier, dessen Vorfahre der Wolf ist');
-      expect(out).toContain('  1. chien');
-      expect(out).toContain('  2. chienne');
+      expect(out).toContain('    a. chien');
+      expect(out).toContain('    b. chienne');
       // Pre-v1.0.7 glue: "istchien" must never appear.
       expect(out).not.toMatch(/istchien/);
-      // Nested numbered items on consecutive lines (no blank gap
+      // Nested alpha items on consecutive lines (no blank gap
       // between them after post-pass).
-      expect(out).toMatch(/ {2}1\. chien\n {2}2\. chienne/);
+      expect(out).toMatch(/ {4}a\. chien\n {4}b\. chienne/);
     });
 
     test('Himmel-style: <li>body<div>translation</div></li> joins inline', () => {
@@ -293,6 +360,7 @@ describe('htmlToPlainText', () => {
       // alioth9 acknowledged this is a file-level structural issue
       // and even OSS-Dict can't pair them. We pin the simple "marker
       // on its own line" output so behaviour is at least predictable.
+      // v1.0.10: nested <ol> uses alpha at depth 2 and 4-space indent.
       const html =
         '<ol>' +
         '<li><ol><li>inner one</li><li>inner two</li></ol></li>' +
@@ -300,8 +368,8 @@ describe('htmlToPlainText', () => {
         '</ol>';
       const out = htmlToPlainText(html);
       expect(out).toContain('1.');
-      expect(out).toContain('  1. inner one');
-      expect(out).toContain('  2. inner two');
+      expect(out).toContain('    a. inner one');
+      expect(out).toContain('    b. inner two');
       expect(out).toContain('2. second top — tr');
     });
   });
@@ -342,26 +410,27 @@ describe('htmlToPlainText', () => {
       expect(out).toMatch(/^\/ˈhɪml̩\/\nnoun, male\n/);
     });
 
-    test('top-level senses are numbered 1./2./3. and inner items indent at depth 2', () => {
+    test('top-level senses are numbered 1./2./3. and inner items use depth-2 alpha at 4-space indent', () => {
       const out = htmlToPlainText(himmelHtml);
       // alioth9 acknowledged the file structurally puts the two
       // sibling inner <ol>s under one outer <li>, so the outer
       // "1." appears on its own line — even OSS-Dict can't pair
       // them. We pin that predictable shape rather than fight it.
       expect(out).toContain('1.');
-      // Sense 1 inner items (German definitions).
-      expect(out).toContain('  1. Luftraum, Gewölbe über der Erde');
+      // Sense 1 inner items (German definitions). v1.0.10: depth-2
+      // alpha markers, 4-space indent (was "  1. …" in v1.0.9).
+      expect(out).toContain('    a. Luftraum, Gewölbe über der Erde');
       expect(out).toContain(
-        '  2. Religion: Aufenthaltsort im Jenseits mit Gott und den Engeln',
+        '    b. Religion: Aufenthaltsort im Jenseits mit Gott und den Engeln',
       );
       // Sense 1 inner translations (still as their own depth-2 list).
-      expect(out).toContain('  1. ciel');
-      expect(out).toContain('  2. paradis');
+      expect(out).toContain('    a. ciel');
+      expect(out).toContain('    b. paradis');
       // Sense 2: body + inline em-dash translation in one line.
       expect(out).toContain('2. Astronomie: der Kosmos — ciel');
-      // Sense 3: body line, then nested numbered translations.
+      // Sense 3: body line, then nested alpha-marker translations.
       expect(out).toContain('3. Decke aus Stoff oder ähnlichem Material');
-      expect(out).toMatch(/3\. Decke[^\n]*\n {2}1\. ciel\n {2}2\. dais/);
+      expect(out).toMatch(/3\. Decke[^\n]*\n {4}a\. ciel\n {4}b\. dais/);
     });
 
     test('does not emit any v1.0.6 / v1.0.8 glue regressions', () => {
@@ -382,19 +451,23 @@ describe('htmlToPlainText', () => {
       // display it. If a future change shifts whitespace or
       // numbering, this assertion fails with a one-character diff.
       // Update intentionally only in lockstep with a UX decision.
+      // v1.0.10 changes vs v1.0.9: depth-2 markers are alpha
+      // (a./b. instead of 1./2.), and the indent grew from 2 to 4
+      // spaces. The plain-text path doesn't carry bold; the popup
+      // (HtmlText / htmlToSpans) layers bold on the <div> content.
       expect(htmlToPlainText(himmelHtml)).toBe(
         [
           '/ˈhɪml̩/',
           'noun, male',
           '1.',
-          '  1. Luftraum, Gewölbe über der Erde',
-          '  2. Religion: Aufenthaltsort im Jenseits mit Gott und den Engeln, in den die Seligen nach ihrem Tode aufgenommen werden',
-          '  1. ciel',
-          '  2. paradis',
+          '    a. Luftraum, Gewölbe über der Erde',
+          '    b. Religion: Aufenthaltsort im Jenseits mit Gott und den Engeln, in den die Seligen nach ihrem Tode aufgenommen werden',
+          '    a. ciel',
+          '    b. paradis',
           '2. Astronomie: der Kosmos — ciel',
           '3. Decke aus Stoff oder ähnlichem Material',
-          '  1. ciel',
-          '  2. dais',
+          '    a. ciel',
+          '    b. dais',
         ].join('\n'),
       );
     });

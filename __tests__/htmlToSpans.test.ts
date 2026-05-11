@@ -134,13 +134,44 @@ describe('htmlToSpans — list rendering matches plain-text shape', () => {
     expect(concatText(spans)).toBe('• first\n• second');
   });
 
-  test('nested <ol> under <ol> indents inner items by 2 spaces per depth', () => {
+  test('nested <ol> under <ol> uses 4-space indent and depth-2 alpha markers (v1.0.10)', () => {
     const html =
       '<ol><li>outer one<ol><li>inner a</li><li>inner b</li></ol></li>' +
       '<li>outer two</li></ol>';
     expect(concatText(htmlToSpans(html))).toBe(
-      '1. outer one\n  1. inner a\n  2. inner b\n2. outer two',
+      '1. outer one\n    a. inner a\n    b. inner b\n2. outer two',
     );
+  });
+
+  test('depth-3 <ol> under depth-2 alpha emits roman markers (i./ii./iii.)', () => {
+    const html =
+      '<ol><li>L1<ol><li>L2<ol><li>x</li><li>y</li><li>z</li></ol>' +
+      '</li></ol></li></ol>';
+    expect(concatText(htmlToSpans(html))).toBe(
+      '1. L1\n    a. L2\n        i. x\n        ii. y\n        iii. z',
+    );
+  });
+
+  test('depth-4 <ol> falls back to bullet (•) at 12-space indent', () => {
+    const html =
+      '<ol><li>1<ol><li>2<ol><li>3<ol><li>4</li></ol></li></ol>' +
+      '</li></ol></li></ol>';
+    expect(concatText(htmlToSpans(html))).toBe(
+      '1. 1\n    a. 2\n        i. 3\n            • 4',
+    );
+  });
+
+  test('list markers stay unstyled even when the marker style rotates (alpha / roman)', () => {
+    // Pin: depth rotation does NOT introduce styling on markers.
+    // Markers are layout regardless of which marker shape applies.
+    const html =
+      '<font color="green"><ol><li>L1<ol><li>L2<ol><li>L3</li></ol>' +
+      '</li></ol></li></ol></font>';
+    const spans = htmlToSpans(html);
+    const alphaMarker = spans.find((s) => s.text.includes('a.'));
+    const romanMarker = spans.find((s) => s.text.includes('i.'));
+    expect(alphaMarker?.style.color).toBeFalsy();
+    expect(romanMarker?.style.color).toBeFalsy();
   });
 });
 
@@ -182,16 +213,52 @@ describe('htmlToSpans — translation (<div>) emboldening', () => {
     expect(commaSpan?.style.bold).toBeFalsy();
   });
 
-  test('block-mode <div> (sole content of an <li>) does NOT bold', () => {
-    // When a <div> is the only content of its <li>, it renders in
-    // block mode (no em-dash). In that case the translation reads
-    // as an item body; emboldening would over-emphasise it. Per the
-    // base class rule, block-mode <div> pushes an empty style so
-    // the content stays at the popup's body weight.
+  test('block-mode <div> as sole content of an <li> IS bold (v1.0.10)', () => {
+    // Issue #19 follow-up from alioth9: previously the v1.0.9
+    // renderer left block-mode <div>s un-bold so single-translation
+    // entries (`Astronomie ... — ciel`) read in bold but multi-
+    // translation lists (`<li><div>ciel</div></li><li><div>paradis
+    // </div></li>`) read at body weight, which felt inconsistent.
+    // v1.0.10 unifies the two: any <div> opening inside a list item
+    // is treated as a translation and bolded.
     const spans = htmlToSpans('<ol><li><div>chien</div></li></ol>');
     expect(concatText(spans)).toBe('1. chien');
     const word = spans.find((s) => s.text === 'chien');
-    expect(word?.style.bold).toBeFalsy();
+    expect(word?.style.bold).toBe(true);
+  });
+
+  test('top-level <div>x</div> with no enclosing list stays UN-bold', () => {
+    // The outer-wrapper case: `<div>...whole entry...</div>` is the
+    // common Wikdict shape and must not pop in bold. Only block-mode
+    // <div>s INSIDE a list pick up the translation styling.
+    const spans = htmlToSpans('<div>plain wrapper body</div>');
+    const body = spans.find((s) => s.text.includes('plain wrapper body'));
+    expect(body?.style.bold).toBeFalsy();
+  });
+
+  test('multiple block-mode <div> siblings inside one <li> all bold', () => {
+    // `<li><div>x</div><div>y</div></li>` — first div is block-mode
+    // (no preceding content in this <li>); after its close the
+    // newline resets contentOnLine so the second div is also block-
+    // mode. Both are translations, both bold.
+    const spans = htmlToSpans(
+      '<ol><li><div>chien</div><div>poules</div></li></ol>',
+    );
+    const chien = spans.find((s) => s.text === 'chien');
+    const poules = spans.find((s) => s.text === 'poules');
+    expect(chien?.style.bold).toBe(true);
+    expect(poules?.style.bold).toBe(true);
+  });
+
+  test('block-mode <div> at depth 2 (under nested <ol>) is bold (Hund / Himmel pattern)', () => {
+    // The exact pattern from wikdict-de-fr Himmel sense 1 and Hund:
+    // outer <ol><li>body<ol><li><div>tr</div></li></ol></li></ol>.
+    // The inner div opens at depth 2 in block mode — bold.
+    const spans = htmlToSpans(
+      '<ol><li>body<ol><li><div>tr</div></li></ol></li></ol>',
+    );
+    const tr = spans.find((s) => s.text === 'tr');
+    expect(tr?.style.bold).toBe(true);
   });
 });
 
@@ -220,7 +287,7 @@ describe('htmlToSpans — full Wikdict + Wiktionary entry shape', () => {
     expect(translation?.style.bold).toBe(true);
   });
 
-  test('Hund-style nested <ol> with <div> translations: nested numbering, no bold (block-mode)', () => {
+  test('Hund-style nested <ol> with <div> translations: depth-2 alpha markers, both translations bold (v1.0.10)', () => {
     const wikdictHund =
       '<div><font color="green">noun, male</font><br><ol>' +
       '<li>Haustier, dessen Vorfahre der Wolf ist<ol>' +
@@ -229,13 +296,14 @@ describe('htmlToSpans — full Wikdict + Wiktionary entry shape', () => {
       '</ol></li></ol></div>';
     const spans = htmlToSpans(wikdictHund);
     expect(concatText(spans)).toBe(
-      'noun, male\n1. Haustier, dessen Vorfahre der Wolf ist\n  1. chien\n  2. chienne',
+      'noun, male\n1. Haustier, dessen Vorfahre der Wolf ist\n    a. chien\n    b. chienne',
     );
-    // chien / chienne are leaf <div>s but block-mode (sole content
-    // of their <li>) — so they are NOT bold. This matches the
-    // base-class rule and the plain-text path's expectation.
-    expect(spans.find((s) => s.text === 'chien')?.style.bold).toBeFalsy();
-    expect(spans.find((s) => s.text === 'chienne')?.style.bold).toBeFalsy();
+    // v1.0.10: chien / chienne are leaf <div>s in block-mode INSIDE
+    // a list — translations get bolded the same way inline-mode
+    // translations (`Astronomie — ciel`) are bolded. alioth9 in
+    // issue #19: "if possible it should be" bolded for consistency.
+    expect(spans.find((s) => s.text === 'chien')?.style.bold).toBe(true);
+    expect(spans.find((s) => s.text === 'chienne')?.style.bold).toBe(true);
     // POS still bears the green hint.
     expect(spans.find((s) => s.text === 'noun, male')?.style.color).toBe(
       'green',
@@ -276,10 +344,11 @@ describe('htmlToSpans — full Wikdict + Wiktionary entry shape', () => {
     // POS in green.
     const pos = spans.find((s) => s.text === 'noun, male');
     expect(pos?.style.color).toBe('green');
-    // Sense 2's inline-div translation is bold (it's the only
-    // truly inline-mode <div> in this entry — sense 1's `ciel`/
-    // `paradis` and sense 3's `ciel`/`dais` are sole children of
-    // their <li>s, so they render in block-mode and stay un-bold).
+    // v1.0.10: every translation in this entry is bold. Sense 2 is
+    // inline-mode (em-dash join), sense 1's `ciel`/`paradis` and
+    // sense 3's `ciel`/`dais` are block-mode <div>s inside <li>s —
+    // all four now bold to match alioth9's request that block-mode
+    // translations match the visual weight of inline ones.
     const senseTwo = spans.find(
       (s) =>
         s.text === 'ciel' &&
@@ -288,31 +357,32 @@ describe('htmlToSpans — full Wikdict + Wiktionary entry shape', () => {
         !s.style.italic,
     );
     expect(senseTwo).toBeDefined();
-    // Block-mode `dais` (sole content of its <li>) is NOT bold —
-    // pin so a future renderer change can't accidentally embolden
-    // every leaf <div>. The block-mode word coalesces into the
-    // surrounding unstyled layout chunk, so we assert via "any
-    // span containing 'dais' is not bold" rather than an exact
-    // text match.
+    // Block-mode `dais` (sole content of its <li>) is bold — the
+    // word coalesces into the same span as anything bold-and-
+    // unstyled-otherwise that immediately precedes it; assert via
+    // "any span containing 'dais' is bold".
     const daisCarriers = spans.filter((s) => s.text.includes('dais'));
     expect(daisCarriers.length).toBeGreaterThan(0);
-    for (const carrier of daisCarriers) {
-      expect(carrier.style.bold).toBeFalsy();
-    }
-    // Visible text matches the plain-text path snapshot.
+    expect(daisCarriers.some((c) => c.style.bold === true)).toBe(true);
+    // Sense 1's `paradis` (also block-mode under nested <ol>) bold.
+    const paradisCarriers = spans.filter((s) => s.text.includes('paradis'));
+    expect(paradisCarriers.length).toBeGreaterThan(0);
+    expect(paradisCarriers.some((c) => c.style.bold === true)).toBe(true);
+    // Visible text matches the plain-text path snapshot exactly
+    // (depth-2 alpha + 4-space indent per v1.0.10).
     expect(concatText(spans)).toBe(
       [
         '/ˈhɪml̩/',
         'noun, male',
         '1.',
-        '  1. Luftraum, Gewölbe über der Erde',
-        '  2. Religion: Aufenthaltsort im Jenseits mit Gott und den Engeln, in den die Seligen nach ihrem Tode aufgenommen werden',
-        '  1. ciel',
-        '  2. paradis',
+        '    a. Luftraum, Gewölbe über der Erde',
+        '    b. Religion: Aufenthaltsort im Jenseits mit Gott und den Engeln, in den die Seligen nach ihrem Tode aufgenommen werden',
+        '    a. ciel',
+        '    b. paradis',
         '2. Astronomie: der Kosmos — ciel',
         '3. Decke aus Stoff oder ähnlichem Material',
-        '  1. ciel',
-        '  2. dais',
+        '    a. ciel',
+        '    b. dais',
       ].join('\n'),
     );
   });
