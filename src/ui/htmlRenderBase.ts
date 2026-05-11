@@ -19,8 +19,97 @@
 // to maintain a style stack. The base class always pairs a push
 // with a pop on every <div> open/close so style-stack subclasses
 // stay balanced even when div-mode swaps from inline to block.
+//
+// List-marker scheme (per alioth9's request in issue #19): nested
+// <ol> levels rotate through styles to make depth visually obvious
+// rather than repeating "1. 2. 3." at every level. The classic
+// outline cycle (decimal → lowercase alpha → lowercase roman →
+// bullet for anything deeper) is what readers expect from English
+// and French long-form documents and matches one of alioth9's
+// listed options (`a. b. c.`). <ul> stays as bullets at every depth.
 
 import {type HtmlVisitor, type TagInfo} from './htmlParser';
+
+// 4-space indent per nesting level. alioth9 asked for "more than 2"
+// in issue #19 and 4 is the de-facto standard for nested outlines
+// in academic prose (and what OSS-Dict's reference rendering uses).
+const INDENT_PER_DEPTH = '    ';
+
+// Lowercase roman numeral table, descending so a single linear pass
+// over the table emits the canonical compact form (4 → "iv", not
+// "iiii"). The 1000-cap is generous; dictionary list depth-3 entries
+// in practice cap out below 20.
+const ROMAN_NUMERALS: ReadonlyArray<readonly [number, string]> = [
+  [1000, 'm'],
+  [900, 'cm'],
+  [500, 'd'],
+  [400, 'cd'],
+  [100, 'c'],
+  [90, 'xc'],
+  [50, 'l'],
+  [40, 'xl'],
+  [10, 'x'],
+  [9, 'ix'],
+  [5, 'v'],
+  [4, 'iv'],
+  [1, 'i'],
+];
+
+// Counter is always ≥ 1 by the time we reach here (incremented in
+// emitListItemMarker before lookup), so no n≤0 guard is needed.
+const toRomanLower = (n: number): string => {
+  let remaining = n;
+  let out = '';
+  for (const [val, sym] of ROMAN_NUMERALS) {
+    while (remaining >= val) {
+      out += sym;
+      remaining -= val;
+    }
+  }
+  return out;
+};
+
+// Spreadsheet-style alpha: 1→'a', 26→'z', 27→'aa', 28→'ab', …
+// Wraps cleanly past 26 so a 30-item depth-2 list still renders
+// (`aa. ab. ac. ad.`) instead of running off the end of the alphabet.
+const toAlphaLower = (n: number): string => {
+  let remaining = n;
+  let out = '';
+  while (remaining > 0) {
+    remaining--;
+    out = String.fromCharCode(97 + (remaining % 26)) + out;
+    remaining = Math.floor(remaining / 26);
+  }
+  return out;
+};
+
+// Marker text (without trailing space) for an <ol>/<ul> item at the
+// given 1-based depth. <ul> is always bulleted. <ol> rotates:
+//   depth 1 → decimal      (1. 2. 3.)
+//   depth 2 → lowercase α  (a. b. c.)
+//   depth 3 → lowercase roman (i. ii. iii.)
+//   depth ≥ 4 → bullet     (•) — pathological depths fall back to
+//                                a marker the reader can't confuse
+//                                with another numbered level.
+const formatListMarker = (
+  kind: 'ol' | 'ul',
+  counter: number,
+  depth: number,
+): string => {
+  if (kind === 'ul') {
+    return '•';
+  }
+  if (depth <= 1) {
+    return `${counter}.`;
+  }
+  if (depth === 2) {
+    return `${toAlphaLower(counter)}.`;
+  }
+  if (depth === 3) {
+    return `${toRomanLower(counter)}.`;
+  }
+  return '•';
+};
 
 export type ListFrame = {
   // Whether items are numbered (ol) or bulleted (ul). A stray <li>
@@ -184,11 +273,11 @@ export abstract class HtmlBaseRenderer implements HtmlVisitor {
   protected emitListItemMarker(): void {
     const top = this.listStack[this.listStack.length - 1];
     const depth = this.listStack.length;
-    const indent = '  '.repeat(Math.max(0, depth - 1));
+    const indent = INDENT_PER_DEPTH.repeat(Math.max(0, depth - 1));
     if (top) {
       top.counter++;
-      const marker = top.kind === 'ol' ? `${top.counter}. ` : '• ';
-      this.emitLayout(`\n${indent}${marker}`);
+      const marker = formatListMarker(top.kind, top.counter, depth);
+      this.emitLayout(`\n${indent}${marker} `);
     } else {
       // <li> outside any list. Bullet at depth 0.
       this.emitLayout('\n• ');
@@ -209,9 +298,20 @@ export abstract class HtmlBaseRenderer implements HtmlVisitor {
       this.pushStyle({bold: true});
     } else {
       this.inlineDivStack.push(false);
-      // Block-mode <div>: push an empty style so the matching
-      // popStyle on close stays balanced regardless of mode.
-      this.pushStyle({});
+      // Block-mode <div> inside an active list (i.e. a translation
+      // sitting as the body of an <li>, like wikdict-de-fr's
+      // `<li><div>chien</div></li>` shape) is bolded too — alioth9
+      // flagged in issue #19 that single-line `<div>` translations
+      // were bolded but the same word inside a multi-translation
+      // <li><div>...</div> sibling list was not, and the
+      // inconsistency hurt readability. Top-level wrapper <div>
+      // (no enclosing list) keeps the empty style hint so it
+      // doesn't visually pop above the body text.
+      if (this.listStack.length > 0) {
+        this.pushStyle({bold: true});
+      } else {
+        this.pushStyle({});
+      }
     }
   }
 

@@ -186,9 +186,9 @@ class SpanRenderer extends HtmlBaseRenderer {
         }
         if (atLineStart && (ch === ' ' || ch === '\t')) {
           // Capture the leading indent verbatim (single contiguous
-          // run). The base class only emits indents in 2-space
-          // increments via emitListItemMarker, so the run length is
-          // bounded.
+          // run). The base class only emits indents in fixed-width
+          // increments (4 spaces per nesting depth) via
+          // emitListItemMarker, so the run length is bounded.
           const start = i;
           while (
             i < span.text.length &&

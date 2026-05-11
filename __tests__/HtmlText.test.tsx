@@ -101,6 +101,56 @@ describe('HtmlText', () => {
     expect(style?.fontWeight).toBe('700');
   });
 
+  test('emboldens block-mode <div> translations inside an <li> at fontWeight 700 (issue #19)', () => {
+    // alioth9's follow-up on issue #19: `<li><div>chien</div></li>`
+    // sibling translations were body-weight in v1.0.9; v1.0.10
+    // bolds them to match the inline-mode case so single- and
+    // multi-translation entries read with the same visual weight.
+    const tree = render(
+      '<ol><li><div>chien</div></li><li><div>chienne</div></li></ol>',
+    );
+    const root = tree.toJSON() as unknown as RTNode;
+    const all = collectAllNodes(root);
+    const chienText = all.find(
+      (n) =>
+        n.type === 'Text' &&
+        n.children?.length === 1 &&
+        n.children[0] === 'chien',
+    );
+    const chienneText = all.find(
+      (n) =>
+        n.type === 'Text' &&
+        n.children?.length === 1 &&
+        n.children[0] === 'chienne',
+    );
+    expect(
+      (chienText?.props.style as {fontWeight?: string} | undefined)
+        ?.fontWeight,
+    ).toBe('700');
+    expect(
+      (chienneText?.props.style as {fontWeight?: string} | undefined)
+        ?.fontWeight,
+    ).toBe('700');
+  });
+
+  test('top-level <div> with no enclosing list stays at body weight (no bold)', () => {
+    // The outer Wikdict wrapper case: `<div>...</div>` around the
+    // whole entry must not pop in bold — only translations inside
+    // an active <li> are bolded.
+    const tree = render('<div>plain wrapper body</div>');
+    const root = tree.toJSON() as unknown as RTNode;
+    const all = collectAllNodes(root);
+    // No descendant <Text> carries fontWeight 700.
+    for (const node of all) {
+      if (node !== root && node.type === 'Text') {
+        const style = node.props.style as
+          | {fontWeight?: string}
+          | undefined;
+        expect(style?.fontWeight).not.toBe('700');
+      }
+    }
+  });
+
   test('italicises <i> content (POS labels) and does not italicise surrounding text', () => {
     const tree = render('a <i>POS</i> b');
     const root = tree.toJSON() as unknown as RTNode;

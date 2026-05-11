@@ -47,7 +47,7 @@ class PlainTextRenderer extends HtmlBaseRenderer {
 
   finalize(): string {
     // Per-line normalisation: preserve leading indent (so the
-    // numbered-list nesting "  1. item" survives), collapse
+    // numbered-list nesting "    a. item" survives), collapse
     // INTERNAL whitespace runs to a single space, strip trailing
     // whitespace, and drop empty lines so paragraph / list-section
     // breaks don't render as visible blank rows.
