@@ -42,17 +42,17 @@ const MANIFEST_MIRROR = [
   {
     name: 'wikdict-de-fr',
     url: 'https://download.wikdict.com/dictionaries/stardict/wikdict-de-fr.zip',
-    sha256: '17d00ca43cd6e80089c66dd2959aff30535a355ba36c4d39d6537c0948d37c41',
+    sha256: '2c4d1710086f4d65e00fb0e00a8beaac424d24f842722a5afd1e3f8546e523e3',
   },
   {
     name: 'wikdict-fr-de',
     url: 'https://download.wikdict.com/dictionaries/stardict/wikdict-fr-de.zip',
-    sha256: '95f73aff4271c5eaf68d5c426b8fd1bc728880ead0e63b9e8cc84b9e934b3f68',
+    sha256: '81658ead31852e926e4c739799b92da7958e72d749f6c6a6b391e95ab2b0d587',
   },
   {
     name: 'wikdict-de-en',
     url: 'https://download.wikdict.com/dictionaries/stardict/wikdict-de-en.zip',
-    sha256: 'e84d6ec7a5e92f2232fe9c1fe04f149dd0b4defab47b879705d1a395138f5024',
+    sha256: 'c94ed34a7e925c1f7f0be1ff08b7032534eb2475352111fd46c1dc183d9390f2',
   },
 ];
 

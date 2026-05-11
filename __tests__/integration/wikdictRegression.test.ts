@@ -66,7 +66,19 @@ describeIntegration('Real-StarDict regression (run via `npm run test:integration
           // on a stable shape.
           const ifo = readFileSync(join(dir, 'stardict.ifo'));
           const idx = readFileSync(join(dir, 'stardict.idx'));
-          const dictBytes = readFileSync(join(dir, 'stardict.dict.dz'));
+          // Prefer the uncompressed stardict.dict when present —
+          // wikdict's 2026-05 rebuild ships BOTH stardict.dict
+          // (regenerated, matches the .idx) AND stardict.dict.dz
+          // (stale from 2025-08, offsets no longer line up). The
+          // dictReader transparently handles raw .dict / .dict.dz /
+          // plain-gzip via createDictReader, so picking whichever
+          // file is fresh keeps the assertions valid even when
+          // upstream's packaging is internally inconsistent.
+          const rawDictPath = join(dir, 'stardict.dict');
+          const dzDictPath = join(dir, 'stardict.dict.dz');
+          const dictBytes = readFileSync(
+            existsSync(rawDictPath) ? rawDictPath : dzDictPath,
+          );
           parsedPromise = buildDict(
             new Uint8Array(ifo),
             new Uint8Array(idx),
