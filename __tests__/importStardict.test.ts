@@ -66,8 +66,11 @@ const makeHarness = async (
     },
     audit,
     now: () => '2026-06-07T00:00:00Z',
-    ...(opts.space !== undefined ? {getAvailableSpace: async () => opts.space} : {}),
   };
+  if (opts.space !== undefined) {
+    const space = opts.space;
+    ports.getAvailableSpace = async () => space;
+  }
   return {ports, deleteFile, slugFiles, discard, audit};
 };
 

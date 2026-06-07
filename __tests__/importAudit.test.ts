@@ -54,9 +54,9 @@ describe('upsertImport + find', () => {
     const db = await auditDb();
     await upsertImport(db, row({entry_count: 10, filename: 'dune.en.db'}));
     await upsertImport(db, row({entry_count: 20, filename: 'dune.en.db'}));
-    const all = await db.query(SELECT_IMPORT_BY_NAME_LANG, ['Dune', 'en']);
+    const all = await db.query<ImportRow>(SELECT_IMPORT_BY_NAME_LANG, ['Dune', 'en']);
     expect(all).toHaveLength(1);
-    expect((all[0] as ImportRow).entry_count).toBe(20);
+    expect(all[0].entry_count).toBe(20);
     await db.close();
   });
 
