@@ -214,7 +214,7 @@ describe('populateBaseDb with omwRows (TF4-FR1)', () => {
       transaction: raw.transaction.bind(raw),
       close: raw.close.bind(raw),
     };
-    await populateBaseDb(spy, parsed, SCHEMA_VERSION, OMW);
+    await populateBaseDb(spy, parsed, SCHEMA_VERSION, 'wordnet', OMW);
 
     const ei = order.indexOf('ENTRIES_INDEX');
     const ti = order.indexOf('THESAURUS_TABLE');

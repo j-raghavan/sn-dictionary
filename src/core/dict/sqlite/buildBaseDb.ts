@@ -10,6 +10,7 @@
 
 import {buildDict, type ParsedDict} from '../stardict/stardictDict';
 import {decodeUtf8} from '../../../sdk/utf8';
+import type {DefinitionFormat} from '../../lookup';
 import type {SqliteDb} from './db';
 import {
   CREATE_ENTRIES_INDEX,
@@ -74,6 +75,11 @@ export type PopulateResult = {
 // INSERT). Returns the inserted vs expected counts so the caller can
 // assert insertedCount === parsed.index.size (TF3-FR2 DoD).
 //
+// entryFormat (TF5-FR3): the `format` column stamped on every entries
+// row. Defaults to 'wordnet' so the bundled base build is unchanged;
+// the StarDict importer passes the sidecar/.ifo-derived format so an
+// imported HTML dict renders correctly.
+//
 // omwRows (TF4-FR1, additive): when supplied, the OMW thesaurus is
 // populated BETWEEN the entries index and the meta row, so meta stays
 // LAST (the crash-safety invariant). Omitting it is byte-identical to
@@ -82,6 +88,7 @@ export const populateBaseDb = async (
   db: SqliteDb,
   parsed: ParsedDict,
   schemaVersion: number,
+  entryFormat: DefinitionFormat = 'wordnet',
   omwRows?: OmwRow[],
 ): Promise<PopulateResult> => {
   const rows = entriesFromParsedDict(parsed);
@@ -93,7 +100,7 @@ export const populateBaseDb = async (
         row.key,
         row.word,
         row.definition,
-        'wordnet',
+        entryFormat,
       ]);
     }
   });
@@ -126,5 +133,7 @@ export const buildBaseDbFromTriple = async (
   omwRows?: OmwRow[],
 ): Promise<PopulateResult> => {
   const parsed = await buildDict(ifo, idx, dict);
-  return populateBaseDb(db, parsed, schemaVersion, omwRows);
+  // Base build keeps the default 'wordnet' entry format; thesaurus rows
+  // (if any) come after.
+  return populateBaseDb(db, parsed, schemaVersion, 'wordnet', omwRows);
 };
