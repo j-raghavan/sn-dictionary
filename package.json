@@ -15,6 +15,9 @@
     "build:dict": "node scripts/buildBaseDict.mjs",
     "build:base-db": "node --import ./scripts/registerTsLoader.mjs scripts/buildBaseDb.mjs",
     "prepare:dict": "npm run --silent fetch:dict && npm run --silent build:dict",
+    "fetch:omw": "node scripts/fetchOmw.mjs",
+    "build:omw": "node scripts/buildOmw.mjs",
+    "prepare:omw": "npm run --silent fetch:omw && npm run --silent build:omw",
     "build:sample-dicts": "node scripts/buildSampleDicts.mjs"
   },
   "dependencies": {

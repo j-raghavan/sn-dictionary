@@ -410,6 +410,16 @@ The bundled English dictionary is generated from **Princeton WordNet®** and shi
 
 No WordNet content is modified semantically by the build: the generator only re-shapes the existing StarDict triple into indexed SQLite rows (`scripts/buildBaseDb.mjs`).
 
+### Bundled thesaurus content (Open Multilingual Wordnet)
+
+The thesaurus (synonyms / antonyms) is built from the **Open Multilingual Wordnet (OMW)** and stored in the same `base.db` (the `thesaurus` table), staged via `npm run prepare:omw` (fetch + build) and folded into `base.db` by `npm run build:base-db`.
+
+- **Source.** Open Multilingual Wordnet — <https://omwn.org/>. The English layer is Princeton WordNet itself; the multilingual layers are contributed wordnets.
+- **License.** OMW aggregates per-language wordnets under their own licenses (the English Wordnet is under the WordNet license above; other languages vary — CC-BY, CC-BY-SA, MIT, and similar). Any redistribution must preserve each contributing wordnet's license and attribution. See the OMW [citation and license page](https://omwn.org/omw1.html) for the per-language list.
+- **Scope used.** Only `synonym` and `antonym` relations are extracted (`scripts/buildOmw.mjs`); other OMW relations are not bundled.
+
+> **RO-7 (coverage note).** `scripts/fetchOmw.mjs` and `scripts/buildOmw.mjs` perform network I/O and filesystem extraction and are therefore **not** measured by the jest coverage gate (same posture as `scripts/fetchBaseDict.mjs` / `scripts/buildBaseDict.mjs`). The data-shaping logic they feed *is* covered: the TSV parser (`parseOmwTsv`) and the DB population (`populateThesaurus`) live in `src/` and are unit-tested to the 97% gate against synthetic fixtures.
+
 ---
 
 Hope you find this plugin useful. If you hit a bug or have a feature request, please open an [issue](https://github.com/j-raghavan/sn-dictionary/issues).
