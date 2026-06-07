@@ -31,6 +31,30 @@ export const CREATE_ENTRIES_TABLE =
 export const CREATE_ENTRIES_INDEX =
   'CREATE INDEX IF NOT EXISTS idx_entries_key ON entries(key)';
 
+// --- user.db entries (TF7) ------------------------------------------
+// user.db carries the SAME 'entries' table name as base.db (Designer
+// ruling 3) so the user source reuses createSqliteDictSource +
+// SELECT_ENTRY_BY_KEY verbatim — but as a column SUPERSET: lang +
+// created_at for user-added words. The extra columns default so the
+// shared 4-col SELECT (word, definition, format) keeps working. This
+// 6-col CREATE runs ONLY against user.db (base.db/imports keep the
+// 4-col CREATE_ENTRIES_TABLE).
+export const CREATE_USER_ENTRIES_TABLE =
+  'CREATE TABLE IF NOT EXISTS entries (' +
+  'key TEXT NOT NULL, ' +
+  'word TEXT NOT NULL, ' +
+  'definition TEXT NOT NULL, ' +
+  'format TEXT NOT NULL, ' +
+  "lang TEXT NOT NULL DEFAULT 'und', " +
+  'created_at TEXT NOT NULL)';
+
+export const CREATE_USER_ENTRIES_INDEX =
+  'CREATE INDEX IF NOT EXISTS idx_user_key ON entries(key)';
+
+export const INSERT_USER_ENTRY =
+  'INSERT INTO entries (key, word, definition, format, lang, created_at) ' +
+  'VALUES (?, ?, ?, ?, ?, ?)';
+
 // First row wins (TF2-FR4): LIMIT 1 so a duplicate-key table returns
 // one deterministic row. `key` is bound, never selected.
 export const SELECT_ENTRY_BY_KEY =
