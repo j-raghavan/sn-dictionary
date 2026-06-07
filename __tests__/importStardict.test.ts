@@ -177,6 +177,73 @@ describe('importStardict — failure isolation (sources LEFT)', () => {
     expect(h.deleteFile).not.toHaveBeenCalled();
   });
 
+  it('verify reads COMMITTED state, NOT the cached/uncommitted populate handle (Flag 5)', async () => {
+    // Model the device contract that the host happy-path fake glosses
+    // over (it returns the SAME in-memory handle from open() and
+    // reopenForVerify()): a writable populate handle whose writes are
+    // NOT yet visible to a separate reader until commit, and a verify
+    // handle that sees ONLY committed rows.
+    //
+    // Here the populate handle BUFFERS its writes and never flushes them
+    // to the committed store (simulating a missing/rolled-back commit,
+    // or a future refactor that wrongly reuses the uncommitted handle
+    // for verify). The committed-view reader therefore sees 0 rows ->
+    // COUNT mismatch -> slug DB discarded + ALL sources LEFT. If verify
+    // ever read the cached populate handle instead, it would see the 2
+    // buffered rows and FALSELY pass — this test forbids that.
+    const h = await makeHarness(baseSet());
+
+    // The committed store: starts empty, only mutated on an explicit
+    // (here never-invoked) commit. The populate handle writes go to a
+    // separate uncommitted buffer.
+    const committedRows: unknown[] = [];
+    let uncommittedRowCount = 0;
+
+    const writableUncommittedHandle = {
+      query: async () => [],
+      run: async (sql: string) => {
+        if (/^INSERT INTO entries/i.test(sql)) {
+          uncommittedRowCount++;
+        }
+        return {changes: 1};
+      },
+      // transaction() runs the body (buffering writes) but does NOT
+      // surface them to the committed store — the "no commit" case.
+      transaction: async (fn: (tx: SqliteDb) => Promise<void>) => {
+        await fn(writableUncommittedHandle as unknown as SqliteDb);
+      },
+      close: async () => undefined,
+    } as unknown as SqliteDb;
+
+    const committedViewReader = {
+      // Reads ONLY committed state — sees committedRows (empty).
+      query: async (sql: string) =>
+        /COUNT/i.test(sql) ? [{n: committedRows.length}] : committedRows,
+      run: async () => ({changes: 0}),
+      transaction: async () => undefined,
+      close: async () => undefined,
+    } as unknown as SqliteDb;
+
+    h.ports.slugDb.open = async () => writableUncommittedHandle;
+    h.ports.slugDb.reopenForVerify = async () => committedViewReader;
+
+    const res = await importStardict(h.ports);
+
+    // The populate handle DID receive the writes (proving the populate
+    // step ran) ...
+    expect(uncommittedRowCount).toBe(2);
+    // ... but verify read the committed view (0 rows) and rejected.
+    expect(res).toEqual({
+      ok: false,
+      reason: 'verify failed: committed 0 rows, expected 2',
+    });
+    // Safety-critical: half-built DB discarded, sources NOT deleted.
+    expect(h.discard).toHaveBeenCalledWith('my-dict.en.db');
+    expect(h.deleteFile).not.toHaveBeenCalled();
+    // And no audit row was written for the failed import.
+    expect(await findImportByNameLang(h.audit, 'My Dict', 'en')).toBeNull();
+  });
+
   it('verify COUNT returning zero rows is treated as -1 (mismatch)', async () => {
     const h = await makeHarness(baseSet());
     // A verify handle whose COUNT query yields NO rows -> committed = -1.
