@@ -13,6 +13,11 @@ import {
   INSERT_META,
   SELECT_ENTRY_BY_KEY,
   SELECT_META_VERSION,
+  CREATE_THESAURUS_INDEX,
+  CREATE_THESAURUS_TABLE,
+  INSERT_THESAURUS,
+  SELECT_THESAURUS_BY_KEY_LANG,
+  THESAURUS_RELATIONS,
 } from '../src/core/dict/sqlite/schema';
 
 describe('entries schema', () => {
@@ -122,5 +127,43 @@ describe('meta schema (TF3-FR3)', () => {
     const rows = await db.query<{schema_version: number}>(SELECT_META_VERSION);
     expect(rows[0].schema_version).toBe(0);
     await db.close();
+  });
+});
+
+describe('thesaurus schema (TF4-FR1)', () => {
+  it('creates the thesaurus table and (key, lang) index without error', async () => {
+    const db = await createSeededDb(async d => {
+      await d.run(CREATE_THESAURUS_TABLE);
+      await d.run(CREATE_THESAURUS_INDEX);
+    });
+    // Idempotent re-create is a no-op.
+    await db.run(CREATE_THESAURUS_TABLE);
+    await db.run(CREATE_THESAURUS_INDEX);
+
+    const idx = await db.query(
+      "SELECT name FROM sqlite_master WHERE type='index' AND name=?",
+      ['idx_thes_key'],
+    );
+    expect(idx).toEqual([{name: 'idx_thes_key'}]);
+    await db.close();
+  });
+
+  it('SELECT_THESAURUS_BY_KEY_LANG projects {rel, target} filtered by key+lang', async () => {
+    const db = await createSeededDb(async d => {
+      await d.run(CREATE_THESAURUS_TABLE);
+      await d.run(INSERT_THESAURUS, ['happy', 'en', 'synonym', 'glad']);
+      await d.run(INSERT_THESAURUS, ['happy', 'en', 'antonym', 'sad']);
+      await d.run(INSERT_THESAURUS, ['happy', 'de', 'synonym', 'froh']);
+    });
+    const rows = await db.query(SELECT_THESAURUS_BY_KEY_LANG, ['happy', 'en']);
+    expect(rows).toEqual([
+      {rel: 'synonym', target: 'glad'},
+      {rel: 'antonym', target: 'sad'},
+    ]);
+    await db.close();
+  });
+
+  it('THESAURUS_RELATIONS lists exactly synonym + antonym', () => {
+    expect([...THESAURUS_RELATIONS]).toEqual(['synonym', 'antonym']);
   });
 });

@@ -94,6 +94,19 @@ describe('provisionBaseDb', () => {
     expect(stale.closed).toBe(true);
   });
 
+  it('expects schema v2 and reprovisions a v1 (pre-thesaurus) db (TF4-FR1)', async () => {
+    // v1 had no thesaurus table; the v1 -> v2 bump must trigger a
+    // re-copy of the bundled (thesaurus-bearing) DB.
+    expect(EXPECTED_SCHEMA_VERSION).toBe(2);
+    const v1 = fakeDb([{schema_version: 1}]);
+    const copyFn = jest.fn(async () => fakeDb([]));
+    const {ports} = makePorts({existing: v1, copyFromAssetAndOpen: copyFn});
+    const res = await provisionBaseDb(ports);
+    expect(res.action).toBe('reprovisioned');
+    expect(copyFn).toHaveBeenCalledTimes(1);
+    expect(v1.closed).toBe(true);
+  });
+
   it('present + meta absent (rows.length === 0) -> reprovisioned', async () => {
     const noMeta = fakeDb([]);
     const copyFn = jest.fn(async () => fakeDb([]));

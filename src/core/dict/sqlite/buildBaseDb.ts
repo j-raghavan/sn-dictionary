@@ -23,7 +23,11 @@ import {
 // and re-copied at provision time. Single source of truth: provision.ts
 // re-exports it as EXPECTED_SCHEMA_VERSION (the value provisioning
 // compares against). Lives here because the GENERATOR is the writer.
-export const SCHEMA_VERSION = 1;
+//
+// v1 -> v2: added the thesaurus table (TF4). A v1 bundled DB has no
+// thesaurus, so a v1 -> v2 upgrade must reprovision (provisioning's
+// version-mismatch branch handles this automatically).
+export const SCHEMA_VERSION = 2;
 
 export type BaseDbRow = {
   key: string;

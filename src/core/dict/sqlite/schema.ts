@@ -83,3 +83,41 @@ export const INSERT_META =
 export interface MetaRow {
   schema_version: number;
 }
+
+// --- thesaurus table (TF4-FR1) --------------------------------------
+// OMW (Open Multilingual Wordnet) relations, keyed the same way as
+// entries (normalizeKey-folded key) plus a language tag so one DB holds
+// every language's relations. `rel` is one of THESAURUS_RELATIONS;
+// `target` is the related headword (display casing preserved). The
+// thesaurus is a SEPARATE lazy query held in popup-local state — never
+// a DictSource/LookupResult field (IV-1).
+
+export const CREATE_THESAURUS_TABLE =
+  'CREATE TABLE IF NOT EXISTS thesaurus (' +
+  'key TEXT NOT NULL, ' +
+  'lang TEXT NOT NULL, ' +
+  'rel TEXT NOT NULL, ' +
+  'target TEXT NOT NULL)';
+
+// Composite index on (key, lang): every lookup binds both, so the
+// query is a single indexed probe.
+export const CREATE_THESAURUS_INDEX =
+  'CREATE INDEX IF NOT EXISTS idx_thes_key ON thesaurus(key, lang)';
+
+export const SELECT_THESAURUS_BY_KEY_LANG =
+  'SELECT rel, target FROM thesaurus WHERE key = ? AND lang = ?';
+
+export const INSERT_THESAURUS =
+  'INSERT INTO thesaurus (key, lang, rel, target) VALUES (?, ?, ?, ?)';
+
+// The relation kinds the thesaurus stores. A row whose rel is outside
+// this set is dropped at build time (parseOmwTsv) and again at query
+// time (lookupThesaurus) — defence in depth at both boundaries.
+export const THESAURUS_RELATIONS = ['synonym', 'antonym'] as const;
+export type ThesaurusRelation = (typeof THESAURUS_RELATIONS)[number];
+
+// Projected shape of SELECT_THESAURUS_BY_KEY_LANG.
+export interface ThesaurusRow {
+  rel: string;
+  target: string;
+}
