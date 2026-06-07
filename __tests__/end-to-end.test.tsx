@@ -32,12 +32,9 @@ import {
 import {createMultiDictLookup} from '../src/core/dict/multiDictLookup';
 import {createStardictLookup} from '../src/core/dict/stardictLookup';
 import {createCsvDictSource} from '../src/core/dict/csvDictSource';
-import {discoverUserDicts} from '../src/core/dict/userDictDiscovery';
 import type {DictSource} from '../src/core/lookup';
 import {buildSyntheticStarDict} from './_helpers/buildSyntheticStarDict';
-import {enc, makeVfs, u8ToArrayBuffer} from './_helpers/inMemoryVfs';
-
-const ROOT = '/storage/emulated/0/MyStyle/SnDict';
+import {enc, u8ToArrayBuffer} from './_helpers/inMemoryVfs';
 
 const renderPopup = (): ReactTestRenderer => {
   let tree!: ReactTestRenderer;
@@ -81,15 +78,13 @@ beforeEach(() => {
 
 describe('end-to-end (discovery → registry → popup)', () => {
   test('user-dropped CSV becomes a popup section after lookup', async () => {
-    const vfs = makeVfs({
-      [`${ROOT}/medical/words.csv`]: enc('apple,a fruit\n'),
-    });
-    // 1. Real discovery against the VFS.
-    const userDicts = await discoverUserDicts({
-      fileUtils: vfs.fileUtils,
-      fetchFn: vfs.fetchFn,
-      rootPath: ROOT,
-    });
+    // 1. Real custom source (CSV engine fixture).
+    const userDicts = [
+      createCsvDictSource({
+        name: 'medical',
+        loadBytes: async () => enc('apple,a fruit\n'),
+      }),
+    ];
     // 2. Real registry composition.
     const lookup = createMultiDictLookup(userDicts);
     // 3. Real popup mounting.
@@ -107,14 +102,12 @@ describe('end-to-end (discovery → registry → popup)', () => {
 
   test('multi-source rendering: both dicts hit, popup shows both sections with badges', async () => {
     const baseTriple = stardictBuffers({apple: 'a fruit (base)'});
-    const vfs = makeVfs({
-      [`${ROOT}/custom/data.csv`]: enc('apple,a fruit (custom)\n'),
-    });
-    const userDicts = await discoverUserDicts({
-      fileUtils: vfs.fileUtils,
-      fetchFn: vfs.fetchFn,
-      rootPath: ROOT,
-    });
+    const userDicts = [
+      createCsvDictSource({
+        name: 'custom',
+        loadBytes: async () => enc('apple,a fruit (custom)\n'),
+      }),
+    ];
     const baseSource: DictSource = createStardictLookup({
       name: 'WordNet',
       loadBase: async () => ({
@@ -167,17 +160,17 @@ describe('end-to-end (discovery → registry → popup)', () => {
       0,
       0, 0, 0, 0, // index 0, big-endian u32
     ]);
-    const vfs = makeVfs({
-      [`${ROOT}/hindi/dict.ifo`]: u8ToArrayBuffer(triple.ifo),
-      [`${ROOT}/hindi/dict.idx`]: u8ToArrayBuffer(triple.idx),
-      [`${ROOT}/hindi/dict.dict.dz`]: u8ToArrayBuffer(triple.dict),
-      [`${ROOT}/hindi/dict.syn`]: u8ToArrayBuffer(synBytes),
-    });
-    const userDicts = await discoverUserDicts({
-      fileUtils: vfs.fileUtils,
-      fetchFn: vfs.fetchFn,
-      rootPath: ROOT,
-    });
+    const userDicts = [
+      createStardictLookup({
+        name: 'hindi',
+        loadBase: async () => ({
+          ifo: triple.ifo,
+          idx: triple.idx,
+          dict: triple.dict,
+          syn: synBytes,
+        }),
+      }),
+    ];
     const lookup = createMultiDictLookup(userDicts);
     const tree = renderPopup();
     const result = await lookup.lookup('namaste');
@@ -200,16 +193,16 @@ describe('end-to-end (discovery → registry → popup)', () => {
       {hello: '<i>intj</i><br><ol><li>greeting</li></ol>'},
       {sametypesequence: 'h'},
     );
-    const vfs = makeVfs({
-      [`${ROOT}/wikt/d.ifo`]: u8ToArrayBuffer(triple.ifo),
-      [`${ROOT}/wikt/d.idx`]: u8ToArrayBuffer(triple.idx),
-      [`${ROOT}/wikt/d.dict`]: u8ToArrayBuffer(triple.dict),
-    });
-    const userDicts = await discoverUserDicts({
-      fileUtils: vfs.fileUtils,
-      fetchFn: vfs.fetchFn,
-      rootPath: ROOT,
-    });
+    const userDicts = [
+      createStardictLookup({
+        name: 'wikt',
+        loadBase: async () => ({
+          ifo: triple.ifo,
+          idx: triple.idx,
+          dict: triple.dict,
+        }),
+      }),
+    ];
     const lookup = createMultiDictLookup(userDicts);
     const tree = renderPopup();
     const result = await lookup.lookup('hello');
@@ -227,9 +220,6 @@ describe('end-to-end (discovery → registry → popup)', () => {
     // that gets mutated when discovery completes. Verifies the
     // in-flight lookup snapshot semantics that the reviewer caught
     // pre-merge of v1.0.2.
-    const vfs = makeVfs({
-      [`${ROOT}/extra/words.csv`]: enc('apple,fruit (extra)\n'),
-    });
     // Slow base source so the in-flight lookup is still going when
     // we mutate.
     const slowBase: DictSource = {
@@ -247,14 +237,15 @@ describe('end-to-end (discovery → registry → popup)', () => {
     const sources: DictSource[] = [slowBase];
     const lookup = createMultiDictLookup(sources);
 
-    // Kick off the lookup before discovery completes...
+    // Kick off the lookup before the user dict is added...
     const inFlight = lookup.lookup('apple');
-    // ...then prepend the discovered user dict, the way index.js does.
-    const userDicts = await discoverUserDicts({
-      fileUtils: vfs.fileUtils,
-      fetchFn: vfs.fetchFn,
-      rootPath: ROOT,
-    });
+    // ...then prepend a user dict, the way the runtime mutates sources.
+    const userDicts = [
+      createCsvDictSource({
+        name: 'extra',
+        loadBytes: async () => enc('apple,fruit (extra)\n'),
+      }),
+    ];
     sources.unshift(...userDicts);
 
     const result = await inFlight;
