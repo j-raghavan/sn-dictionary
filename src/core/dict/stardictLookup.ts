@@ -20,6 +20,7 @@
 import type {DefinitionFormat, DictEntry, DictSource} from '../lookup';
 import {createLazyAsyncSource} from './lazyAsyncSource';
 import {buildDict, lookupDict, type ParsedDict} from './stardict/stardictDict';
+import {formatFromSametypesequence} from './stardict/formatFromIfo';
 import {createDictReader} from './stardict/dictReader';
 import {
   buildEnvelope,
@@ -53,18 +54,6 @@ export type StardictLookupDeps = {
   // Optional persistent index cache. See file header comment.
   cache?: IndexCacheStorage;
   logger?: {warn: (msg: string) => void; log?: (msg: string) => void};
-};
-
-// StarDict spec: `sametypesequence=m` is plain UTF-8 text, `=h` is
-// HTML, and several others (`x`, `y`, `n`, …) are dict-specific
-// formats we don't currently render. Anything other than `h` falls
-// back to plain text — the strings still display, just without
-// structure.
-const formatFromMeta = (meta: ParsedDict['meta']): DefinitionFormat => {
-  if (meta.sametypesequence === 'h') {
-    return 'html';
-  }
-  return 'plain';
 };
 
 const buildParsedFromCache = (
@@ -158,7 +147,7 @@ export const createStardictLookup = (
       if (!hit) {
         return null;
       }
-      const format = deps.format ?? formatFromMeta(parsed.meta);
+      const format = deps.format ?? formatFromSametypesequence(parsed.meta);
       return {word: hit.canonicalWord, definition: hit.definition, format};
     },
     logger: deps.logger,

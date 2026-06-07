@@ -48,6 +48,7 @@ import type {DictSource} from '../lookup';
 import {createCsvDictSource} from './csvDictSource';
 import {createJsonDictSource} from './jsonDictSource';
 import {createStardictLookup, type DictBytes} from './stardictLookup';
+import {isMetaJsonName} from './metaJsonName';
 import type {IndexCacheStorage} from './indexCacheStorage';
 
 export const DEFAULT_USER_DICT_ROOT = '/storage/emulated/0/MyStyle/SnDict';
@@ -119,13 +120,6 @@ const basenameOf = (path: string): string => {
   const slash = path.lastIndexOf('/');
   return slash >= 0 ? path.slice(slash + 1) : path;
 };
-
-// `meta.json` is the shared/folder convention; `<basename>.meta.json`
-// is the per-file sidecar convention at root level. Both must be
-// excluded from JSON-dict detection so the meta config never gets
-// mistaken for an actual dictionary file.
-const isMetaJsonName = (name: string): boolean =>
-  name === 'meta.json' || name.toLowerCase().endsWith('.meta.json');
 
 type CsvMetaConfig = {
   headwordCol?: number;
