@@ -100,3 +100,6 @@ logcat.txt
 # (downloaded StarDict zips + extracts, removed automatically after each run
 # unless --keep is passed).
 .cache/
+
+# Local specs / planning docs (not committed)
+spec/
