@@ -121,3 +121,43 @@ export interface ThesaurusRow {
   rel: string;
   target: string;
 }
+
+// --- imports audit table (TF5-FR5) ----------------------------------
+// Records every sideloaded StarDict import. Lives in the WRITABLE
+// user.db (NEVER base.db, Designer flag 4) — it is the only persistent
+// record of an import after the verify-then-delete pipeline removes the
+// source files. (name, lang) is the logical identity: re-importing the
+// same name+lang replaces the prior row (upsertImport). filename is the
+// per-dict DB file the rows were written into.
+
+export const CREATE_IMPORTS_TABLE =
+  'CREATE TABLE IF NOT EXISTS imports (' +
+  'name TEXT NOT NULL, ' +
+  'lang TEXT NOT NULL, ' +
+  'entry_count INTEGER NOT NULL, ' +
+  'imported_at TEXT NOT NULL, ' +
+  'filename TEXT NOT NULL)';
+
+export const SELECT_IMPORT_BY_NAME_LANG =
+  'SELECT name, lang, entry_count, imported_at, filename ' +
+  'FROM imports WHERE name = ? AND lang = ?';
+
+export const SELECT_IMPORT_BY_FILENAME =
+  'SELECT name, lang, entry_count, imported_at, filename ' +
+  'FROM imports WHERE filename = ?';
+
+export const DELETE_IMPORT_BY_NAME_LANG =
+  'DELETE FROM imports WHERE name = ? AND lang = ?';
+
+export const INSERT_IMPORT =
+  'INSERT INTO imports (name, lang, entry_count, imported_at, filename) ' +
+  'VALUES (?, ?, ?, ?, ?)';
+
+// Projected shape of the SELECT_IMPORT_* queries.
+export interface ImportRow {
+  name: string;
+  lang: string;
+  entry_count: number;
+  imported_at: string;
+  filename: string;
+}
