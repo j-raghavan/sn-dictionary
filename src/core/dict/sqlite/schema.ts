@@ -138,6 +138,11 @@ export const CREATE_IMPORTS_TABLE =
   'imported_at TEXT NOT NULL, ' +
   'filename TEXT NOT NULL)';
 
+// All audit rows — read at bootstrap to reconcile against on-disk
+// descriptors.
+export const SELECT_IMPORT_ALL =
+  'SELECT name, lang, entry_count, imported_at, filename FROM imports';
+
 export const SELECT_IMPORT_BY_NAME_LANG =
   'SELECT name, lang, entry_count, imported_at, filename ' +
   'FROM imports WHERE name = ? AND lang = ?';
