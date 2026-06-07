@@ -1,3 +1,15 @@
+// DEVICE-UNVERIFIED thin device shell. Builds the real RN/SDK-backed
+// ports and hands them to the host-tested composition root (bootstrap).
+// No dictionary logic lives here — index.js only translates the device
+// (react-native-sqlite-storage, sn-plugin-lib FileUtils/PluginManager,
+// fetch(file://...)) into the BootstrapPorts shape and wires the
+// returned lookup into the (unchanged) handlers + popup.
+//
+// ADR-0001: the SQLite engine is the only path — there is NO base64
+// blob fallback. The bundled base.db is provisioned via
+// createFromLocation on first run; subsequent note re-opens just open
+// the file (the cold-start fix this whole milestone exists for).
+
 import {AppRegistry} from 'react-native';
 import App from './App';
 import {name as appName} from './app.json';
@@ -18,12 +30,12 @@ import {
 } from './src/buttons/registerDocSelectButton';
 import {onNoteLassoDefine} from './src/handlers/onNoteLassoDefine';
 import {onDocSelectDefine} from './src/handlers/onDocSelectDefine';
-import {createStardictLookup} from './src/core/dict/stardictLookup';
-import {createMultiDictLookup} from './src/core/dict/multiDictLookup';
+import {bootstrap} from './src/core/dict/sqlite/bootstrap';
+import {createRnProvisionPorts} from './src/core/dict/sqlite/provisionRnPorts';
+import {createRnImportPorts} from './src/core/dict/sqlite/importRnPorts';
+import {openRnSqliteDb} from './src/core/dict/sqlite/rnSqliteDb';
 import {discoverUserDicts} from './src/core/dict/userDictDiscovery';
-import {primeAllConcurrently} from './src/core/dict/primeAllConcurrently';
-import {getDefaultIndexCacheStorage} from './src/core/dict/indexCacheStorage';
-import {loadBaseDictFromGenerated} from './src/core/dict/data/baseDictData';
+import {decodeUtf8} from './src/sdk/utf8';
 import {
   hideDefinition,
   showDefinition,
@@ -35,114 +47,124 @@ AppRegistry.registerComponent(appName, () => App);
 PluginManager.init();
 
 // Supernote's RN host filters console.warn / console.error out of
-// logcat (every ReactNativeJS line in observed traces is at info
-// level), so we route every level through console.log with an
-// explicit prefix. Keeps diagnostics visible during on-device runs.
+// logcat, so route every level through console.log with a prefix.
 const logger = {
   log: msg => console.log(msg),
   warn: msg => console.log(`[WARN] ${msg}`),
   error: msg => console.log(`[ERROR] ${msg}`),
 };
 
-// Persistent index cache. AsyncStorage if available, in-memory
-// otherwise — see getDefaultIndexCacheStorage for the lazy-require
-// rationale. Caches parsed StarDict indexes (lookup-key →
-// offset/length tuples) keyed by source name + idx fingerprint, so
-// subsequent JS-context reloads (firmware reloads on every note
-// open) skip parseIdx + parseSyn and complete in seconds instead of
-// minutes.
-const indexCache = getDefaultIndexCacheStorage(logger);
+// Plugin sandbox layout (DB location is plugins/<pluginID>/).
+const PLUGIN_DIR = '/storage/emulated/0/Android/data/com.ratta.supernote/files/plugins/sndictdfltbasev1';
+const BASE_DB_PATH = `${PLUGIN_DIR}/base.db`;
+const USER_DB_PATH = `${PLUGIN_DIR}/user.db`;
+const IMPORT_DIR = `${PLUGIN_DIR}/imported`;
+// The bundled base.db asset name react-native-sqlite-storage copies
+// from (createFromLocation reads from the app's www/ assets).
+const BASE_DB_ASSET = 'base.db';
 
-// The base dict source. Bundled into the JS at build time, so the
-// loader is sync underneath; we wrap it in async to fit the shared
-// loadBase contract used by runtime-discovered user dicts. Explicit
-// format='wordnet' so the popup uses the structured-sense renderer
-// for entries from this source.
-const baseSource = createStardictLookup({
-  name: 'WordNet',
-  loadBase: async () => loadBaseDictFromGenerated(),
-  format: 'wordnet',
-  cache: indexCache,
-  logger,
+// fetch(file://...) byte/text readers for the import pipeline.
+const readBytes = async path => {
+  const res = await fetch(`file://${path}`);
+  if (!res.ok) {
+    throw new Error(`read ${path} -> ${res.status}`);
+  }
+  return new Uint8Array(await res.arrayBuffer());
+};
+const readText = async path => {
+  const bytes = await readBytes(path);
+  return decodeUtf8(bytes);
+};
+
+const buttonsEnabled = {done: false};
+const enableButtons = async () => {
+  if (buttonsEnabled.done) {
+    return;
+  }
+  buttonsEnabled.done = true;
+  await Promise.all([
+    PluginManager.setButtonState(NOTE_LASSO_DEFINE_BUTTON_ID, true),
+    PluginManager.setButtonState(DOC_SELECT_DEFINE_BUTTON_ID, true),
+  ]);
+  logger.log('[startup] Lookup buttons enabled');
+};
+
+const provision = createRnProvisionPorts({
+  dbPath: BASE_DB_PATH,
+  fileUtils: FileUtils,
+  openExisting: openRnSqliteDb({name: BASE_DB_PATH}),
+  openFromAsset: async () => {
+    const open = openRnSqliteDb({
+      name: 'base.db',
+      createFromAsset: `~${BASE_DB_ASSET}`,
+    });
+    const db = await open();
+    if (db === null) {
+      throw new Error('[provision] base.db createFromLocation returned null');
+    }
+    return db;
+  },
 });
 
-// Mutable source list, captured by closure inside createMultiDictLookup
-// so user dicts discovered at runtime are picked up by lookups without
-// rebuilding the registry. Order: discovered user dicts first (they're
-// shown above the base in the popup section list), base dict last.
-const sources = [baseSource];
+const bootstrapPorts = {
+  provision,
+  db: {
+    openUserDb: async () => {
+      const open = openRnSqliteDb({name: USER_DB_PATH});
+      const db = await open();
+      if (db === null) {
+        throw new Error('user.db open returned null');
+      }
+      return db;
+    },
+    openImportedDb: filename => openRnSqliteDb({name: `${IMPORT_DIR}/${filename}`}),
+  },
+  discover: () => discoverUserDicts({fileUtils: FileUtils, logger}),
+  importPortsFor: (descriptor, audit) =>
+    createRnImportPorts({
+      ifoPath: descriptor.ifoPath,
+      idxPath: descriptor.idxPath,
+      dictPath: descriptor.dictPath,
+      synPath: descriptor.synPath,
+      sidecarPath: descriptor.sidecarPath,
+      slugDbDir: IMPORT_DIR,
+      fileUtils: FileUtils,
+      readers: {readBytes, readText},
+      openSlugDb: absPath =>
+        openRnSqliteDb({name: absPath})().then(db => {
+          if (db === null) {
+            throw new Error(`open slug db returned null: ${absPath}`);
+          }
+          return db;
+        }),
+      reopenSlugDb: openRnSqliteDb({name: `${IMPORT_DIR}/__verify__`}),
+      audit,
+    }),
+  enableButtons,
+};
 
-const lookup = createMultiDictLookup(sources, logger);
+// Captured by the handlers; populated when bootstrap resolves. Until
+// then the buttons are disabled, so no lookup can fire against a null.
+const runtime = {lookup: null};
 
-// Eager-load the base dict at plugin start so any build error is
-// visible immediately in logcat rather than at first lookup. The
-// dict is memoised inside the loader, so this doesn't add per-lookup
-// cost.
-//
-// We ALSO use the init probe as the gate for enabling the Lookup
-// buttons. The buttons are registered with `enable: false` below; on
-// init probe resolution they flip to enabled via setButtonState. The
-// user can't tap before WordNet is parseable — which avoids the
-// 8-second OCR + lookup latency we observed on-device when a tap
-// raced active priming on the JS thread.
-lookup
-  .lookup('__sndict_init__')
-  .then(() => {
-    logger.log('[stardict] base dict loaded ok (init probe complete)');
-    return Promise.all([
-      PluginManager.setButtonState(NOTE_LASSO_DEFINE_BUTTON_ID, true),
-      PluginManager.setButtonState(DOC_SELECT_DEFINE_BUTTON_ID, true),
-    ])
-      .then(() => logger.log('[startup] Lookup buttons enabled'))
-      .catch(e =>
-        logger.warn(
-          `[startup] setButtonState threw: ${e.message} — buttons remain disabled until next reload`,
-        ),
-      );
-  })
-  .catch(e => logger.error(`[stardict] init probe threw: ${e.message}`));
-
-// Discover sideloaded user dicts under /storage/emulated/0/MyStyle/SnDict.
-// Fire-and-forget at startup: the Lookup buttons are registered
-// disabled (see initiallyEnabled:false below) and stay disabled
-// until the base WordNet init probe completes — that's when
-// setButtonState flips them on. Discovery runs in parallel with
-// the base prime; user dicts are prepended to the registry as
-// they're found and primed concurrently afterwards. Once base is
-// ready and the buttons enable, a tap returns hits from any
-// already-primed source and skips still-loading user dicts via
-// multiDictLookup's status gate.
-//
-// Priming is delegated to primeAllConcurrently — see that module
-// for the rationale on concurrent vs. serial. The contract is
-// covered by __tests__/primeAllConcurrently.test.ts so we can't
-// regress this without breaking the suite.
-discoverUserDicts({fileUtils: FileUtils, cache: indexCache, logger})
-  .then(async userDicts => {
-    if (userDicts.length === 0) {
-      return;
-    }
-    sources.unshift(...userDicts);
+bootstrap(bootstrapPorts, logger)
+  .then(handle => {
+    runtime.lookup = handle.lookup;
     logger.log(
-      `[startup] registry now has ${sources.length} source(s): [${sources
+      `[startup] engine ready: ${handle.sources.length} source(s) [${handle.sources
         .map(s => s.name)
         .join(', ')}]`,
     );
-    await primeAllConcurrently(userDicts, logger);
   })
-  .catch(e => logger.error(`[discovery] dispatch crashed: ${e.message}`));
+  .catch(e => logger.error(`[startup] bootstrap failed: ${e.message}`));
 
 // closePluginView lives on PluginManager, not PluginCommAPI, so the
-// handlers take a separate `view` dep. PluginManager satisfies the
-// ClosablePluginView interface structurally — no wrapper needed.
-// Wiring it via PluginCommAPI would silently resolve to undefined at
-// runtime — exactly the bug the on-device "[WARN] closePluginView
-// threw: undefined is not a function" reentrancy log surfaced.
+// handlers take a separate `view` dep.
 const noteHandlerDeps = {
   comm: PluginCommAPI,
   view: PluginManager,
   file: PluginFileAPI,
-  lookup,
+  lookup: {lookup: (...args) => runtime.lookup.lookup(...args)},
   showRecognizing,
   showResult: showDefinition,
   hidePopup: hideDefinition,
@@ -152,16 +174,14 @@ const noteHandlerDeps = {
 const docHandlerDeps = {
   doc: PluginDocAPI,
   view: PluginManager,
-  lookup,
+  lookup: {lookup: (...args) => runtime.lookup.lookup(...args)},
   showResult: showDefinition,
   logger,
 };
 
 registerNoteLassoButton({
   pluginManager: PluginManager,
-  // Disabled until the base WordNet dict has primed. setButtonState
-  // flips it on after the init probe completes; see the lookup
-  // .then chain above.
+  // Disabled until bootstrap provisions base.db and calls enableButtons.
   initiallyEnabled: false,
   onPress: () => {
     onNoteLassoDefine(noteHandlerDeps).catch(e => {
