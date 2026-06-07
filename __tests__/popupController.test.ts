@@ -4,6 +4,9 @@ import {
   hideDefinition,
   subscribe,
   getCurrentState,
+  setPopupActions,
+  getPopupActions,
+  type PopupActions,
   __testing__,
 } from '../src/ui/popupController';
 
@@ -97,5 +100,43 @@ describe('popupController', () => {
     unsub();
     showDefinition({queriedFor: 'x', hits: [], loading: []});
     expect(seen).toEqual([]);
+  });
+
+  test('showDefinition carries editable=true when requested (lasso flow)', () => {
+    const seen: Array<{editable?: boolean}> = [];
+    subscribe(s => seen.push(s as {editable?: boolean}));
+    showDefinition({queriedFor: 'x', hits: [], loading: []}, 'OCR: x', true);
+    expect(seen[0].editable).toBe(true);
+  });
+
+  test('showDefinition omits editable when not requested (doc-select flow)', () => {
+    const seen: Array<{editable?: boolean}> = [];
+    subscribe(s => seen.push(s as {editable?: boolean}));
+    showDefinition({queriedFor: 'x', hits: [], loading: []});
+    expect(seen[0].editable).toBeUndefined();
+  });
+});
+
+describe('popupController — actions registry', () => {
+  const fakeActions: PopupActions = {
+    lookupThesaurus: async () => ({lang: 'en', omw: {synonyms: [], antonyms: []}}),
+    addUserEntry: async () => undefined,
+    relookup: async () => undefined,
+  };
+
+  test('getPopupActions is null before registration', () => {
+    expect(getPopupActions()).toBeNull();
+  });
+
+  test('setPopupActions registers, getPopupActions returns them', () => {
+    setPopupActions(fakeActions);
+    expect(getPopupActions()).toBe(fakeActions);
+  });
+
+  test('__testing__.reset nulls the registered actions (test isolation)', () => {
+    setPopupActions(fakeActions);
+    expect(getPopupActions()).toBe(fakeActions);
+    __testing__.reset();
+    expect(getPopupActions()).toBeNull();
   });
 });
