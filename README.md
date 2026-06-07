@@ -400,7 +400,15 @@ buildPlugin.ps1                  build (Windows): same pipeline as buildPlugin.s
 
 MIT — see [LICENSE](./LICENSE).
 
-The bundled WordNet content is distributed under its own [WordNet license](https://wordnet.princeton.edu/license-and-commercial-use) (BSD-style; free for any use including redistribution).
+### Bundled dictionary content (WordNet)
+
+The bundled English dictionary is generated from **Princeton WordNet®** and shipped on-device as a pre-built SQLite database (`base.db`, produced by `npm run build:base-db`).
+
+- **Source.** Princeton University WordNet 2.x/3.x lexical database — <https://wordnet.princeton.edu/>.
+- **License.** Distributed under the [WordNet license](https://wordnet.princeton.edu/license-and-commercial-use) — a permissive BSD-style license that allows use, copying, modification, and redistribution (including commercial) provided the copyright notice and this attribution are retained.
+- **Required attribution.** *WordNet® is a registered trademark of Princeton University.* The lexical content carries Princeton University's copyright notice; any redistribution of `base.db` (e.g. inside a custom `.snplg`) must preserve this attribution.
+
+No WordNet content is modified semantically by the build: the generator only re-shapes the existing StarDict triple into indexed SQLite rows (`scripts/buildBaseDb.mjs`).
 
 ---
 
