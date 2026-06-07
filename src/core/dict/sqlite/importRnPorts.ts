@@ -9,7 +9,7 @@
 // host-tested with fakes; keep this THIN so the pipeline stays the
 // faithful stand-in.
 
-import type {OpenSqliteDb, SqliteDb} from './db';
+import type {SqliteDb} from './db';
 import type {ImportPorts, SlugDbLifecycle, StardictSet} from './importStardict';
 
 // Byte / text readers for the source files. M5 supplies the concrete
@@ -40,8 +40,11 @@ export type RnImportConfig = {
   readers: SourceReaders;
   // Opens (creates) a slug DB at an absolute path.
   openSlugDb: (absPath: string) => Promise<SqliteDb>;
-  // Opens an existing slug DB (committed-state read for verify).
-  reopenSlugDb: OpenSqliteDb;
+  // Reopens an EXISTING slug DB at an absolute path to read its
+  // COMMITTED state for verify. MUST resolve the SAME absolute path
+  // openSlugDb was given for a filename — verify reopens the actual DB
+  // just written, not a fixed placeholder (the M5 device-wiring bug).
+  reopenSlugDb: (absPath: string) => Promise<SqliteDb | null>;
   // The writable user.db handle the audit row goes into.
   audit: SqliteDb;
   // Timestamp source (default: ISO now).
@@ -65,7 +68,11 @@ export const createRnImportPorts = (config: RnImportConfig): ImportPorts => {
       return config.openSlugDb(joinPath(config.slugDbDir, filename));
     },
     async reopenForVerify(filename: string): Promise<SqliteDb> {
-      const db = await config.reopenSlugDb();
+      // Resolve the SAME absolute path as open(filename) so verify
+      // reopens the actual slug DB just written.
+      const db = await config.reopenSlugDb(
+        joinPath(config.slugDbDir, filename),
+      );
       if (db === null) {
         throw new Error(`[import] reopen for verify returned null: ${filename}`);
       }

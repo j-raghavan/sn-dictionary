@@ -80,6 +80,25 @@ const baseSet = (over: Partial<StardictSet> = {}): StardictSet => {
 };
 
 describe('importStardict — happy path', () => {
+  it('reopenForVerify is called with the SAME filename as open (device-wiring contract)', async () => {
+    // Locks the contract the RN adapter must honour: verify reopens the
+    // ACTUAL slug filename written by open(), not a fixed placeholder.
+    // (The M5 device bug was importRnPorts ignoring this filename.)
+    const h = await makeHarness(baseSet());
+    const openSpy = jest.fn(h.ports.slugDb.open);
+    const reopenSpy = jest.fn(h.ports.slugDb.reopenForVerify);
+    h.ports.slugDb.open = openSpy;
+    h.ports.slugDb.reopenForVerify = reopenSpy;
+
+    const res = await importStardict(h.ports);
+    expect(res.ok).toBe(true);
+    expect(openSpy).toHaveBeenCalledTimes(1);
+    expect(reopenSpy).toHaveBeenCalledTimes(1);
+    // The exact same filename string flows to both.
+    expect(reopenSpy.mock.calls[0][0]).toBe(openSpy.mock.calls[0][0]);
+    expect(reopenSpy.mock.calls[0][0]).toBe('my-dict.en.db');
+  });
+
   it('imports, verifies post-commit COUNT, deletes sources, audits with now()', async () => {
     const h = await makeHarness(baseSet());
     const res = await importStardict(h.ports);

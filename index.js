@@ -137,7 +137,10 @@ const bootstrapPorts = {
           }
           return db;
         }),
-      reopenSlugDb: openRnSqliteDb({name: `${IMPORT_DIR}/__verify__`}),
+      // Reopen the ACTUAL slug DB at absPath (the same path openSlugDb
+      // was given for this filename) so verify reads committed rows from
+      // the file just written — not a fixed placeholder.
+      reopenSlugDb: absPath => openRnSqliteDb({name: absPath})(),
       audit,
     }),
   enableButtons,
