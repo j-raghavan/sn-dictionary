@@ -8,8 +8,11 @@ import {createSeededDb} from './_helpers/betterSqliteDb';
 import {
   CREATE_ENTRIES_INDEX,
   CREATE_ENTRIES_TABLE,
+  CREATE_META_TABLE,
   DEFINITION_FORMATS,
+  INSERT_META,
   SELECT_ENTRY_BY_KEY,
+  SELECT_META_VERSION,
 } from '../src/core/dict/sqlite/schema';
 
 describe('entries schema', () => {
@@ -73,5 +76,51 @@ describe('entries schema', () => {
 
   it('DEFINITION_FORMATS lists exactly the renderable formats', () => {
     expect([...DEFINITION_FORMATS].sort()).toEqual(['html', 'plain', 'wordnet']);
+  });
+});
+
+describe('meta schema (TF3-FR3)', () => {
+  it('creates the meta table and round-trips a single version row', async () => {
+    const db = await createSeededDb(async d => {
+      await d.run(CREATE_META_TABLE);
+      await d.run(INSERT_META, [3, '2024-01-01T00:00:00Z']);
+    });
+    // Idempotent re-create is a no-op.
+    await db.run(CREATE_META_TABLE);
+
+    const rows = await db.query<{schema_version: number}>(SELECT_META_VERSION);
+    expect(rows).toEqual([{schema_version: 3}]);
+    await db.close();
+  });
+
+  it('SELECT_META_VERSION returns zero rows when meta is absent', async () => {
+    const db = await createSeededDb(async d => {
+      await d.run(CREATE_META_TABLE);
+    });
+    const rows = await db.query(SELECT_META_VERSION);
+    expect(rows).toEqual([]);
+    await db.close();
+  });
+
+  it('SELECT_META_VERSION returns at most one row (LIMIT 1)', async () => {
+    const db = await createSeededDb(async d => {
+      await d.run(CREATE_META_TABLE);
+      await d.run(INSERT_META, [1, 'a']);
+      await d.run(INSERT_META, [2, 'b']);
+    });
+    expect(await db.query(SELECT_META_VERSION)).toHaveLength(1);
+    await db.close();
+  });
+
+  it('preserves schema_version 0 as a valid stamped value', async () => {
+    // 0 is falsy but a legitimate version — provisioning must compare
+    // === EXPECTED, never `if (version)`.
+    const db = await createSeededDb(async d => {
+      await d.run(CREATE_META_TABLE);
+      await d.run(INSERT_META, [0, 'zero']);
+    });
+    const rows = await db.query<{schema_version: number}>(SELECT_META_VERSION);
+    expect(rows[0].schema_version).toBe(0);
+    await db.close();
   });
 });

@@ -55,3 +55,31 @@ export const DEFINITION_FORMATS: readonly DefinitionFormat[] = [
   'html',
   'plain',
 ];
+
+// --- meta table (TF3-FR3) -------------------------------------------
+// A single-row table stamping each generated DB with its schema
+// version (so provisioning can detect a stale bundled DB and re-copy)
+// and a deterministic build timestamp (audit trail). The GENERATOR is
+// the ONLY writer (INSERT_META); provisioning reads SELECT_META_VERSION
+// and NEVER writes the read-only base.db (IV-2). The generator writes
+// this row LAST (after entries + index) so a power-loss mid-build
+// leaves meta absent, which provisioning treats as "reprovision".
+
+export const CREATE_META_TABLE =
+  'CREATE TABLE IF NOT EXISTS meta (' +
+  'schema_version INTEGER NOT NULL, ' +
+  'built_at TEXT NOT NULL)';
+
+// Read the stamped schema version. LIMIT 1: the table holds exactly
+// one row. Returns zero rows when meta is absent (mid-build crash /
+// pre-meta DB) — the caller treats rows.length === 0 as reprovision.
+export const SELECT_META_VERSION = 'SELECT schema_version FROM meta LIMIT 1';
+
+// Generator-only write (IV-2). Never called by provision.ts.
+export const INSERT_META =
+  'INSERT INTO meta (schema_version, built_at) VALUES (?, ?)';
+
+// Projected shape of SELECT_META_VERSION.
+export interface MetaRow {
+  schema_version: number;
+}
