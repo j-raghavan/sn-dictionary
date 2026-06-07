@@ -31,10 +31,14 @@ import {
 } from '../src/ui/popupController';
 import {createMultiDictLookup} from '../src/core/dict/multiDictLookup';
 import {createStardictLookup} from '../src/core/dict/stardictLookup';
-import {createCsvDictSource} from '../src/core/dict/csvDictSource';
+import {createSqliteDictSource} from '../src/core/dict/sqlite/sqliteDictSource';
+import {buildDict} from '../src/core/dict/stardict/stardictDict';
+import {populateBaseDb, SCHEMA_VERSION} from '../src/core/dict/sqlite/buildBaseDb';
 import type {DictSource} from '../src/core/lookup';
+import type {SqliteDb} from '../src/core/dict/sqlite/db';
 import {buildSyntheticStarDict} from './_helpers/buildSyntheticStarDict';
-import {enc, u8ToArrayBuffer} from './_helpers/inMemoryVfs';
+import {createSeededDb} from './_helpers/betterSqliteDb';
+import {u8ToArrayBuffer} from './_helpers/inMemoryVfs';
 
 const renderPopup = (): ReactTestRenderer => {
   let tree!: ReactTestRenderer;
@@ -72,19 +76,32 @@ const stardictBuffers = (entries: Record<string, string>) => {
   };
 };
 
+// A real SQLite-backed source: build a tiny base.db from a synthetic
+// StarDict triple via the real generator (entryFormat 'plain' to match
+// the old CSV engine's output), then wrap it as a DictSource. Replaces
+// the retired CSV engine fixture; popup assertions are byte-identical
+// because the produced {word, definition, format:'plain'} entries are
+// the same the CSV source emitted.
+const sqliteSourceFor = async (
+  name: string,
+  entries: Record<string, string>,
+): Promise<DictSource> => {
+  const triple = buildSyntheticStarDict(entries);
+  const parsed = await buildDict(triple.ifo, triple.idx, triple.dict);
+  const db: SqliteDb = await createSeededDb(async d => {
+    await populateBaseDb(d, parsed, SCHEMA_VERSION, 'plain');
+  });
+  return createSqliteDictSource({name, openDb: async () => db});
+};
+
 beforeEach(() => {
   __testing__.reset();
 });
 
 describe('end-to-end (discovery → registry → popup)', () => {
   test('user-dropped CSV becomes a popup section after lookup', async () => {
-    // 1. Real custom source (CSV engine fixture).
-    const userDicts = [
-      createCsvDictSource({
-        name: 'medical',
-        loadBytes: async () => enc('apple,a fruit\n'),
-      }),
-    ];
+    // 1. Real custom source (SQLite base.db engine fixture).
+    const userDicts = [await sqliteSourceFor('medical', {apple: 'a fruit'})];
     // 2. Real registry composition.
     const lookup = createMultiDictLookup(userDicts);
     // 3. Real popup mounting.
@@ -102,12 +119,7 @@ describe('end-to-end (discovery → registry → popup)', () => {
 
   test('multi-source rendering: both dicts hit, popup shows both sections with badges', async () => {
     const baseTriple = stardictBuffers({apple: 'a fruit (base)'});
-    const userDicts = [
-      createCsvDictSource({
-        name: 'custom',
-        loadBytes: async () => enc('apple,a fruit (custom)\n'),
-      }),
-    ];
+    const userDicts = [await sqliteSourceFor('custom', {apple: 'a fruit (custom)'})];
     const baseSource: DictSource = createStardictLookup({
       name: 'WordNet',
       loadBase: async () => ({
@@ -132,12 +144,7 @@ describe('end-to-end (discovery → registry → popup)', () => {
   });
 
   test('not-found: lookup misses every source; popup shows the not-found message', async () => {
-    const userDicts = [
-      createCsvDictSource({
-        name: 'A',
-        loadBytes: async () => enc('apple,fruit\n'),
-      }),
-    ];
+    const userDicts = [await sqliteSourceFor('A', {apple: 'fruit'})];
     const lookup = createMultiDictLookup(userDicts);
     const tree = renderPopup();
     const result = await lookup.lookup('xyzzy');
@@ -240,12 +247,7 @@ describe('end-to-end (discovery → registry → popup)', () => {
     // Kick off the lookup before the user dict is added...
     const inFlight = lookup.lookup('apple');
     // ...then prepend a user dict, the way the runtime mutates sources.
-    const userDicts = [
-      createCsvDictSource({
-        name: 'extra',
-        loadBytes: async () => enc('apple,fruit (extra)\n'),
-      }),
-    ];
+    const userDicts = [await sqliteSourceFor('extra', {apple: 'fruit (extra)'})];
     sources.unshift(...userDicts);
 
     const result = await inFlight;
