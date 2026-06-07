@@ -17,6 +17,7 @@ import {
   CREATE_META_TABLE,
   INSERT_META,
 } from './schema';
+import {populateThesaurus, type OmwRow} from './buildThesaurus';
 
 // The schema version the generator stamps into the meta row. Bumped
 // whenever the on-disk shape changes so a stale bundled DB is detected
@@ -72,10 +73,16 @@ export type PopulateResult = {
 // happen inside one transaction (the dominant cost is the per-row
 // INSERT). Returns the inserted vs expected counts so the caller can
 // assert insertedCount === parsed.index.size (TF3-FR2 DoD).
+//
+// omwRows (TF4-FR1, additive): when supplied, the OMW thesaurus is
+// populated BETWEEN the entries index and the meta row, so meta stays
+// LAST (the crash-safety invariant). Omitting it is byte-identical to
+// the M2 entries-only behaviour.
 export const populateBaseDb = async (
   db: SqliteDb,
   parsed: ParsedDict,
   schemaVersion: number,
+  omwRows?: OmwRow[],
 ): Promise<PopulateResult> => {
   const rows = entriesFromParsedDict(parsed);
 
@@ -94,6 +101,11 @@ export const populateBaseDb = async (
   // Index AFTER the bulk load (cheaper than maintaining it per-insert).
   await db.run(CREATE_ENTRIES_INDEX);
 
+  // Thesaurus (if provided) BEFORE meta so meta remains the last write.
+  if (omwRows !== undefined) {
+    await populateThesaurus(db, omwRows);
+  }
+
   // Meta LAST (Designer flag 4) — a crash before this point leaves the
   // DB without a meta row, which provisioning treats as reprovision.
   await db.run(CREATE_META_TABLE);
@@ -111,7 +123,8 @@ export const buildBaseDbFromTriple = async (
   idx: Uint8Array,
   dict: Uint8Array,
   schemaVersion: number,
+  omwRows?: OmwRow[],
 ): Promise<PopulateResult> => {
   const parsed = await buildDict(ifo, idx, dict);
-  return populateBaseDb(db, parsed, schemaVersion);
+  return populateBaseDb(db, parsed, schemaVersion, omwRows);
 };

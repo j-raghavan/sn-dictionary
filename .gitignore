@@ -88,6 +88,11 @@ CLAUDE*
 dict/wordnet/
 src/core/dict/data/baseDictData.ts
 
+# OMW thesaurus source — fetched + built by scripts/{fetchOmw.mjs,buildOmw.mjs}
+# into dict/omw/omw.tsv, consumed by scripts/buildBaseDb.mjs. Regenerable;
+# not committed.
+dict/omw/
+
 # Local logcat dumps used while debugging on-device sessions.
 logcat.txt
 

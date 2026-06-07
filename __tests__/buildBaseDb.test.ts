@@ -16,7 +16,12 @@ import {
   populateBaseDb,
   SCHEMA_VERSION,
 } from '../src/core/dict/sqlite/buildBaseDb';
-import {SELECT_ENTRY_BY_KEY, SELECT_META_VERSION} from '../src/core/dict/sqlite/schema';
+import {
+  SELECT_ENTRY_BY_KEY,
+  SELECT_META_VERSION,
+  SELECT_THESAURUS_BY_KEY_LANG,
+} from '../src/core/dict/sqlite/schema';
+import type {OmwRow} from '../src/core/dict/sqlite/buildThesaurus';
 import type {SqliteDb} from '../src/core/dict/sqlite/db';
 
 const DEFS: Record<string, string> = {
@@ -155,6 +160,68 @@ describe('populateBaseDb / buildBaseDbFromTriple', () => {
     const metaIdx = order.findIndex(s => s.startsWith('INSERT INTO meta'));
     expect(entriesIdx).toBeGreaterThanOrEqual(0);
     expect(metaIdx).toBeGreaterThan(entriesIdx);
+    await raw.close();
+  });
+});
+
+describe('populateBaseDb with omwRows (TF4-FR1)', () => {
+  const OMW: OmwRow[] = [
+    {key: 'apple', lang: 'en', rel: 'synonym', target: 'orchard apple tree'},
+    {key: 'apple', lang: 'en', rel: 'antonym', target: 'nonfruit'},
+  ];
+
+  it('entries-only path (omwRows omitted) creates no thesaurus table — M2 behaviour', async () => {
+    const db = await emptyDb();
+    const t = triple();
+    await buildBaseDbFromTriple(db, t.ifo, t.idx, t.dict, SCHEMA_VERSION);
+    const tbl = await db.query(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+      ['thesaurus'],
+    );
+    expect(tbl).toEqual([]);
+    await db.close();
+  });
+
+  it('populates the thesaurus when omwRows is supplied', async () => {
+    const db = await emptyDb();
+    const t = triple();
+    await buildBaseDbFromTriple(db, t.ifo, t.idx, t.dict, SCHEMA_VERSION, OMW);
+    const rows = await db.query(SELECT_THESAURUS_BY_KEY_LANG, ['apple', 'en']);
+    expect(rows).toEqual([
+      {rel: 'synonym', target: 'orchard apple tree'},
+      {rel: 'antonym', target: 'nonfruit'},
+    ]);
+    await db.close();
+  });
+
+  it('keeps meta LAST: thesaurus is written BETWEEN entries-index and meta', async () => {
+    const t = triple();
+    const parsed = await buildDict(t.ifo, t.idx, t.dict);
+    const order: string[] = [];
+    const raw = await emptyDb();
+    const spy: SqliteDb = {
+      query: raw.query.bind(raw),
+      run: async (sql, params) => {
+        if (sql.startsWith('CREATE INDEX IF NOT EXISTS idx_entries')) {
+          order.push('ENTRIES_INDEX');
+        } else if (sql.startsWith('CREATE TABLE IF NOT EXISTS thesaurus')) {
+          order.push('THESAURUS_TABLE');
+        } else if (sql.startsWith('INSERT INTO meta')) {
+          order.push('META');
+        }
+        return raw.run(sql, params);
+      },
+      transaction: raw.transaction.bind(raw),
+      close: raw.close.bind(raw),
+    };
+    await populateBaseDb(spy, parsed, SCHEMA_VERSION, OMW);
+
+    const ei = order.indexOf('ENTRIES_INDEX');
+    const ti = order.indexOf('THESAURUS_TABLE');
+    const mi = order.indexOf('META');
+    expect(ei).toBeGreaterThanOrEqual(0);
+    expect(ti).toBeGreaterThan(ei); // thesaurus after entries index
+    expect(mi).toBeGreaterThan(ti); // meta after thesaurus -> still LAST
     await raw.close();
   });
 });

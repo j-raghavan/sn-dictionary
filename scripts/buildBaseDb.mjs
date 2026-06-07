@@ -20,10 +20,12 @@ import {
   buildBaseDbFromTriple,
   SCHEMA_VERSION,
 } from '../src/core/dict/sqlite/buildBaseDb.ts';
+import {parseOmwTsv} from '../src/core/dict/sqlite/buildThesaurus.ts';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = join(__dirname, '..');
 const DICT_DIR = join(PROJECT_ROOT, 'dict', 'wordnet');
+const OMW_FILE = join(PROJECT_ROOT, 'dict', 'omw', 'omw.tsv');
 const OUT_DIR = join(PROJECT_ROOT, 'build');
 const OUT_FILE = join(OUT_DIR, 'base.db');
 
@@ -79,11 +81,24 @@ const main = async () => {
     readFile(dictPath),
   ]);
 
+  // OMW thesaurus is optional: warn-skip if dict/omw/omw.tsv is absent
+  // so an entries-only build still works (run `npm run prepare:omw`
+  // to stage it).
+  let omwRows;
+  try {
+    const omwText = await readFile(OMW_FILE, 'utf-8');
+    omwRows = parseOmwTsv(omwText);
+    log(`[build:base-db] OMW thesaurus: ${omwRows.length} relations`);
+  } catch {
+    log(`[build:base-db] OMW thesaurus absent (${OMW_FILE}) — building entries only`);
+  }
+
   await mkdir(OUT_DIR, {recursive: true});
   // Fresh build: start from an empty file so reruns are deterministic.
   const raw = new Database(OUT_FILE);
   raw.exec('PRAGMA journal_mode = DELETE');
   raw.exec('DROP TABLE IF EXISTS entries');
+  raw.exec('DROP TABLE IF EXISTS thesaurus');
   raw.exec('DROP TABLE IF EXISTS meta');
   const db = wrap(raw);
 
@@ -93,6 +108,7 @@ const main = async () => {
     idxBytes,
     dictBytes,
     SCHEMA_VERSION,
+    omwRows,
   );
 
   if (insertedCount !== expectedCount) {
@@ -105,7 +121,9 @@ const main = async () => {
   raw.exec('VACUUM');
   raw.close();
 
-  log(`[build:base-db] wrote ${OUT_FILE} (${insertedCount} entries, schema v${SCHEMA_VERSION})`);
+  log(
+    `[build:base-db] wrote ${OUT_FILE} (${insertedCount} entries, ${omwRows?.length ?? 0} thesaurus relations, schema v${SCHEMA_VERSION})`,
+  );
 };
 
 main().catch(err => {
