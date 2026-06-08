@@ -38,6 +38,24 @@ How do we make Lookup ready in ~1 s on a (post-provision) note re-open, with rea
 - Risk: native module behaviour under the firmware is unverified here → the TF1 spike is the gate (RO-1).
 - Edge: if the spike fails, the cold-start problem is re-opened against Option 2.
 
+## TF1 On-Device Spike Runbook (DEVICE-UNVERIFIED gate)
+
+The native scaffold (M1–M7) is complete but **unverified on hardware** — there is no Gradle/NDK/Manta in this environment. This runbook is the on-device gate that must pass before the blob is retired (ADR-0002) and before release.
+
+**Build + install.** On macOS/Linux (or WSL) with the Android toolchain:
+`npm install` → `./buildPlugin.sh` (runs `prepare:dict`, `build:base-db`, stages `build/base.db → android/app/src/main/assets/base.db`, Metro bundle, then `gradlew buildCustomApkDebug` → `app.npk`). Sideload the resulting `.snplg` onto a Manta. `buildPlugin.ps1` is unsupported for native builds.
+
+Then verify, capturing `adb logcat` for each:
+
+1. **(GATE) Native load + provision.** First launch triggers `createFromLocation` copying `assets/base.db` → `plugins/sndictdfltbasev1/base.db`. Confirm: the native SQLite module loads (no "Native module is null"), the asset is found (`createFromAsset:"~base.db"` resolves `assets/base.db`, SQLitePlugin.java:363-367), and a trivial `SELECT 1` / a real headword lookup returns a row. *Verifies FLAG 1 (asset path) + FLAG 2 (pluginID location).*
+2. **(GATE) Cold-start < ~1 s.** On a **note re-open after first provision** (base.db already copied — NOT the one-time install copy), measure time-to-Lookup-ready: timestamp from the first `index.js` log line to the `setButtonState(true)` log. Method: median over ≥3 reloads via `adb logcat`. Also capture the **pre-change baseline** the same way to substantiate the "minutes-class / ~5 min" claim (TF8-FR3).
+3. **Five-language lookup latency.** Look up a word in each of EN + four bundled/imported languages; confirm each returns < ~20 ms on-device (TF2-AC1).
+4. **Sideload import → delete → persist.** Drop a StarDict + meta.json under `MyStyle/SnDict/<dict>/`, trigger import; confirm verify-then-delete removes the sources, the audit row persists, and the dict survives a reload (TF5).
+5. **IME-over-overlay (TextInput).** In the popup's OCR-correction field and the add-word form, confirm the soft keyboard appears over the plugin overlay and edits commit (FLAG 4 — `windowSoftInputMode="adjustResize"` is the starting point; if the IME is occluded by the overlay, this is the spike's one likely-rework item).
+6. **Confirm the deferred flags.** Asset path (`~base.db`), provision location (`plugins/sndictdfltbasev1/`), and `PluginManager.setButtonState(BUTTON_ID, true)` behaviour all match expectation.
+
+**Gate = (1) + (2) pass.** If either fails, do **not** retire the blob; reassess Option 2 (filesystem cache) per the decision above. Post-gate follow-up (user-triggered, not part of M7): delete `src/core/dict/data/baseDictData.ts` + `scripts/buildBaseDict.mjs` and drop `prepare:dict` from `buildPlugin.sh` (ADR-0002).
+
 ## More Information
 
-Spec TF1/TF2, RO-1. Sticker demo: `node_change/react-native-sqlite-storage`, `android/`, `buildPlugin.sh`. This repo: `index.js` (init-probe gate), `indexCacheStorage.ts` (the in-memory degrade), `buildPlugin.sh` (`copy_apk_and_update_config`). Related: ADR-0002 (bundled EN DB), ADR-0003 (sideload import), ADR-0004 (thesaurus), ADR-0005 (precedence).
+Spec TF1/TF2, RO-1. Sticker demo: `node_change/react-native-sqlite-storage`, `android/`, `buildPlugin.sh`. This repo: `index.js` (device port wiring), `indexCacheStorage.ts` (the in-memory degrade), `buildPlugin.sh` (base.db asset staging + custom-APK). Related: ADR-0002 (bundled EN DB), ADR-0003 (sideload import), ADR-0004 (thesaurus), ADR-0005 (precedence).
