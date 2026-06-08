@@ -30,6 +30,15 @@ class SnDictImportModule(
     format: String?,
     promise: Promise,
   ) {
+    // A RELATIVE dbPath (e.g. "plugins/<id>/foo.db") is resolved under
+    // the host's files dir — the SAME getFilesDir()+location+name the
+    // SQLite plugin resolves for {name, location}, so JS stays
+    // getFilesDir-free. An absolute path passes through unchanged.
+    val resolvedDbPath = if (dbPath.startsWith("/")) {
+      dbPath
+    } else {
+      java.io.File(reactApplicationContext.filesDir, dbPath).absolutePath
+    }
     executor.execute {
       try {
         val count = StarDictImporter.run(
@@ -37,7 +46,7 @@ class SnDictImportModule(
           idxPath = idxPath,
           dictPath = dictPath,
           synPath = synPath,
-          dbPath = dbPath,
+          dbPath = resolvedDbPath,
           formatOverride = format,
         )
         promise.resolve(count)

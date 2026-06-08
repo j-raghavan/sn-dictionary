@@ -34,13 +34,13 @@ import {onDocSelectDefine} from './src/handlers/onDocSelectDefine';
 import {bootstrap} from './src/core/dict/sqlite/bootstrap';
 import {createRnProvisionPorts} from './src/core/dict/sqlite/provisionRnPorts';
 import {createRnImportPorts} from './src/core/dict/sqlite/importRnPorts';
+import {runNativeImport} from './src/core/dict/sqlite/nativeImport';
 import {openRnSqliteDb} from './src/core/dict/sqlite/rnSqliteDb';
 import {discoverUserDicts} from './src/core/dict/userDictDiscovery';
 import {lookupThesaurus} from './src/core/dict/sqlite/thesaurusLookup';
 import {addUserEntry} from './src/core/dict/sqlite/userEntries';
 import {SELECT_IMPORT_ALL} from './src/core/dict/sqlite/schema';
 import {setPopupActions} from './src/ui/popupController';
-import {decodeUtf8} from './src/sdk/utf8';
 import {
   hideDefinition,
   showDefinition,
@@ -70,20 +70,6 @@ const logger = {
 const PLUGIN_LOCATION = 'plugins/sndictdfltbasev1/';
 
 const openDbByName = name => openRnSqliteDb({name, location: PLUGIN_LOCATION});
-
-// fetch(file://...) byte/text readers for the import SOURCE files (real
-// filesystem paths from discovery — not DB locations).
-const readBytes = async path => {
-  const res = await fetch(`file://${path}`);
-  if (!res.ok) {
-    throw new Error(`read ${path} -> ${res.status}`);
-  }
-  return new Uint8Array(await res.arrayBuffer());
-};
-const readText = async path => {
-  const bytes = await readBytes(path);
-  return decodeUtf8(bytes);
-};
 
 // Captured by the handlers; set when bootstrap resolves — which is NOW
 // fast: bootstrap returns as soon as base + user + already-imported are
@@ -186,16 +172,24 @@ const bootstrapPorts = {
       idxPath: descriptor.idxPath,
       dictPath: descriptor.dictPath,
       synPath: descriptor.synPath,
-      // sidecarPath may be undefined (no meta.json); the resolved sidecar
-      // is then serialized in its place by readSet.
+      // sidecarPath may be undefined (no meta.json) — then no sidecar
+      // file is deleted. The sidecarText is the discovery-resolved
+      // sidecar serialized (discovery already read+validated meta.json,
+      // or built the default), so no meta.json re-read is needed.
       sidecarPath: descriptor.sidecarPath,
-      sidecar: descriptor.sidecar,
+      sidecarText: JSON.stringify(descriptor.sidecar),
+      // The native importer reads the .dict itself; we don't pre-size it
+      // in JS (NativeFileUtils has no size probe). No getAvailableSpace
+      // is installed below, so the space guard is a no-op on-device — a
+      // disk-full surfaces as IMPORT_FAILED from the native side.
+      dictByteLength: 0,
       fileUtils: FileUtils,
-      readers: {readBytes, readText},
-      // Slug DBs are opened by {name: filename, location: plugins/<id>/}
-      // — same dir the host extracts into. discard deletes the half-built
-      // file (best-effort; the host resolves the location).
-      openSlugByName: filename => openDbByName(filename)(),
+      // Native parse+insert into plugins/<id>/<filename> (the module
+      // resolves a relative dbPath under the host files dir).
+      runNativeImport,
+      resolveSlugDbPath: filename => `${PLUGIN_LOCATION}${filename}`,
+      // Verify reopens the committed slug DB; discard deletes the
+      // half-built file (best-effort).
       reopenSlugByName: filename => openDbByName(filename)(),
       discardSlugByName: filename =>
         FileUtils.deleteFile(`${PLUGIN_LOCATION}${filename}`).catch(() => {}),
