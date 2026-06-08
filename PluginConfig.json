@@ -2,8 +2,8 @@
   "name": "{\"en\":\"Dictionary\",\"zh_CN\":\"词典\",\"zh_TW\":\"詞典\",\"ja\":\"辞書\",\"th\":\"พจนานุกรม\",\"nl\":\"Woordenboek\",\"de\":\"Wörterbuch\"}",
   "desc": "Tap or lasso a word on your Supernote and see its definition. Offline-first dictionary plugin with optional user-supplied dictionaries.",
   "iconPath": "assets/icon.png",
-  "versionName": "1.0.10",
-  "versionCode": "10010",
+  "versionName": "1.1.0",
+  "versionCode": "10100",
   "pluginID": "sndictdfltbasev1",
   "pluginKey": "SnDict",
   "jsMainPath": "index"
