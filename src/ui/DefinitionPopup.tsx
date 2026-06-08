@@ -1,4 +1,4 @@
-import React, {useCallback, useEffect, useMemo, useState} from 'react';
+import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {Pressable, ScrollView, Text, TextInput, View} from 'react-native';
 import {PluginManager} from 'sn-plugin-lib';
 import {
@@ -93,11 +93,19 @@ export default function DefinitionPopup(): React.JSX.Element {
   const primarySource = resultHits.length > 0 ? resultHits[0].source : '';
   const primaryHit = resultHits.length > 0 ? resultHits[0] : null;
 
+  // Tracks the headword we've already started a thesaurus fetch for, so
+  // the fetch effect can gate refetch WITHOUT depending on the
+  // `thesaurus` state it writes (a self-dependency would re-run the
+  // effect on its own setThesaurus). The ref is the fetch-dedup source
+  // of truth; `thesaurus` state only drives rendering.
+  const fetchedHeadwordRef = useRef<string | null>(null);
+
   // A new headword resets to the Definition tab and drops any cached
   // thesaurus (single-fetch is per-headword).
   useEffect(() => {
     setTab('definition');
     setThesaurus(null);
+    fetchedHeadwordRef.current = null;
   }, [headword]);
 
   // EN WordNet senses for the primary hit, memoised by the definition
@@ -120,13 +128,17 @@ export default function DefinitionPopup(): React.JSX.Element {
     if (tab !== 'thesaurus' || primaryHit === null) {
       return;
     }
-    if (thesaurus !== null && thesaurus.headword === headword) {
-      return; // cache hit — no refetch across tab flips
+    // Dedup via the ref (NOT the thesaurus state) so this effect never
+    // re-fires on its own setThesaurus — one fetch per headword across
+    // tab flips. The reset effect clears the ref on a new headword.
+    if (fetchedHeadwordRef.current === headword) {
+      return;
     }
     const actions = getPopupActions();
     if (actions === null) {
       return; // disabled affordance; never crash
     }
+    fetchedHeadwordRef.current = headword;
     const format = primaryHit.entry.format;
     let cancelled = false;
     actions
@@ -149,7 +161,7 @@ export default function DefinitionPopup(): React.JSX.Element {
     return () => {
       cancelled = true;
     };
-  }, [tab, headword, primarySource, primaryHit, senses, thesaurus]);
+  }, [tab, headword, primarySource, primaryHit, senses]);
 
   // Closing the popup means closing the firmware's overlay region.
   // sn-shapes (ShapePalette.tsx:630) and sn-mindmap (MindmapCanvas.tsx:505)
