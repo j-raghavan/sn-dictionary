@@ -169,7 +169,8 @@ export const bootstrap = async (
     // Additive migration: user.db carries the entries table (for
     // user-added words, TF7) + the imports audit table. user.db uses
     // the 7-col superset 'entries' (lang + created_at + phonetic);
-    // base.db/imports keep the 4-col CREATE_ENTRIES_TABLE.
+    // base.db/imports use the v3 5-col CREATE_ENTRIES_TABLE (+ nullable
+    // phonetic; their INSERTs stay 4-value, so phonetic defaults NULL).
     await userDb.run(CREATE_USER_ENTRIES_TABLE);
     await userDb.run(CREATE_USER_ENTRIES_INDEX);
     // v3 additive migration (M17-FR2): CREATE ... IF NOT EXISTS does NOT

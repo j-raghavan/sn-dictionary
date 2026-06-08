@@ -1,11 +1,11 @@
 # Dictionary Plugin for Supernote
 
-![Tests](https://img.shields.io/badge/tests-175%20passed-brightgreen)
-![Coverage](https://img.shields.io/badge/coverage-100%25%20lines%20%2F%2098%25%20branches-brightgreen)
+![Tests](https://img.shields.io/badge/tests-828%20passed-brightgreen)
+![Coverage](https://img.shields.io/badge/coverage-99%25%20lines%20%2F%2098%25%20branches-brightgreen)
 ![Lint](https://img.shields.io/badge/lint-passing-brightgreen)
 ![Platform](https://img.shields.io/badge/platform-Supernote-blue)
 ![License](https://img.shields.io/badge/license-MIT-blue)
-![Version](https://img.shields.io/badge/version-1.0.8-blue)
+![Version](https://img.shields.io/badge/version-1.0.10-blue)
 
 A Supernote plugin that adds offline English-word lookup to handwritten notes and PDFs. Lasso a word in your notes (handwritten or recognised) or select text in the PDF reader, tap **Lookup**, and the plugin shows the WordNet definition — multiple senses, part-of-speech, synonyms, and example sentences — in a centred popup. Everything runs on-device; no companion app, no cloud, no network calls at lookup time.
 
@@ -17,7 +17,7 @@ A Supernote plugin that adds offline English-word lookup to handwritten notes an
 - **Structured popup.** Each WordNet sense renders as its own block: a part-of-speech badge (*noun* / *verb* / *adjective* / *adverb*), a numbered sense, the definition, italicised example sentences in curly quotes, and a `Synonyms:` line. Senses are visually separated so multi-sense entries (e.g. "AI" — Army Intelligence vs. artificial intelligence vs. three-toed sloth vs. artificial insemination) are scannable at a glance.
 - **Bilingual UI chrome.** The plugin name on the plugin manager card, the **Lookup** toolbar label, and every popup label (`Synonyms:`, `OCR:`, `No definition found for…`, `Close`) localise into Simplified Chinese, Traditional Chinese, Japanese, Thai, and Dutch based on the device's system locale. The dictionary content stays English; the surrounding chrome doesn't.
 - **Case- and whitespace-insensitive.** "Anatomy", "anatomy", and "  ANATOMY  " all hit the same entry.
-- **Bring-your-own dictionary** *(future)* — the architecture splits cleanly into a base `.snplg` and a user-bundled `SnDict_Custom.snplg` produced by an in-browser converter (Prong B). Same plugin code, different content, same popup. Custom dict precedes base on lookup so user terms shadow generic ones.
+- **Bring-your-own dictionary** *(shipped)* — drop a **StarDict** folder or a **CSV** file into `MyStyle/SnDict/` and the plugin imports it into its own SQLite DB at startup (native, off-thread; sources are deleted after a verified import). User dictionaries precede the base on lookup, so your terms shadow generic ones, and a `meta.json` sidecar can name the dict, set its language, and (for CSV) map columns including an optional phonetic field. A separate prebuilt custom `.snplg` via an in-browser converter (Prong B) may still come later.
 
 ## Demo
 
@@ -167,25 +167,26 @@ The cap is per file, so you can have many dictionaries side by side without thei
 
 ### How long before a new dictionary is ready?
 
-After you drop a dict into `MyStyle/SnDict/` and restart the plugin: discovery itself completes in **under a second** for any number of dicts. The visible wait is on the *first lookup* that touches the new dict — that's when the file gets read and parsed into memory. Every subsequent lookup against the same dict in the same session is instant (the index is a hash map living in JS heap).
+Two different things, and both are fast — there is **no per-session parse**. Every dictionary is a prebuilt/indexed SQLite DB, and every lookup is a single indexed `SELECT` (~70 ms on a Manta).
 
-Rough timings, anchored on the one measured number we have (`fetch(file://...)` bridge throughput ≈ 0.85 MB/s on a Nomad) and the existing WordNet baseline of ~30–60 s for the bundled 16 MB dictionary. **These are extrapolated, not benchmarked across the whole grid** — file an issue if your real-world numbers diverge meaningfully:
+**The bundled English dictionary is ready in ~0.25 s.** `base.db` (149k entries + thesaurus) ships *prebuilt* inside the `.snplg` and is *opened*, not parsed — the **Lookup** button is live within ~250–450 ms of the plugin starting (measured on a Manta).
 
-| File size | StarDict (first lookup) | CSV (first lookup) |
+**A sideloaded dictionary is imported once, in the background.** When you drop a dict into `MyStyle/SnDict/`, it's indexed into its own SQLite DB at plugin start by a native (Kotlin) importer running **off the JS thread** — so it never blocks lookups, and the base dictionary is usable immediately. The new dict splices into the registry the moment its import finishes; after that it's permanent (the source files are deleted and the DB persists, so the next launch just *opens* it in milliseconds, like the base dictionary).
+
+Import time scales with **entry count** at a steady **~18,000 entries/sec** (measured on a Manta), i.e. roughly `entries ÷ 18,000`:
+
+| Dictionary | Entries | One-time import |
 |---|---|---|
-| **100 KB** | ~1 s | <1 s |
-| **500 KB** | ~2 s | ~1 s |
-| **1 MB** | ~3–5 s | ~2 s |
-| **5 MB** | ~10–20 s | ~8–15 s |
-| **10 MB** | ~20–40 s | ~15–25 s *(at the cap)* |
-| **16 MB** (= bundled WordNet) | ~30–60 s *(measured baseline)* | — |
-| **50 MB** | ~90–180 s *(extrapolated)* | — |
+| Small CSV (e.g. `Dune.csv`) | ~300 | <1 s |
+| Mid StarDict (`fr-en`) | ~417,000 | ~23 s |
+| Large StarDict (`jp-en`) | ~780,000 | ~44 s |
+| Wiktionary-class | 2–5 M | a few minutes |
 
 Notes:
 
-- The wide ranges reflect device variance (Nomad vs A6X vs Manta — different CPU and RAM) and content variance (a CSV with millions of short entries parses faster per MB than one with fewer-but-longer entries).
-- Discovery is *non-blocking* — the **Lookup** button is enabled immediately after plugin start. If you tap it before the user dict has finished its first parse, that lookup hits the base WordNet only; the next lookup picks up the user dict once parsed.
-- For dicts at the upper end (StarDict 30–60 MB+), expect the first lookup of the session to take a noticeable amount of time. Plan to do that lookup once and then enjoy fast lookups for the rest of the session.
+- **One-time only.** After the first import the dict lives in its own DB; every later launch just *opens* it (milliseconds) — there is no re-parse, ever.
+- **Non-blocking.** The **Lookup** button is live immediately after plugin start. A lookup taken *during* an import answers from whatever is already loaded (base + any finished imports); the importing dict appears as soon as it completes.
+- **Native imports run one at a time** — queue several large dicts and they import sequentially (off-thread), so the last one lands later. CSV imports run in JS (small files, ≤10 MB cap).
 
 ### Verifying it works (with the bundled sample)
 
