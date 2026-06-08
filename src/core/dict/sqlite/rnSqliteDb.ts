@@ -65,6 +65,13 @@ const wrap = (db: RnDatabase): SqliteDb => ({
     // We adapt the async port `fn` by running it against a SqliteDb
     // that delegates each query/run to the queued tx.executeSql, and
     // awaiting it before the native transaction resolves.
+    // Capture any error thrown by the async body and RETHROW it after
+    // the native transaction settles. Swallowing it (the prior
+    // `.catch(() => undefined)`) would resolve a failed transaction as a
+    // success and hide a rollback — the importer would then proceed as
+    // though the populate committed. The native callback is synchronous,
+    // so the queued body runs concurrently; we surface its failure here.
+    let bodyErr: unknown;
     await db.transaction(tx => {
       const txDb: SqliteDb = {
         async query<T = Record<string, unknown>>(
@@ -84,10 +91,13 @@ const wrap = (db: RnDatabase): SqliteDb => ({
         transaction: async inner => inner(txDb),
         close: async () => undefined,
       };
-      // Fire-and-forget: the native layer commits when this callback
-      // returns; the awaited promise above resolves on commit.
-      fn(txDb).catch(() => undefined);
+      fn(txDb).catch(e => {
+        bodyErr = e;
+      });
     });
+    if (bodyErr) {
+      throw bodyErr;
+    }
   },
   async close(): Promise<void> {
     await db.close();
