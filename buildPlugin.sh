@@ -850,6 +850,16 @@ main() {
     (cd "$project_root" && npm run --silent prepare:dict) \
         || { write_color_output "Base dictionary preparation failed" "Red"; exit 1; }
 
+    # Prepare the OMW thesaurus (fetch OEWN 2023 + build dict/omw/omw.tsv)
+    # BEFORE build:base-db, which folds the TSV into base.db's thesaurus
+    # table. This MUST fail the build loudly: if it's skipped/failed,
+    # base.db ships with an empty thesaurus table (the M12 bug we are
+    # fixing) — never silently ship without it. Same fail-fast handling
+    # as prepare:dict above.
+    write_color_output "Preparing OMW thesaurus..." "Blue"
+    (cd "$project_root" && npm run --silent prepare:omw) \
+        || { write_color_output "OMW thesaurus preparation failed — refusing to ship an empty thesaurus" "Red"; exit 1; }
+
     # Build the bundled SQLite base.db and stage it INTO THE .snplg (not
     # app.npk assets). The spike proved react-native-sqlite-storage's
     # createFromLocation can't read app.npk assets in a dynamically-
