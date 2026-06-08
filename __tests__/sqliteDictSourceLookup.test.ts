@@ -17,7 +17,7 @@ const dbWith = (rows: Seed[]): Promise<SqliteDb> =>
   createSeededDb(async d => {
     await d.run(CREATE_ENTRIES_TABLE);
     for (const r of rows) {
-      await d.run('INSERT INTO entries VALUES (?, ?, ?, ?)', [
+      await d.run('INSERT INTO entries (key, word, definition, format) VALUES (?, ?, ?, ?)', [
         r.key,
         r.word,
         r.definition,
@@ -104,6 +104,74 @@ describe('selectByKey', () => {
     expect((await selectByKey(db, payload))?.word).toBe('Safe');
     // ...and the table was never dropped.
     expect((await selectByKey(db, 'survivor'))?.word).toBe('Survivor');
+    await db.close();
+  });
+});
+
+// --- phonetic column (schema v3, M16) ------------------------------
+
+describe('selectByKey — phonetic (v3)', () => {
+  const insertCsv =
+    'INSERT INTO entries (key, word, definition, format, phonetic) VALUES (?, ?, ?, ?, ?)';
+
+  it('maps a non-null/non-empty phonetic to DictEntry.phonetic', async () => {
+    const db = await createSeededDb(async d => {
+      await d.run(CREATE_ENTRIES_TABLE); // v3: has phonetic
+      await d.run(insertCsv, ['arrakis', 'ARRAKIS', 'the planet', 'plain', 'uh-RAK-is']);
+    });
+    expect(await selectByKey(db, 'arrakis')).toEqual({
+      word: 'ARRAKIS',
+      definition: 'the planet',
+      format: 'plain',
+      phonetic: 'uh-RAK-is',
+    });
+    await db.close();
+  });
+
+  it('OMITS phonetic when the column is NULL', async () => {
+    const db = await createSeededDb(async d => {
+      await d.run(CREATE_ENTRIES_TABLE);
+      // 4-col INSERT -> phonetic NULL.
+      await d.run('INSERT INTO entries (key, word, definition, format) VALUES (?, ?, ?, ?)', [
+        'apple',
+        'apple',
+        'a fruit',
+        'plain',
+      ]);
+    });
+    const hit = await selectByKey(db, 'apple');
+    expect(hit).toEqual({word: 'apple', definition: 'a fruit', format: 'plain'});
+    expect(hit).not.toHaveProperty('phonetic');
+    await db.close();
+  });
+
+  it("OMITS phonetic when the column is the empty string ''", async () => {
+    const db = await createSeededDb(async d => {
+      await d.run(CREATE_ENTRIES_TABLE);
+      await d.run(insertCsv, ['apple', 'apple', 'a fruit', 'plain', '']);
+    });
+    const hit = await selectByKey(db, 'apple');
+    expect(hit).not.toHaveProperty('phonetic');
+    await db.close();
+  });
+
+  it('tolerates an OLD slug DB whose entries has NO phonetic column (no crash)', async () => {
+    // A pre-v3 4-col `entries` table — the v3 SELECT would error on the
+    // phonetic projection; selectByKey falls back to the 4-col SELECT.
+    const db = await createSeededDb(async d => {
+      await d.run(
+        'CREATE TABLE entries (key TEXT NOT NULL, word TEXT NOT NULL, definition TEXT NOT NULL, format TEXT NOT NULL)',
+      );
+      await d.run('INSERT INTO entries (key, word, definition, format) VALUES (?, ?, ?, ?)', [
+        'apple',
+        'apple',
+        'a fruit',
+        'plain',
+      ]);
+    });
+    const hit = await selectByKey(db, 'apple');
+    expect(hit).toEqual({word: 'apple', definition: 'a fruit', format: 'plain'});
+    expect(hit).not.toHaveProperty('phonetic');
     await db.close();
   });
 });

@@ -18,12 +18,19 @@
 
 import type {DefinitionFormat} from '../../lookup';
 
+// schema v3 (M16): `phonetic TEXT` is a NULLABLE last column so CSV
+// imports can carry a pronunciation (rendered under the headword by the
+// popup). base.db/StarDict INSERTs stay 4-col — SQLite fills phonetic
+// NULL. selectByKey maps it to DictEntry.phonetic only when non-null &
+// non-empty, and tolerates an old slug DB whose `entries` lacks the
+// column (defensive — see sqliteDictSource).
 export const CREATE_ENTRIES_TABLE =
   'CREATE TABLE IF NOT EXISTS entries (' +
   'key TEXT NOT NULL, ' +
   'word TEXT NOT NULL, ' +
   'definition TEXT NOT NULL, ' +
-  'format TEXT NOT NULL)';
+  'format TEXT NOT NULL, ' +
+  'phonetic TEXT)';
 
 // Index on the folded lookup key — this is what turns the lookup into
 // a single indexed probe instead of a table scan (the whole point of
@@ -56,17 +63,31 @@ export const INSERT_USER_ENTRY =
   'VALUES (?, ?, ?, ?, ?, ?)';
 
 // First row wins (TF2-FR4): LIMIT 1 so a duplicate-key table returns
-// one deterministic row. `key` is bound, never selected.
+// one deterministic row. `key` is bound, never selected. Projects the
+// v3 `phonetic` column; selectByKey falls back to the 4-col SELECT for
+// an old DB that lacks it.
 export const SELECT_ENTRY_BY_KEY =
+  'SELECT word, definition, format, phonetic FROM entries WHERE key = ? LIMIT 1';
+
+// The 4-col fallback for a pre-v3 `entries` (no phonetic column) —
+// e.g. user.db's 6-col table or an old StarDict slug.
+export const SELECT_ENTRY_BY_KEY_NO_PHONETIC =
   'SELECT word, definition, format FROM entries WHERE key = ? LIMIT 1';
+
+// Insert a CSV entry (5-col, with phonetic — bound NULL when absent).
+export const INSERT_CSV_ENTRY =
+  'INSERT INTO entries (key, word, definition, format, phonetic) ' +
+  'VALUES (?, ?, ?, ?, ?)';
 
 // The projected shape of SELECT_ENTRY_BY_KEY. `format` is the raw
 // string off the row; the engine validates it against
 // DEFINITION_FORMATS before trusting it as a DefinitionFormat.
+// `phonetic` is null when the column is absent-by-value (StarDict/base).
 export interface EntryRow {
   word: string;
   definition: string;
   format: string;
+  phonetic?: string | null;
 }
 
 // The valid `format` values (mirrors DefinitionFormat in lookup.ts).

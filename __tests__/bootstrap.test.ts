@@ -99,7 +99,7 @@ type Harness = {
 const makeBaseDb = (): Promise<SqliteDb> =>
   createSeededDb(async d => {
     await d.run(CREATE_ENTRIES_TABLE);
-    await d.run('INSERT INTO entries VALUES (?, ?, ?, ?)', [
+    await d.run('INSERT INTO entries (key, word, definition, format) VALUES (?, ?, ?, ?)', [
       'hello',
       'hello',
       'a greeting',
@@ -130,7 +130,7 @@ const makeHarness = async (opts: {
   const openImportedDb = jest.fn((filename: string) => async () => {
     const db = await createSeededDb(async d => {
       await d.run(CREATE_ENTRIES_TABLE);
-      await d.run('INSERT INTO entries VALUES (?, ?, ?, ?)', [
+      await d.run('INSERT INTO entries (key, word, definition, format) VALUES (?, ?, ?, ?)', [
         filename,
         filename,
         `def for ${filename}`,

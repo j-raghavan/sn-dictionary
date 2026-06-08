@@ -121,7 +121,7 @@ describe('populateBaseDb / buildBaseDbFromTriple', () => {
       SELECT_ENTRY_BY_KEY,
       ["muad'dib"],
     );
-    expect(rows[0]).toEqual({word: 'Muad’Dib', definition: 'a desert mouse', format: 'wordnet'} as never);
+    expect(rows[0]).toEqual({word: 'Muad’Dib', definition: 'a desert mouse', format: 'wordnet', phonetic: null} as never);
     await db.close();
   });
 

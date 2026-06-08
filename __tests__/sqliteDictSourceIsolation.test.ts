@@ -15,7 +15,7 @@ import type {DictSource} from '../src/core/lookup';
 const healthyDb = (): Promise<SqliteDb> =>
   createSeededDb(async d => {
     await d.run(CREATE_ENTRIES_TABLE);
-    await d.run('INSERT INTO entries VALUES (?, ?, ?, ?)', [
+    await d.run('INSERT INTO entries (key, word, definition, format) VALUES (?, ?, ?, ?)', [
       'hello',
       'Hello',
       'a greeting',

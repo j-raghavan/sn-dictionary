@@ -8,7 +8,9 @@ import {
 } from '../src/core/dict/sqlite/userEntries';
 import {
   CREATE_USER_ENTRIES_TABLE,
-  SELECT_ENTRY_BY_KEY,
+  // user.db's 6-col table has no `phonetic` column, so query it with the
+  // 4-col SELECT (the same fallback selectByKey uses defensively).
+  SELECT_ENTRY_BY_KEY_NO_PHONETIC as SELECT_ENTRY_BY_KEY,
 } from '../src/core/dict/sqlite/schema';
 import type {SqliteDb} from '../src/core/dict/sqlite/db';
 

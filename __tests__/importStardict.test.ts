@@ -82,7 +82,7 @@ const makeHarness = async (opts: Opts = {}): Promise<Harness> => {
       const db = await createSeededDb(async d => {
         await d.run(CREATE_ENTRIES_TABLE);
         for (const r of rows) {
-          await d.run('INSERT INTO entries VALUES (?, ?, ?, ?)', [
+          await d.run('INSERT INTO entries (key, word, definition, format) VALUES (?, ?, ?, ?)', [
             r.key,
             r.word,
             r.definition,
@@ -163,7 +163,7 @@ describe('importStardict — happy path', () => {
     // Rows landed in the slug DB.
     const slug = h.slugFiles.get('my-dict.en.db')!;
     const row = await slug.query(SELECT_ENTRY_BY_KEY, ['apple']);
-    expect(row).toEqual([{word: 'apple', definition: 'a fruit', format: 'plain'}]);
+    expect(row).toEqual([{word: 'apple', definition: 'a fruit', format: 'plain', phonetic: null}]);
     // All source files deleted; audit written with the deterministic stamp.
     expect(h.deleteFile).toHaveBeenCalledTimes(4);
     expect(await findImportByNameLang(h.audit, 'My Dict', 'en')).toEqual({

@@ -12,6 +12,7 @@ import type {OpenSqliteDb, SqliteDb} from './db';
 import {
   DEFINITION_FORMATS,
   SELECT_ENTRY_BY_KEY,
+  SELECT_ENTRY_BY_KEY_NO_PHONETIC,
   type EntryRow,
 } from './schema';
 
@@ -40,21 +41,44 @@ export const coerceFormat = (raw: string): DefinitionFormat =>
 // (the SELECT carries LIMIT 1); no row -> null. When `formatOverride`
 // is set it wins over the stored column (the bundled WordNet base
 // pins 'wordnet').
+// Read the row for a folded key. Projects the v3 `phonetic` column, but
+// DEFENSIVELY falls back to the 4-col SELECT for an old `entries` table
+// that has no phonetic column (user.db's 6-col table, pre-v3 slugs) —
+// a missing column must be treated as "no phonetic", never a crash.
+const queryEntryRow = async (
+  db: SqliteDb,
+  foldedKey: string,
+): Promise<EntryRow[]> => {
+  try {
+    return await db.query<EntryRow>(SELECT_ENTRY_BY_KEY, [foldedKey]);
+  } catch {
+    // Most likely "no such column: phonetic" — retry phonetic-less.
+    return db.query<EntryRow>(SELECT_ENTRY_BY_KEY_NO_PHONETIC, [foldedKey]);
+  }
+};
+
 export const selectByKey = async (
   db: SqliteDb,
   foldedKey: string,
   formatOverride?: DefinitionFormat,
 ): Promise<DictEntry | null> => {
-  const rows = await db.query<EntryRow>(SELECT_ENTRY_BY_KEY, [foldedKey]);
+  const rows = await queryEntryRow(db, foldedKey);
   if (rows.length === 0) {
     return null;
   }
   const row = rows[0];
-  return {
+  const entry: DictEntry = {
     word: row.word,
     definition: row.definition,
     format: formatOverride ?? coerceFormat(row.format),
   };
+  // Map phonetic ONLY when present + non-empty (exact old lookupCsv
+  // contract); a null/'' column is omitted, not surfaced as ''.
+  const phonetic = row.phonetic;
+  if (phonetic !== undefined && phonetic !== null && phonetic !== '') {
+    entry.phonetic = phonetic;
+  }
+  return entry;
 };
 
 // Compose the DictSource onto createLazyAsyncSource. The harness owns

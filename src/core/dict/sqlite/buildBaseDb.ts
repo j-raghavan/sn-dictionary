@@ -26,10 +26,11 @@ import {populateThesaurus, type OmwRow} from './buildThesaurus';
 // re-exports it as EXPECTED_SCHEMA_VERSION (the value provisioning
 // compares against). Lives here because the GENERATOR is the writer.
 //
-// v1 -> v2: added the thesaurus table (TF4). A v1 bundled DB has no
-// thesaurus, so a v1 -> v2 upgrade must reprovision (provisioning's
-// version-mismatch branch handles this automatically).
-export const SCHEMA_VERSION = 2;
+// v1 -> v2: added the thesaurus table (TF4). v2 -> v3: added the
+// nullable `phonetic` column to `entries` (M16/CSV). The generator's
+// entries INSERT stays 4-col (SQLite fills phonetic NULL); the column
+// exists so CSV slug DBs and base.db share one v3 shape.
+export const SCHEMA_VERSION = 3;
 
 export type BaseDbRow = {
   key: string;

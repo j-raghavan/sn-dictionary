@@ -39,10 +39,10 @@ describe('entries schema', () => {
     await db.close();
   });
 
-  it('SELECT_ENTRY_BY_KEY projects {word, definition, format} and binds the key', async () => {
+  it('SELECT_ENTRY_BY_KEY projects {word, definition, format, phonetic} and binds the key', async () => {
     const db = await createSeededDb(async d => {
       await d.run(CREATE_ENTRIES_TABLE);
-      await d.run('INSERT INTO entries VALUES (?, ?, ?, ?)', [
+      await d.run('INSERT INTO entries (key, word, definition, format) VALUES (?, ?, ?, ?)', [
         'hello',
         'Hello',
         'a greeting',
@@ -50,8 +50,9 @@ describe('entries schema', () => {
       ]);
     });
     const rows = await db.query(SELECT_ENTRY_BY_KEY, ['hello']);
+    // v3: phonetic projected (null when not written by a 4-col INSERT).
     expect(rows).toEqual([
-      {word: 'Hello', definition: 'a greeting', format: 'plain'},
+      {word: 'Hello', definition: 'a greeting', format: 'plain', phonetic: null},
     ]);
     // key is bound, not part of the projection.
     expect(Object.keys(rows[0] as object)).not.toContain('key');
@@ -61,13 +62,13 @@ describe('entries schema', () => {
   it('SELECT_ENTRY_BY_KEY returns at most one row (LIMIT 1, first-row-wins)', async () => {
     const db = await createSeededDb(async d => {
       await d.run(CREATE_ENTRIES_TABLE);
-      await d.run('INSERT INTO entries VALUES (?, ?, ?, ?)', [
+      await d.run('INSERT INTO entries (key, word, definition, format) VALUES (?, ?, ?, ?)', [
         'dup',
         'First',
         'first def',
         'plain',
       ]);
-      await d.run('INSERT INTO entries VALUES (?, ?, ?, ?)', [
+      await d.run('INSERT INTO entries (key, word, definition, format) VALUES (?, ?, ?, ?)', [
         'dup',
         'Second',
         'second def',

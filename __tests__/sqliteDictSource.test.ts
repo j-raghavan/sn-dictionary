@@ -16,7 +16,7 @@ const seededDb = (rows: Seed[]): Promise<SqliteDb> =>
   createSeededDb(async d => {
     await d.run(CREATE_ENTRIES_TABLE);
     for (const r of rows) {
-      await d.run('INSERT INTO entries VALUES (?, ?, ?, ?)', [
+      await d.run('INSERT INTO entries (key, word, definition, format) VALUES (?, ?, ?, ?)', [
         r.key,
         r.word,
         r.definition,
