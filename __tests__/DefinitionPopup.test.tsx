@@ -1151,3 +1151,124 @@ describe('DefinitionPopup — OCR correction (editable)', () => {
     expect(findByLabel(tree, 'Look up').length).toBe(1);
   });
 });
+
+// --- Add-word form (TF7-FR3/FR4/FR6) -------------------------------
+
+const addActions = (
+  addUserEntry: PopupActions['addUserEntry'],
+  relookup: PopupActions['relookup'],
+): PopupActions => ({
+  lookupThesaurus: async () => ({lang: 'en', omw: {synonyms: [], antonyms: []}}),
+  addUserEntry,
+  relookup,
+});
+
+describe('DefinitionPopup — add-word form', () => {
+  test('not-found shows an "Add definition" affordance', () => {
+    const tree = renderPopup();
+    act(() => showDefinition(notFound('photon')));
+    expect(findByLabel(tree, 'Add definition').length).toBe(1);
+  });
+
+  test('a found result shows NO add affordance', () => {
+    const tree = renderPopup();
+    act(() => showDefinition(found('WordNet', 'hello', 'a greeting')));
+    expect(findByLabel(tree, 'Add definition').length).toBe(0);
+  });
+
+  test('opening the form prefills the headword with the queried word', () => {
+    const tree = renderPopup();
+    act(() => showDefinition(notFound('photon')));
+    act(() => findByLabel(tree, 'Add definition')[0].props.onPress());
+    const hwInput = findByLabel(tree, 'Headword')[0];
+    expect(hwInput.props.value).toBe('photon');
+    // Body input is multiline.
+    const bodyInput = findByLabel(tree, 'Definition')[0];
+    expect(bodyInput.props.multiline).toBe(true);
+  });
+
+  test('save -> addUserEntry then relookup with the headword', async () => {
+    const addUserEntry = jest.fn(async () => undefined);
+    const relookup = jest.fn(async () => undefined);
+    setPopupActions(addActions(addUserEntry, relookup));
+    const tree = renderPopup();
+    act(() => showDefinition(notFound('photon')));
+    act(() => findByLabel(tree, 'Add definition')[0].props.onPress());
+    act(() =>
+      findByLabel(tree, 'Definition')[0].props.onChangeText('a light quantum'),
+    );
+    await act(async () => {
+      findByLabel(tree, 'Save')[0].props.onPress();
+      await Promise.resolve();
+    });
+    expect(addUserEntry).toHaveBeenCalledWith('photon', 'a light quantum');
+    expect(relookup).toHaveBeenCalledWith('photon');
+  });
+
+  test('the user entry renders first with a User badge after relookup', async () => {
+    // Model relookup surfacing a User hit ahead of WordNet — the
+    // registry order [user, ...imported, base] puts User first.
+    const relookup = jest.fn(async (word: string) => {
+      showDefinition({
+        queriedFor: word,
+        hits: [
+          {source: 'User', entry: {word, definition: 'my def', format: 'plain'}},
+          {source: 'WordNet', entry: {word, definition: 'wn def', format: 'wordnet'}},
+        ],
+        loading: [],
+      });
+    });
+    setPopupActions(addActions(async () => undefined, relookup));
+    const tree = renderPopup();
+    act(() => showDefinition(notFound('photon')));
+    act(() => findByLabel(tree, 'Add definition')[0].props.onPress());
+    act(() => findByLabel(tree, 'Definition')[0].props.onChangeText('my def'));
+    await act(async () => {
+      findByLabel(tree, 'Save')[0].props.onPress();
+      await Promise.resolve();
+    });
+    const text = collectText(tree);
+    // User badge present, and its definition appears before WordNet's.
+    expect(text).toContain('User');
+    expect(text.indexOf('my def')).toBeLessThan(text.indexOf('wn def'));
+  });
+
+  test('empty body -> inline validation error, no action call', async () => {
+    const addUserEntry = jest.fn(async () => undefined);
+    setPopupActions(addActions(addUserEntry, async () => undefined));
+    const tree = renderPopup();
+    act(() => showDefinition(notFound('photon')));
+    act(() => findByLabel(tree, 'Add definition')[0].props.onPress());
+    // Leave body empty.
+    await act(async () => findByLabel(tree, 'Save')[0].props.onPress());
+    expect(addUserEntry).not.toHaveBeenCalled();
+    expect(collectText(tree)).toContain('Enter a headword and a definition.');
+  });
+
+  test('an addUserEntry rejection (IO failure) is surfaced inline', async () => {
+    const addUserEntry = jest.fn(async () => {
+      throw new Error('disk full');
+    });
+    const relookup = jest.fn(async () => undefined);
+    setPopupActions(addActions(addUserEntry, relookup));
+    const tree = renderPopup();
+    act(() => showDefinition(notFound('photon')));
+    act(() => findByLabel(tree, 'Add definition')[0].props.onPress());
+    act(() => findByLabel(tree, 'Definition')[0].props.onChangeText('a def'));
+    await act(async () => {
+      findByLabel(tree, 'Save')[0].props.onPress();
+      await Promise.resolve();
+    });
+    expect(collectText(tree)).toContain('Could not save');
+    expect(relookup).not.toHaveBeenCalled();
+  });
+
+  test('save with no registered actions surfaces the failure inline', async () => {
+    const tree = renderPopup();
+    act(() => showDefinition(notFound('photon')));
+    act(() => findByLabel(tree, 'Add definition')[0].props.onPress());
+    act(() => findByLabel(tree, 'Definition')[0].props.onChangeText('a def'));
+    await act(async () => findByLabel(tree, 'Save')[0].props.onPress());
+    expect(collectText(tree)).toContain('Could not save');
+  });
+});

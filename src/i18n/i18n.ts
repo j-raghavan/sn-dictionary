@@ -34,7 +34,13 @@ export type StringId =
   | 'popup.thesaurus'
   | 'popup.antonyms'
   | 'popup.noThesaurus'
-  | 'popup.lookUp';
+  | 'popup.lookUp'
+  | 'popup.addDefinition'
+  | 'popup.headword'
+  | 'popup.definitionBody'
+  | 'popup.save'
+  | 'popup.addEmptyError'
+  | 'popup.addFailedError';
 
 // Locale codes use the firmware's convention: en, zh_CN, zh_TW, ja,
 // th, nl. Underscore (not hyphen) matches PluginButton.nameMap shape
@@ -55,6 +61,12 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.antonyms': 'Antonyms',
     'popup.noThesaurus': 'No synonyms or antonyms available.',
     'popup.lookUp': 'Look up',
+    'popup.addDefinition': 'Add definition',
+    'popup.headword': 'Headword',
+    'popup.definitionBody': 'Definition',
+    'popup.save': 'Save',
+    'popup.addEmptyError': 'Enter a headword and a definition.',
+    'popup.addFailedError': 'Could not save — please try again.',
   },
   zh_CN: {
     'popup.synonyms': '同义词',
@@ -71,6 +83,12 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.antonyms': '反义词',
     'popup.noThesaurus': '暂无同义词或反义词。',
     'popup.lookUp': '查询',
+    'popup.addDefinition': '添加释义',
+    'popup.headword': '词条',
+    'popup.definitionBody': '释义',
+    'popup.save': '保存',
+    'popup.addEmptyError': '请输入词条和释义。',
+    'popup.addFailedError': '保存失败，请重试。',
   },
   zh_TW: {
     'popup.synonyms': '同義詞',
@@ -87,6 +105,12 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.antonyms': '反義詞',
     'popup.noThesaurus': '暫無同義詞或反義詞。',
     'popup.lookUp': '查詢',
+    'popup.addDefinition': '新增釋義',
+    'popup.headword': '詞條',
+    'popup.definitionBody': '釋義',
+    'popup.save': '儲存',
+    'popup.addEmptyError': '請輸入詞條和釋義。',
+    'popup.addFailedError': '儲存失敗，請重試。',
   },
   ja: {
     'popup.synonyms': '類義語',
@@ -103,6 +127,12 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.antonyms': '対義語',
     'popup.noThesaurus': '同義語・対義語はありません。',
     'popup.lookUp': '検索',
+    'popup.addDefinition': '定義を追加',
+    'popup.headword': '見出し語',
+    'popup.definitionBody': '定義',
+    'popup.save': '保存',
+    'popup.addEmptyError': '見出し語と定義を入力してください。',
+    'popup.addFailedError': '保存できませんでした。もう一度お試しください。',
   },
   th: {
     'popup.synonyms': 'คำพ้องความหมาย',
@@ -119,6 +149,12 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.antonyms': 'คำตรงข้าม',
     'popup.noThesaurus': 'ไม่มีคำพ้องหรือคำตรงข้าม',
     'popup.lookUp': 'ค้นหา',
+    'popup.addDefinition': 'เพิ่มคำจำกัดความ',
+    'popup.headword': 'คำหลัก',
+    'popup.definitionBody': 'คำจำกัดความ',
+    'popup.save': 'บันทึก',
+    'popup.addEmptyError': 'กรุณาใส่คำหลักและคำจำกัดความ',
+    'popup.addFailedError': 'บันทึกไม่สำเร็จ โปรดลองอีกครั้ง',
   },
   nl: {
     'popup.synonyms': 'Synoniemen',
@@ -135,6 +171,12 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.antonyms': 'Antoniemen',
     'popup.noThesaurus': 'Geen synoniemen of antoniemen beschikbaar.',
     'popup.lookUp': 'Opzoeken',
+    'popup.addDefinition': 'Definitie toevoegen',
+    'popup.headword': 'Trefwoord',
+    'popup.definitionBody': 'Definitie',
+    'popup.save': 'Opslaan',
+    'popup.addEmptyError': 'Voer een trefwoord en een definitie in.',
+    'popup.addFailedError': 'Opslaan mislukt — probeer opnieuw.',
   },
   de: {
     'popup.synonyms': 'Synonyme',
@@ -151,6 +193,12 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.antonyms': 'Antonyme',
     'popup.noThesaurus': 'Keine Synonyme oder Antonyme verfügbar.',
     'popup.lookUp': 'Nachschlagen',
+    'popup.addDefinition': 'Definition hinzufügen',
+    'popup.headword': 'Stichwort',
+    'popup.definitionBody': 'Definition',
+    'popup.save': 'Speichern',
+    'popup.addEmptyError': 'Bitte Stichwort und Definition eingeben.',
+    'popup.addFailedError': 'Speichern fehlgeschlagen — bitte erneut versuchen.',
   },
 };
 

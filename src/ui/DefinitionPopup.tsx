@@ -63,6 +63,12 @@ export default function DefinitionPopup(): React.JSX.Element {
   // The OCR-correction field's current text (lasso flow only). Seeded
   // from the queried word and re-seeded whenever a new result arrives.
   const [editText, setEditText] = useState('');
+  // Add-definition form (shown from the not-found state). headword is
+  // seeded with the queried word; body is the user's definition.
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [addHeadword, setAddHeadword] = useState('');
+  const [addBody, setAddBody] = useState('');
+  const [addError, setAddError] = useState<string | null>(null);
 
   useEffect(() => subscribe(setState), []);
 
@@ -71,6 +77,12 @@ export default function DefinitionPopup(): React.JSX.Element {
     state.visible && state.kind === 'result' ? state.result.queriedFor : '';
   useEffect(() => {
     setEditText(queriedFor);
+    // A new query resets the add-definition form (collapsed, headword
+    // re-seeded, body + error cleared).
+    setShowAddForm(false);
+    setAddHeadword(queriedFor);
+    setAddBody('');
+    setAddError(null);
   }, [queriedFor]);
 
   // The canonical headword + its primary source for this result. Used
@@ -179,6 +191,36 @@ export default function DefinitionPopup(): React.JSX.Element {
       /* the relookup pipeline surfaces its own failures via showDefinition */
     });
   }, [editText]);
+
+  const handleShowAddForm = useCallback(() => {
+    setAddError(null);
+    setShowAddForm(true);
+  }, []);
+
+  // Save a user definition: local validation (instant inline error),
+  // then the addUserEntry action; on success re-run the lookup so the
+  // new entry renders as a User hit; a rejected action is a save
+  // FAILURE (IO) surfaced inline (Designer flag 2).
+  const handleSaveEntry = useCallback(() => {
+    const word = addHeadword.trim();
+    const body = addBody.trim();
+    if (word === '' || body === '') {
+      setAddError(t('popup.addEmptyError'));
+      return;
+    }
+    const actions = getPopupActions();
+    if (actions === null) {
+      setAddError(t('popup.addFailedError'));
+      return;
+    }
+    setAddError(null);
+    actions
+      .addUserEntry(word, body)
+      .then(() => actions.relookup(word))
+      .catch(() => {
+        setAddError(t('popup.addFailedError'));
+      });
+  }, [addHeadword, addBody]);
 
   if (!state.visible) {
     // Zero-size, non-interactive when nothing to show — matches the
@@ -440,9 +482,56 @@ export default function DefinitionPopup(): React.JSX.Element {
                 </View>
               ))}
               {hits.length === 0 && !isWaitingForFirstHit ? (
-                <Text style={styles.notFound}>
-                  {`${t('popup.notFoundFor')} "${state.result.queriedFor}".`}
-                </Text>
+                <>
+                  <Text style={styles.notFound}>
+                    {`${t('popup.notFoundFor')} "${state.result.queriedFor}".`}
+                  </Text>
+                  {showAddForm ? (
+                    <View style={styles.addForm}>
+                      <Text style={styles.addFieldLabel}>
+                        {t('popup.headword')}
+                      </Text>
+                      <TextInput
+                        accessibilityLabel={t('popup.headword')}
+                        style={styles.addHeadwordInput}
+                        value={addHeadword}
+                        onChangeText={setAddHeadword}
+                      />
+                      <Text style={styles.addFieldLabel}>
+                        {t('popup.definitionBody')}
+                      </Text>
+                      <TextInput
+                        accessibilityLabel={t('popup.definitionBody')}
+                        style={styles.addBodyInput}
+                        value={addBody}
+                        onChangeText={setAddBody}
+                        multiline
+                      />
+                      {addError !== null ? (
+                        <Text style={styles.addError}>{addError}</Text>
+                      ) : null}
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel={t('popup.save')}
+                        onPress={handleSaveEntry}
+                        style={styles.addSaveButton}>
+                        <Text style={styles.addSaveLabel}>
+                          {t('popup.save')}
+                        </Text>
+                      </Pressable>
+                    </View>
+                  ) : (
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={t('popup.addDefinition')}
+                      onPress={handleShowAddForm}
+                      style={styles.addFormButton}>
+                      <Text style={styles.addFormButtonLabel}>
+                        {t('popup.addDefinition')}
+                      </Text>
+                    </Pressable>
+                  )}
+                </>
               ) : null}
             </>
           )}
