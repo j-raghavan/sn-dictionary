@@ -12,16 +12,14 @@
     "test:integration": "node scripts/runIntegrationTests.mjs",
     "coverage": "jest --coverage",
     "fetch:dict": "node scripts/fetchBaseDict.mjs",
-    "build:dict": "node scripts/buildBaseDict.mjs",
     "build:base-db": "node --import ./scripts/registerTsLoader.mjs scripts/buildBaseDb.mjs",
-    "prepare:dict": "npm run --silent fetch:dict && npm run --silent build:dict",
+    "prepare:dict": "npm run --silent fetch:dict",
     "fetch:omw": "node scripts/fetchOmw.mjs",
     "build:omw": "node scripts/buildOmw.mjs",
     "prepare:omw": "npm run --silent fetch:omw && npm run --silent build:omw",
     "build:sample-dicts": "node scripts/buildSampleDicts.mjs"
   },
   "dependencies": {
-    "@react-native-async-storage/async-storage": "^3.0.2",
     "pako": "^2.1.0",
     "react": "19.0.0",
     "react-native": "0.79.2",
