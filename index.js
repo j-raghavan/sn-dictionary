@@ -58,16 +58,20 @@ const logger = {
   error: msg => console.log(`[ERROR] ${msg}`),
 };
 
-// Plugin sandbox layout (DB location is plugins/<pluginID>/).
-const PLUGIN_DIR = '/storage/emulated/0/Android/data/com.ratta.supernote/files/plugins/sndictdfltbasev1';
-const BASE_DB_PATH = `${PLUGIN_DIR}/base.db`;
-const USER_DB_PATH = `${PLUGIN_DIR}/user.db`;
-const IMPORT_DIR = `${PLUGIN_DIR}/imported`;
-// The bundled base.db asset name react-native-sqlite-storage copies
-// from (createFromLocation reads from the app's www/ assets).
-const BASE_DB_ASSET = 'base.db';
+// All DBs live in the plugin host's extracted dir, addressed by
+// {name, location} — NOT a hardcoded absolute path. The native side
+// resolves getFilesDir() + location + name (SQLitePlugin.java:392-395),
+// where getFilesDir() is the host's own files dir (the spike proved it
+// is .../com.ratta.supernote.pluginhost/files, NOT a guessable absolute
+// path — the old hardcoded com.ratta.supernote path was wrong). base.db
+// ships in the .snplg and the host extracts it here; user.db + imported
+// slug DBs are created in place by the native layer.
+const PLUGIN_LOCATION = 'plugins/sndictdfltbasev1/';
 
-// fetch(file://...) byte/text readers for the import pipeline.
+const openDbByName = name => openRnSqliteDb({name, location: PLUGIN_LOCATION});
+
+// fetch(file://...) byte/text readers for the import SOURCE files (real
+// filesystem paths from discovery — not DB locations).
 const readBytes = async path => {
   const res = await fetch(`file://${path}`);
   if (!res.ok) {
@@ -80,12 +84,72 @@ const readText = async path => {
   return decodeUtf8(bytes);
 };
 
+// Captured by the handlers; populated when bootstrap resolves. Until
+// then the buttons are disabled, so no lookup can fire against a null.
+const runtime = {lookup: null};
+
+// --- buttons: register FIRST, then enable after registration ---------
+// The "Plugin button is not exists!" race was setButtonState firing
+// before the button finished registering. enableButtons now AWAITS the
+// registration promises (buttonsReady) before flipping state.
+const noteHandlerDeps = {
+  comm: PluginCommAPI,
+  view: PluginManager,
+  file: PluginFileAPI,
+  lookup: {lookup: (...args) => runtime.lookup.lookup(...args)},
+  showRecognizing,
+  // Lasso flow is editable: the popup shows the OCR-correction field so
+  // the user can fix a mis-recognised word (editable === true).
+  showResult: (result, ocrLabel) => showDefinition(result, ocrLabel, true),
+  hidePopup: hideDefinition,
+  logger,
+};
+
+const docHandlerDeps = {
+  doc: PluginDocAPI,
+  view: PluginManager,
+  lookup: {lookup: (...args) => runtime.lookup.lookup(...args)},
+  // Doc-select text is already exact — no OCR field (editable omitted).
+  showResult: showDefinition,
+  logger,
+};
+
+const buttonsReady = Promise.all([
+  registerNoteLassoButton({
+    pluginManager: PluginManager,
+    initiallyEnabled: false,
+    onPress: () => {
+      onNoteLassoDefine(noteHandlerDeps).catch(e => {
+        logger.error(`[define] dispatch crashed: ${e.message}`);
+      });
+    },
+    logger,
+  }).catch(e => {
+    logger.error(`[define] NOTE button registration failed: ${e.message}`);
+  }),
+  registerDocSelectButton({
+    pluginManager: PluginManager,
+    initiallyEnabled: false,
+    onPress: () => {
+      onDocSelectDefine(docHandlerDeps).catch(e => {
+        logger.error(`[doc-define] dispatch crashed: ${e.message}`);
+      });
+    },
+    logger,
+  }).catch(e => {
+    logger.error(`[doc-define] DOC button registration failed: ${e.message}`);
+  }),
+]);
+
 const buttonsEnabled = {done: false};
 const enableButtons = async () => {
   if (buttonsEnabled.done) {
     return;
   }
   buttonsEnabled.done = true;
+  // Wait for the buttons to exist before setting their state (fixes the
+  // "Plugin button is not exists!" race).
+  await buttonsReady;
   await Promise.all([
     PluginManager.setButtonState(NOTE_LASSO_DEFINE_BUTTON_ID, true),
     PluginManager.setButtonState(DOC_SELECT_DEFINE_BUTTON_ID, true),
@@ -94,34 +158,21 @@ const enableButtons = async () => {
 };
 
 const provision = createRnProvisionPorts({
-  dbPath: BASE_DB_PATH,
-  fileUtils: FileUtils,
-  openExisting: openRnSqliteDb({name: BASE_DB_PATH}),
-  openFromAsset: async () => {
-    const open = openRnSqliteDb({
-      name: 'base.db',
-      createFromAsset: `~${BASE_DB_ASSET}`,
-    });
-    const db = await open();
-    if (db === null) {
-      throw new Error('[provision] base.db createFromLocation returned null');
-    }
-    return db;
-  },
+  // base.db is host-extracted into plugins/<id>/; open it in place.
+  open: openDbByName('base.db'),
 });
 
 const bootstrapPorts = {
   provision,
   db: {
     openUserDb: async () => {
-      const open = openRnSqliteDb({name: USER_DB_PATH});
-      const db = await open();
+      const db = await openDbByName('user.db')();
       if (db === null) {
         throw new Error('user.db open returned null');
       }
       return db;
     },
-    openImportedDb: filename => openRnSqliteDb({name: `${IMPORT_DIR}/${filename}`}),
+    openImportedDb: filename => openDbByName(filename),
   },
   discover: () => discoverUserDicts({fileUtils: FileUtils, logger}),
   importPortsFor: (descriptor, audit) =>
@@ -131,28 +182,19 @@ const bootstrapPorts = {
       dictPath: descriptor.dictPath,
       synPath: descriptor.synPath,
       sidecarPath: descriptor.sidecarPath,
-      slugDbDir: IMPORT_DIR,
       fileUtils: FileUtils,
       readers: {readBytes, readText},
-      openSlugDb: absPath =>
-        openRnSqliteDb({name: absPath})().then(db => {
-          if (db === null) {
-            throw new Error(`open slug db returned null: ${absPath}`);
-          }
-          return db;
-        }),
-      // Reopen the ACTUAL slug DB at absPath (the same path openSlugDb
-      // was given for this filename) so verify reads committed rows from
-      // the file just written — not a fixed placeholder.
-      reopenSlugDb: absPath => openRnSqliteDb({name: absPath})(),
+      // Slug DBs are opened by {name: filename, location: plugins/<id>/}
+      // — same dir the host extracts into. discard deletes the half-built
+      // file (best-effort; the host resolves the location).
+      openSlugByName: filename => openDbByName(filename)(),
+      reopenSlugByName: filename => openDbByName(filename)(),
+      discardSlugByName: filename =>
+        FileUtils.deleteFile(`${PLUGIN_LOCATION}${filename}`).catch(() => {}),
       audit,
     }),
   enableButtons,
 };
-
-// Captured by the handlers; populated when bootstrap resolves. Until
-// then the buttons are disabled, so no lookup can fire against a null.
-const runtime = {lookup: null};
 
 // Resolve a source name -> language. Base WordNet is English; user
 // entries are language-undetermined ('und' -> thesaurus short-circuits);
@@ -211,54 +253,3 @@ bootstrap(bootstrapPorts, logger)
     );
   })
   .catch(e => logger.error(`[startup] bootstrap failed: ${e.message}`));
-
-// closePluginView lives on PluginManager, not PluginCommAPI, so the
-// handlers take a separate `view` dep.
-const noteHandlerDeps = {
-  comm: PluginCommAPI,
-  view: PluginManager,
-  file: PluginFileAPI,
-  lookup: {lookup: (...args) => runtime.lookup.lookup(...args)},
-  showRecognizing,
-  // Lasso flow is editable: the popup shows the OCR-correction field so
-  // the user can fix a mis-recognised word (editable === true).
-  showResult: (result, ocrLabel) => showDefinition(result, ocrLabel, true),
-  hidePopup: hideDefinition,
-  logger,
-};
-
-const docHandlerDeps = {
-  doc: PluginDocAPI,
-  view: PluginManager,
-  lookup: {lookup: (...args) => runtime.lookup.lookup(...args)},
-  // Doc-select text is already exact — no OCR field (editable omitted).
-  showResult: showDefinition,
-  logger,
-};
-
-registerNoteLassoButton({
-  pluginManager: PluginManager,
-  // Disabled until bootstrap provisions base.db and calls enableButtons.
-  initiallyEnabled: false,
-  onPress: () => {
-    onNoteLassoDefine(noteHandlerDeps).catch(e => {
-      logger.error(`[define] dispatch crashed: ${e.message}`);
-    });
-  },
-  logger,
-}).catch(e => {
-  logger.error(`[define] NOTE button registration failed: ${e.message}`);
-});
-
-registerDocSelectButton({
-  pluginManager: PluginManager,
-  initiallyEnabled: false,
-  onPress: () => {
-    onDocSelectDefine(docHandlerDeps).catch(e => {
-      logger.error(`[doc-define] dispatch crashed: ${e.message}`);
-    });
-  },
-  logger,
-}).catch(e => {
-  logger.error(`[doc-define] DOC button registration failed: ${e.message}`);
-});
