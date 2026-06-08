@@ -39,7 +39,6 @@ import {openRnSqliteDb} from './src/core/dict/sqlite/rnSqliteDb';
 import {discoverUserDicts} from './src/core/dict/userDictDiscovery';
 import {lookupThesaurus} from './src/core/dict/sqlite/thesaurusLookup';
 import {addUserEntry} from './src/core/dict/sqlite/userEntries';
-import {SELECT_IMPORT_ALL} from './src/core/dict/sqlite/schema';
 import {setPopupActions} from './src/ui/popupController';
 import {
   hideDefinition,
@@ -196,35 +195,18 @@ const bootstrapPorts = {
   enableButtons,
 };
 
-// Resolve a source name -> language. Base WordNet is English; user
-// entries are language-undetermined ('und' -> thesaurus short-circuits);
-// imported dicts carry their sidecar language in the imports audit.
-const buildSourceLangMap = async userDb => {
-  const map = {WordNet: 'en', User: 'und'};
-  if (userDb !== null) {
-    try {
-      const rows = await userDb.query(SELECT_IMPORT_ALL);
-      for (const row of rows) {
-        map[row.name] = row.lang;
-      }
-    } catch (e) {
-      logger.warn(`[startup] could not read import langs: ${e.message}`);
-    }
-  }
-  return map;
-};
-
 bootstrap(bootstrapPorts, logger)
-  .then(async handle => {
+  .then(handle => {
     runtime.lookup = handle.lookup;
-    const sourceLang = await buildSourceLangMap(handle.userDb);
 
     // Register the popup actions (Designer ruling 1/2): the popup calls
     // these without importing the engine. Source->lang resolution + the
     // 'und' short-circuit live INSIDE lookupThesaurus (IV-1 preserved).
     setPopupActions({
       lookupThesaurus: async (headword, sourceName) => {
-        const lang = sourceLang[sourceName] ?? 'und';
+        // handle.sourceLang is the LIVE map bootstrap owns — a dict
+        // imported this session is already in it (no reload needed).
+        const lang = handle.sourceLang[sourceName] ?? 'und';
         // OMW relations live ONLY in base.db (shared across all
         // same-language sources); the thesaurus query always targets
         // handle.baseDb by design, scoped by the source's resolved lang.

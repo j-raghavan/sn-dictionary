@@ -382,3 +382,59 @@ describe('bootstrap', () => {
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('skip import'));
   });
 });
+
+describe('bootstrap — live sourceLang map (FR1)', () => {
+  it('seeds {base: en, User: und, ...already-imported lang}', async () => {
+    const h = await makeHarness({
+      auditSeed: async db => {
+        await upsertImport(db, auditRow('Existing', 'de', 'existing.de.db'));
+      },
+    });
+    const handle = await bootstrap(h.ports);
+    expect(handle.sourceLang).toEqual({
+      WordNet: 'en',
+      User: 'und',
+      Existing: 'de',
+    });
+  });
+
+  it('a detached import registers its language LIVE before importsSettled... and after', async () => {
+    // Gate the import so we can observe the map BOTH before the splice
+    // (not yet registered) and after it settles (registered with the
+    // descriptor's language) — the no-reload fix.
+    let releaseImport!: () => void;
+    const gate = new Promise<void>(res => {
+      releaseImport = res;
+    });
+    const h = await makeHarness({
+      descriptors: [descriptor('Fresh', 'fr')],
+      importOutcome: () => ({ok: true, filename: 'fresh.fr.db', gate}),
+    });
+    const handle = await bootstrap(h.ports);
+    // Import still running: 'Fresh' not yet in the map.
+    expect(handle.sourceLang.Fresh).toBeUndefined();
+    // Release + settle: the LIVE map now resolves 'Fresh' -> 'fr' (the
+    // descriptor's language), no reload needed.
+    releaseImport();
+    await handle.importsSettled;
+    expect(handle.sourceLang.Fresh).toBe('fr');
+    // The same object reference the runtime holds was mutated in place.
+    expect(handle.sourceLang).toMatchObject({WordNet: 'en', User: 'und', Fresh: 'fr'});
+  });
+
+  it('a failed import does NOT add a sourceLang entry', async () => {
+    const h = await makeHarness({
+      descriptors: [descriptor('Bad', 'es')],
+      importOutcome: () => ({ok: false, reason: 'verify failed'}),
+    });
+    const handle = await bootstrap(h.ports);
+    await handle.importsSettled;
+    expect(handle.sourceLang.Bad).toBeUndefined();
+  });
+
+  it('degraded user.db -> sourceLang has only the base (no User, no imports)', async () => {
+    const h = await makeHarness({userDbThrows: true});
+    const handle = await bootstrap(h.ports, {warn: jest.fn()});
+    expect(handle.sourceLang).toEqual({WordNet: 'en'});
+  });
+});
