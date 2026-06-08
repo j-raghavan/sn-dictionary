@@ -22,7 +22,7 @@ import {
   type ImportRow,
 } from './schema';
 import {ensureImportsTable} from './importAudit';
-import {importStardict, type ImportPorts} from './importStardict';
+import {runImport, type RunImportPorts} from './runImport';
 import type {ImportJobDescriptor} from '../userDictDiscovery';
 
 type Logger = {warn: (msg: string) => void; log?: (msg: string) => void};
@@ -104,7 +104,10 @@ export interface BootstrapPorts {
   provision: ProvisionPorts;
   db: BootstrapDbPorts;
   discover(): Promise<ImportJobDescriptor[]>;
-  importPortsFor(d: ImportJobDescriptor, audit: SqliteDb): ImportPorts;
+  // Build the format-agnostic import ports for a descriptor. The host
+  // adapter (index.js) branches on descriptor.kind to wire the right
+  // produceSlugDb (native StarDict vs JS CSV) + source/sidecar paths.
+  importPortsFor(d: ImportJobDescriptor, audit: SqliteDb): RunImportPorts;
   enableButtons(): Promise<void>;
 }
 
@@ -255,7 +258,9 @@ export const bootstrap = async (
     importsSettled = Promise.all(
       toImport.map(async item => {
         try {
-          const result = await importStardict(
+          // Format-agnostic: importPortsFor wires the kind-appropriate
+          // produceSlugDb; runImport drives the shared spine for both.
+          const result = await runImport(
             ports.importPortsFor(item.descriptor, audit),
             logger,
           );

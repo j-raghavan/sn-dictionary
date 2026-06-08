@@ -84,10 +84,11 @@ const produceStardictSlugDb = async (
     format,
   });
 
-export const importStardict = async (
-  ports: ImportPorts,
-  logger?: Logger,
-): Promise<ImportResult> => {
+// Adapt the StarDict ImportPorts to the format-agnostic RunImportPorts —
+// the native produce-step + the .dict-size-based space estimate. The
+// host (index.js) calls THIS to build the run ports for a 'stardict'
+// descriptor, then hands them straight to runImport.
+export const stardictRunPorts = (ports: ImportPorts): RunImportPorts => {
   // The space estimate needs the validated sidecar format; the sidecar
   // is re-validated inside runImport, but the format the native importer
   // is handed must come from the SAME parse. Parse once here for the
@@ -118,5 +119,10 @@ export const importStardict = async (
   if (ports.getAvailableSpace !== undefined) {
     runPorts.getAvailableSpace = ports.getAvailableSpace;
   }
-  return runImport(runPorts, logger);
+  return runPorts;
 };
+
+export const importStardict = async (
+  ports: ImportPorts,
+  logger?: Logger,
+): Promise<ImportResult> => runImport(stardictRunPorts(ports), logger);

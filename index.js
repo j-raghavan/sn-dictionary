@@ -34,6 +34,8 @@ import {onDocSelectDefine} from './src/handlers/onDocSelectDefine';
 import {bootstrap} from './src/core/dict/sqlite/bootstrap';
 import {createRnProvisionPorts} from './src/core/dict/sqlite/provisionRnPorts';
 import {createRnImportPorts} from './src/core/dict/sqlite/importRnPorts';
+import {createRnCsvImportPorts} from './src/core/dict/sqlite/importCsvRnPorts';
+import {stardictRunPorts} from './src/core/dict/sqlite/importStardict';
 import {runNativeImport, getFileSize} from './src/core/dict/sqlite/nativeImport';
 import {openRnSqliteDb} from './src/core/dict/sqlite/rnSqliteDb';
 import {discoverUserDicts} from './src/core/dict/userDictDiscovery';
@@ -165,33 +167,66 @@ const bootstrapPorts = {
     openImportedDb: filename => openDbByName(filename),
   },
   discover: () => discoverUserDicts({fileUtils: FileUtils, logger}),
+  // Build the format-agnostic RunImportPorts for a descriptor, branching
+  // on descriptor.kind. StarDict -> native produce-step (via
+  // stardictRunPorts); CSV -> JS produce-step (createRnCsvImportPorts).
   importPortsFor: (descriptor, audit) =>
-    createRnImportPorts({
-      ifoPath: descriptor.ifoPath,
-      idxPath: descriptor.idxPath,
-      dictPath: descriptor.dictPath,
-      synPath: descriptor.synPath,
-      // sidecarPath may be undefined (no meta.json) — then no sidecar
-      // file is deleted. The sidecarText is the discovery-resolved
-      // sidecar serialized (discovery already read+validated meta.json,
-      // or built the default), so no meta.json re-read is needed.
-      sidecarPath: descriptor.sidecarPath,
-      sidecarText: JSON.stringify(descriptor.sidecar),
-      // Real .dict size from a native stat (SnDictImport.fileSize) — not
-      // a hardcoded 0 that would silently disable the space guard.
-      statDictSize: () => getFileSize(descriptor.dictPath),
-      fileUtils: FileUtils,
-      // Native parse+insert into plugins/<id>/<filename> (the module
-      // resolves a relative dbPath under the host files dir).
-      runNativeImport,
-      resolveSlugDbPath: filename => `${PLUGIN_LOCATION}${filename}`,
-      // Verify reopens the committed slug DB; discard deletes the
-      // half-built file (best-effort).
-      reopenSlugByName: filename => openDbByName(filename)(),
-      discardSlugByName: filename =>
-        FileUtils.deleteFile(`${PLUGIN_LOCATION}${filename}`).catch(() => {}),
-      audit,
-    }),
+    descriptor.kind === 'csv'
+      ? createRnCsvImportPorts({
+          csvPath: descriptor.csvPath,
+          // sidecarPath may be undefined (no per-file meta.json) — then no
+          // sidecar file is deleted.
+          sidecarPath: descriptor.sidecarPath,
+          sidecarText: JSON.stringify(descriptor.sidecar),
+          csvConfig: descriptor.csvConfig,
+          fileUtils: FileUtils,
+          // Fetch the CSV bytes (file://) for the JS parse.
+          loadBytes: async () => {
+            const res = await fetch(`file://${descriptor.csvPath}`);
+            if (!res.ok) {
+              throw new Error(
+                `fetch ${descriptor.csvPath} returned status ${res.status}`,
+              );
+            }
+            return res.arrayBuffer();
+          },
+          resolveSlugDbPath: filename => `${PLUGIN_LOCATION}${filename}`,
+          // The CSV produce-step parses in JS and writes via a WRITABLE
+          // rn-sqlite handle (openDbByName opens read/write).
+          openWritableSlug: filename => openDbByName(filename)(),
+          reopenSlugByName: filename => openDbByName(filename)(),
+          discardSlugByName: filename =>
+            FileUtils.deleteFile(`${PLUGIN_LOCATION}${filename}`).catch(() => {}),
+          audit,
+        })
+      : stardictRunPorts(
+          createRnImportPorts({
+            ifoPath: descriptor.ifoPath,
+            idxPath: descriptor.idxPath,
+            dictPath: descriptor.dictPath,
+            synPath: descriptor.synPath,
+            // sidecarPath may be undefined (no meta.json) — then no sidecar
+            // file is deleted. The sidecarText is the discovery-resolved
+            // sidecar serialized (discovery already read+validated meta.json,
+            // or built the default), so no meta.json re-read is needed.
+            sidecarPath: descriptor.sidecarPath,
+            sidecarText: JSON.stringify(descriptor.sidecar),
+            // Real .dict size from a native stat (SnDictImport.fileSize) —
+            // not a hardcoded 0 that would silently disable the space guard.
+            statDictSize: () => getFileSize(descriptor.dictPath),
+            fileUtils: FileUtils,
+            // Native parse+insert into plugins/<id>/<filename> (the module
+            // resolves a relative dbPath under the host files dir).
+            runNativeImport,
+            resolveSlugDbPath: filename => `${PLUGIN_LOCATION}${filename}`,
+            // Verify reopens the committed slug DB; discard deletes the
+            // half-built file (best-effort).
+            reopenSlugByName: filename => openDbByName(filename)(),
+            discardSlugByName: filename =>
+              FileUtils.deleteFile(`${PLUGIN_LOCATION}${filename}`).catch(() => {}),
+            audit,
+          }),
+        ),
   enableButtons,
 };
 

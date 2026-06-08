@@ -268,11 +268,14 @@ object StarDictImporter {
     val db = SQLiteDatabase.openOrCreateDatabase(dbPath, null)
     val seen = HashSet<String>()
     try {
-      // SAME DDL as schema.ts CREATE_ENTRIES_TABLE.
+      // SAME DDL as schema.ts CREATE_ENTRIES_TABLE (schema v3): the
+      // nullable `phonetic TEXT` last column keeps StarDict slugs the same
+      // shape as CSV slugs + base.db. The 4-col INSERT below leaves it
+      // NULL (StarDict carries no phonetic).
       db.execSQL(
         "CREATE TABLE IF NOT EXISTS entries (" +
           "key TEXT NOT NULL, word TEXT NOT NULL, " +
-          "definition TEXT NOT NULL, format TEXT NOT NULL)",
+          "definition TEXT NOT NULL, format TEXT NOT NULL, phonetic TEXT)",
       )
       db.beginTransaction()
       try {

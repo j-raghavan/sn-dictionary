@@ -13,16 +13,25 @@ import {CREATE_ENTRIES_TABLE} from '../src/core/dict/sqlite/schema';
 import type {ImportRow} from '../src/core/dict/sqlite/schema';
 import type {SqliteDb} from '../src/core/dict/sqlite/db';
 import type {ImportJobDescriptor} from '../src/core/dict/userDictDiscovery';
-import type {ImportPorts} from '../src/core/dict/sqlite/importStardict';
+import type {RunImportPorts} from '../src/core/dict/sqlite/runImport';
 
 // --- reconcileImports (pure) ---------------------------------------
 
 const descriptor = (name: string, lang: string): ImportJobDescriptor => ({
+  kind: 'stardict',
   setPath: `/d/${name}`,
   ifoPath: `/d/${name}/x.ifo`,
   idxPath: `/d/${name}/x.idx`,
   dictPath: `/d/${name}/x.dict`,
   sidecarPath: `/d/${name}/meta.json`,
+  sidecar: {name, language: lang},
+});
+
+const csvDescriptor = (name: string, lang: string): ImportJobDescriptor => ({
+  kind: 'csv',
+  csvPath: `/d/${name}.csv`,
+  csvConfig: {},
+  sidecarPath: `/d/${name}.meta.json`,
   sidecar: {name, language: lang},
 });
 
@@ -162,7 +171,9 @@ const makeHarness = async (opts: {
     },
     discover: async () => opts.descriptors ?? [],
     importPortsFor: (d, audit) => {
-      // Minimal fake ImportPorts: the outcome map decides ok/fail.
+      // Minimal fake RunImportPorts: the outcome map decides ok/fail. The
+      // mocked runImport (below) reads the stashed outcome + the
+      // descriptor's kind, so this exercises the kind-agnostic dispatch.
       const outcome = opts.importOutcome
         ? opts.importOutcome(d)
         : {ok: true, filename: `${d.sidecar.name}.${d.sidecar.language}.db`};
@@ -170,8 +181,9 @@ const makeHarness = async (opts: {
         __outcome: outcome,
         __name: d.sidecar.name,
         __lang: d.sidecar.language,
+        __kind: d.kind,
         audit,
-      } as unknown as ImportPorts;
+      } as unknown as RunImportPorts;
       return fakePorts;
     },
     enableButtons,
@@ -179,14 +191,14 @@ const makeHarness = async (opts: {
   return {ports, enableButtons, openImportedDb, importResults, baseDb};
 };
 
-// importStardict is mocked so bootstrap's dispatch is tested without
-// the full pipeline (that has its own suite). The mock reads the
-// outcome stashed on the fake ports.
-jest.mock('../src/core/dict/sqlite/importStardict', () => {
-  const actual = jest.requireActual('../src/core/dict/sqlite/importStardict');
+// runImport is mocked so bootstrap's (format-agnostic) dispatch is tested
+// without the full pipeline (that has its own suite). The mock reads the
+// outcome stashed on the fake ports by importPortsFor.
+jest.mock('../src/core/dict/sqlite/runImport', () => {
+  const actual = jest.requireActual('../src/core/dict/sqlite/runImport');
   return {
     ...actual,
-    importStardict: jest.fn(async (ports: Record<string, unknown>) => {
+    runImport: jest.fn(async (ports: Record<string, unknown>) => {
       const outcome = ports.__outcome as {
         ok: boolean;
         filename?: string;
@@ -436,5 +448,39 @@ describe('bootstrap — live sourceLang map (FR1)', () => {
     const h = await makeHarness({userDbThrows: true});
     const handle = await bootstrap(h.ports, {warn: jest.fn()});
     expect(handle.sourceLang).toEqual({WordNet: 'en'});
+  });
+});
+
+describe('bootstrap — CSV import dispatch (FR6)', () => {
+  it('a kind:csv descriptor routes through runImport and splices a source', async () => {
+    const h = await makeHarness({
+      descriptors: [csvDescriptor('Dune', 'en')],
+      importOutcome: () => ({ok: true, filename: 'dune.en.db'}),
+    });
+    const handle = await bootstrap(h.ports);
+    await handle.importsSettled;
+    // The CSV import spliced its source just before base.
+    expect(handle.sources.map(s => s.name)).toEqual(['User', 'Dune', 'WordNet']);
+    // And its language registered LIVE.
+    expect(handle.sourceLang.Dune).toBe('en');
+  });
+
+  it('routes a mixed StarDict + CSV set, each through the kind-agnostic dispatch', async () => {
+    const h = await makeHarness({
+      descriptors: [descriptor('Wiki', 'de'), csvDescriptor('Dune', 'en')],
+      importOutcome: d => ({
+        ok: true,
+        filename: `${d.sidecar.name.toLowerCase()}.${d.sidecar.language}.db`,
+      }),
+    });
+    const handle = await bootstrap(h.ports);
+    await handle.importsSettled;
+    // Both imported sources present (order between them is concurrency-
+    // dependent; assert membership + that base stays last).
+    const names = handle.sources.map(s => s.name);
+    expect(names[0]).toBe('User');
+    expect(names[names.length - 1]).toBe('WordNet');
+    expect(new Set(names)).toEqual(new Set(['User', 'Wiki', 'Dune', 'WordNet']));
+    expect(handle.sourceLang).toMatchObject({Wiki: 'de', Dune: 'en'});
   });
 });
