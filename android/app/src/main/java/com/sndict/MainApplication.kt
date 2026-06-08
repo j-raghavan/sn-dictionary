@@ -11,6 +11,7 @@ import com.facebook.react.defaults.DefaultReactHost.getDefaultReactHost
 import com.facebook.react.defaults.DefaultReactNativeHost
 import com.facebook.react.soloader.OpenSourceMergedSoMapping
 import com.facebook.soloader.SoLoader
+import com.sndict.imports.SnDictImportPackage
 import org.pgsqlite.SQLitePluginPackage
 
 class MainApplication : Application(), ReactApplication {
@@ -24,6 +25,9 @@ class MainApplication : Application(), ReactApplication {
                     // belt-and-suspenders so the native SQLite module is
                     // registered even if autolink resolution ever changes.
                     add(SQLitePluginPackage())
+                    // Native StarDict importer (ADR-0006): parse+insert
+                    // off the Hermes thread.
+                    add(SnDictImportPackage())
                 }
 
             override fun getJSMainModuleName(): String = "index"
