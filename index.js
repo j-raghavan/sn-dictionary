@@ -35,6 +35,10 @@ import {createRnProvisionPorts} from './src/core/dict/sqlite/provisionRnPorts';
 import {createRnImportPorts} from './src/core/dict/sqlite/importRnPorts';
 import {openRnSqliteDb} from './src/core/dict/sqlite/rnSqliteDb';
 import {discoverUserDicts} from './src/core/dict/userDictDiscovery';
+import {lookupThesaurus} from './src/core/dict/sqlite/thesaurusLookup';
+import {addUserEntry} from './src/core/dict/sqlite/userEntries';
+import {SELECT_IMPORT_ALL} from './src/core/dict/sqlite/schema';
+import {setPopupActions} from './src/ui/popupController';
 import {decodeUtf8} from './src/sdk/utf8';
 import {
   hideDefinition,
@@ -150,9 +154,53 @@ const bootstrapPorts = {
 // then the buttons are disabled, so no lookup can fire against a null.
 const runtime = {lookup: null};
 
+// Resolve a source name -> language. Base WordNet is English; user
+// entries are language-undetermined ('und' -> thesaurus short-circuits);
+// imported dicts carry their sidecar language in the imports audit.
+const buildSourceLangMap = async userDb => {
+  const map = {WordNet: 'en', User: 'und'};
+  if (userDb !== null) {
+    try {
+      const rows = await userDb.query(SELECT_IMPORT_ALL);
+      for (const row of rows) {
+        map[row.name] = row.lang;
+      }
+    } catch (e) {
+      logger.warn(`[startup] could not read import langs: ${e.message}`);
+    }
+  }
+  return map;
+};
+
 bootstrap(bootstrapPorts, logger)
-  .then(handle => {
+  .then(async handle => {
     runtime.lookup = handle.lookup;
+    const sourceLang = await buildSourceLangMap(handle.userDb);
+
+    // Register the popup actions (Designer ruling 1/2): the popup calls
+    // these without importing the engine. Source->lang resolution + the
+    // 'und' short-circuit live INSIDE lookupThesaurus (IV-1 preserved).
+    setPopupActions({
+      lookupThesaurus: async (headword, sourceName) => {
+        const lang = sourceLang[sourceName] ?? 'und';
+        const omw = await lookupThesaurus(handle.baseDb, headword, lang, logger);
+        return {lang, omw};
+      },
+      addUserEntry: async (word, definition) => {
+        const result = await addUserEntry(handle.userDb, word, definition);
+        if (!result.ok) {
+          // Surface a failure to the popup (it shows an inline error);
+          // validation rejections become a thrown error here so the
+          // component's .catch path fires uniformly.
+          throw new Error(`addUserEntry: ${result.reason}`);
+        }
+      },
+      relookup: async text => {
+        const res = await runtime.lookup.lookup(text);
+        showDefinition(res, undefined, true);
+      },
+    });
+
     logger.log(
       `[startup] engine ready: ${handle.sources.length} source(s) [${handle.sources
         .map(s => s.name)
@@ -169,7 +217,9 @@ const noteHandlerDeps = {
   file: PluginFileAPI,
   lookup: {lookup: (...args) => runtime.lookup.lookup(...args)},
   showRecognizing,
-  showResult: showDefinition,
+  // Lasso flow is editable: the popup shows the OCR-correction field so
+  // the user can fix a mis-recognised word (editable === true).
+  showResult: (result, ocrLabel) => showDefinition(result, ocrLabel, true),
   hidePopup: hideDefinition,
   logger,
 };
@@ -178,6 +228,7 @@ const docHandlerDeps = {
   doc: PluginDocAPI,
   view: PluginManager,
   lookup: {lookup: (...args) => runtime.lookup.lookup(...args)},
+  // Doc-select text is already exact — no OCR field (editable omitted).
   showResult: showDefinition,
   logger,
 };
