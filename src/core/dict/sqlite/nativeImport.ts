@@ -38,3 +38,14 @@ export const runNativeImport: RunNativeImport = async params => {
   );
   return {entryCount};
 };
+
+// File size in bytes (for the import space guard). Resolves 0 when the
+// file is missing — the guard then estimates from 0 (a no-op pass).
+export const getFileSize = async (path: string): Promise<number> => {
+  const {NativeModules} = require('react-native');
+  const mod = NativeModules.SnDictImport;
+  if (mod === undefined || typeof mod.fileSize !== 'function') {
+    throw new Error('[import] native SnDictImport module is unavailable');
+  }
+  return mod.fileSize(path);
+};

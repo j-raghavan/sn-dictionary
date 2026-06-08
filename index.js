@@ -34,7 +34,7 @@ import {onDocSelectDefine} from './src/handlers/onDocSelectDefine';
 import {bootstrap} from './src/core/dict/sqlite/bootstrap';
 import {createRnProvisionPorts} from './src/core/dict/sqlite/provisionRnPorts';
 import {createRnImportPorts} from './src/core/dict/sqlite/importRnPorts';
-import {runNativeImport} from './src/core/dict/sqlite/nativeImport';
+import {runNativeImport, getFileSize} from './src/core/dict/sqlite/nativeImport';
 import {openRnSqliteDb} from './src/core/dict/sqlite/rnSqliteDb';
 import {discoverUserDicts} from './src/core/dict/userDictDiscovery';
 import {lookupThesaurus} from './src/core/dict/sqlite/thesaurusLookup';
@@ -178,11 +178,9 @@ const bootstrapPorts = {
       // or built the default), so no meta.json re-read is needed.
       sidecarPath: descriptor.sidecarPath,
       sidecarText: JSON.stringify(descriptor.sidecar),
-      // The native importer reads the .dict itself; we don't pre-size it
-      // in JS (NativeFileUtils has no size probe). No getAvailableSpace
-      // is installed below, so the space guard is a no-op on-device — a
-      // disk-full surfaces as IMPORT_FAILED from the native side.
-      dictByteLength: 0,
+      // Real .dict size from a native stat (SnDictImport.fileSize) — not
+      // a hardcoded 0 that would silently disable the space guard.
+      statDictSize: () => getFileSize(descriptor.dictPath),
       fileUtils: FileUtils,
       // Native parse+insert into plugins/<id>/<filename> (the module
       // resolves a relative dbPath under the host files dir).

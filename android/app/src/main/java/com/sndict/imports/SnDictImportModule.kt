@@ -55,4 +55,19 @@ class SnDictImportModule(
       }
     }
   }
+
+  // File size in bytes, for the on-device import space guard. Double for
+  // the RN bridge (no native long); 0 when the file is missing. Runs on
+  // the worker thread to keep all native fs touches off the JS thread.
+  @ReactMethod
+  fun fileSize(path: String, promise: Promise) {
+    executor.execute {
+      try {
+        val f = java.io.File(path)
+        promise.resolve(if (f.exists()) f.length().toDouble() else 0.0)
+      } catch (e: Exception) {
+        promise.reject("FILE_SIZE_FAILED", e.message, e)
+      }
+    }
+  }
 }

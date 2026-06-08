@@ -28,6 +28,7 @@ const DICT_BYTES = 1000;
 type Harness = {
   ports: ImportPorts;
   runNativeImport: jest.Mock;
+  statDictSize: jest.Mock;
   deleteFile: jest.Mock;
   slugFiles: Map<string, SqliteDb>;
   discard: jest.Mock;
@@ -37,6 +38,9 @@ type Harness = {
 type Opts = {
   sidecarText?: string;
   space?: number;
+  // Override the .dict size the statDictSize port reports (default
+  // DICT_BYTES).
+  dictSize?: number;
   sourcePaths?: string[];
   // The rows the fake native importer "inserts" into the slug DB and
   // the count it reports (default: keyed entries below).
@@ -62,6 +66,8 @@ const makeHarness = async (opts: Opts = {}): Promise<Harness> => {
   const discard = jest.fn(async (filename: string) => {
     slugFiles.delete(filename);
   });
+  // The .dict-size port the space guard reads (native stat on-device).
+  const statDictSize = jest.fn(async () => opts.dictSize ?? DICT_BYTES);
 
   const rows = opts.nativeRows ?? DEFAULT_ROWS;
 
@@ -96,7 +102,9 @@ const makeHarness = async (opts: Opts = {}): Promise<Harness> => {
     ifoPath: 'dict.ifo',
     idxPath: 'dict.idx',
     dictPath: 'dict.dict',
-    dictByteLength: DICT_BYTES,
+    // Real .dict size comes from this async port (native stat on-device);
+    // the fake returns a known size so the space guard still fires.
+    statDictSize,
     deleteFile,
     sourcePaths: opts.sourcePaths ?? ['dict.ifo', 'dict.idx', 'dict.dict', 'meta.json'],
     slugDb: {
@@ -116,7 +124,7 @@ const makeHarness = async (opts: Opts = {}): Promise<Harness> => {
     const space = opts.space;
     ports.getAvailableSpace = async () => space;
   }
-  return {ports, runNativeImport, deleteFile, slugFiles, discard, audit};
+  return {ports, runNativeImport, statDictSize, deleteFile, slugFiles, discard, audit};
 };
 
 describe('importStardict — happy path', () => {
@@ -372,6 +380,24 @@ describe('estimateImportBytes', () => {
 });
 
 describe('importStardict — space guard (TF5-FR6)', () => {
+  it('sizes the estimate from statDictSize (real .dict size, not a hardcoded 0)', async () => {
+    // The fix: the guard reads the size from the port. A LARGE .dict
+    // (50 MB) with too little free space must be refused — a hardcoded 0
+    // would estimate 0 and never trip.
+    const dictSize = 50_000_000;
+    const required = estimateImportBytes(dictSize);
+    const h = await makeHarness({dictSize, space: required - 1});
+    const warn = jest.fn();
+    const res = await importStardict(h.ports, {warn});
+    expect(res).toEqual({
+      ok: false,
+      reason: `[import] insufficient space: need ${required}, have ${required - 1}`,
+    });
+    expect(h.statDictSize).toHaveBeenCalledTimes(1);
+    expect(h.runNativeImport).not.toHaveBeenCalled();
+    expect(h.deleteFile).not.toHaveBeenCalled();
+  });
+
   it('insufficient space -> {ok:false} tagged, nothing imported or deleted', async () => {
     const required = estimateImportBytes(DICT_BYTES);
     const h = await makeHarness({space: required - 1});
@@ -381,6 +407,7 @@ describe('importStardict — space guard (TF5-FR6)', () => {
       ok: false,
       reason: `[import] insufficient space: need ${required}, have ${required - 1}`,
     });
+    expect(h.statDictSize).toHaveBeenCalled();
     expect(h.runNativeImport).not.toHaveBeenCalled();
     expect(h.deleteFile).not.toHaveBeenCalled();
     expect(warn).toHaveBeenCalled();
@@ -391,5 +418,16 @@ describe('importStardict — space guard (TF5-FR6)', () => {
     const h = await makeHarness({space: required + 1000});
     const res = await importStardict(h.ports);
     expect(res.ok).toBe(true);
+    expect(h.statDictSize).toHaveBeenCalled();
+  });
+
+  it('skipped when no free-space probe is installed (guard no-op)', async () => {
+    // No getAvailableSpace -> checkSpace returns early; the import
+    // proceeds regardless of the .dict size.
+    const h = await makeHarness(); // no `space` -> no getAvailableSpace
+    expect(h.ports.getAvailableSpace).toBeUndefined();
+    const res = await importStardict(h.ports);
+    expect(res.ok).toBe(true);
+    expect(h.runNativeImport).toHaveBeenCalled();
   });
 });

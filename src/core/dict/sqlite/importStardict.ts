@@ -44,9 +44,10 @@ export interface ImportPorts {
   idxPath: string;
   dictPath: string;
   synPath?: string;
-  // The .dict file size in bytes, for the space-guard estimate (no JS
-  // byte read needed).
-  dictByteLength: number;
+  // The .dict file size in bytes, for the space-guard estimate. An async
+  // port so the size comes from a real native stat (no JS byte read) —
+  // never a hardcoded 0 that would silently disable the guard.
+  statDictSize(): Promise<number>;
   // Delete a source file after a verified import.
   deleteFile(path: string): Promise<void>;
   // The source files to delete on success (triple + syn + sidecar).
@@ -120,9 +121,11 @@ export const importStardict = async (
   const {name, language: lang} = sidecarResult.sidecar;
 
   // 2. Space guard — shortfall fails WITHOUT importing/deleting anything.
+  //    Size the estimate from a real native stat of the .dict file.
+  const dictBytes = await ports.statDictSize();
   const spaceReason = await checkSpace(
     ports,
-    estimateImportBytes(ports.dictByteLength),
+    estimateImportBytes(dictBytes),
     logger,
   );
   if (spaceReason !== null) {

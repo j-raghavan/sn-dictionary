@@ -29,8 +29,9 @@ export type RnImportConfig = {
   // The resolved sidecar text (meta.json contents, or the serialized
   // discovery default for a no-meta dict).
   sidecarText: string;
-  // The .dict file size in bytes, for the space-guard estimate.
-  dictByteLength: number;
+  // Real .dict file size in bytes (native stat), for the space-guard
+  // estimate. Async so the size is never a hardcoded 0.
+  statDictSize: () => Promise<number>;
   fileUtils: FileUtils;
   // Run the native StarDict import into an absolute dbPath.
   runNativeImport: RunNativeImport;
@@ -79,7 +80,7 @@ export const createRnImportPorts = (config: RnImportConfig): ImportPorts => {
     idxPath: config.idxPath,
     dictPath: config.dictPath,
     synPath: config.synPath,
-    dictByteLength: config.dictByteLength,
+    statDictSize: config.statDictSize,
     async deleteFile(path: string): Promise<void> {
       await config.fileUtils.deleteFile(path);
     },
