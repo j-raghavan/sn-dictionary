@@ -257,4 +257,33 @@ export const popupStyles = StyleSheet.create({
     lineHeight: 24,
     color: '#000000',
   },
+  // OCR-correction row (lasso flow): an editable text field + a
+  // "Look up" button to re-run the lookup on the corrected word.
+  editRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  editInput: {
+    flex: 1,
+    fontSize: 18,
+    color: '#000000',
+    borderWidth: 1,
+    borderColor: '#000000',
+    borderRadius: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    marginRight: 8,
+  },
+  lookUpButton: {
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderWidth: 1,
+    borderColor: '#000000',
+    borderRadius: 4,
+  },
+  lookUpLabel: {
+    fontSize: 16,
+    color: '#000000',
+  },
 });

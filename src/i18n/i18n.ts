@@ -33,7 +33,8 @@ export type StringId =
   | 'popup.definition'
   | 'popup.thesaurus'
   | 'popup.antonyms'
-  | 'popup.noThesaurus';
+  | 'popup.noThesaurus'
+  | 'popup.lookUp';
 
 // Locale codes use the firmware's convention: en, zh_CN, zh_TW, ja,
 // th, nl. Underscore (not hyphen) matches PluginButton.nameMap shape
@@ -53,6 +54,7 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.thesaurus': 'Thesaurus',
     'popup.antonyms': 'Antonyms',
     'popup.noThesaurus': 'No synonyms or antonyms available.',
+    'popup.lookUp': 'Look up',
   },
   zh_CN: {
     'popup.synonyms': '同义词',
@@ -68,6 +70,7 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.thesaurus': '词库',
     'popup.antonyms': '反义词',
     'popup.noThesaurus': '暂无同义词或反义词。',
+    'popup.lookUp': '查询',
   },
   zh_TW: {
     'popup.synonyms': '同義詞',
@@ -83,6 +86,7 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.thesaurus': '詞庫',
     'popup.antonyms': '反義詞',
     'popup.noThesaurus': '暫無同義詞或反義詞。',
+    'popup.lookUp': '查詢',
   },
   ja: {
     'popup.synonyms': '類義語',
@@ -98,6 +102,7 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.thesaurus': '類語',
     'popup.antonyms': '対義語',
     'popup.noThesaurus': '同義語・対義語はありません。',
+    'popup.lookUp': '検索',
   },
   th: {
     'popup.synonyms': 'คำพ้องความหมาย',
@@ -113,6 +118,7 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.thesaurus': 'อรรถาภิธาน',
     'popup.antonyms': 'คำตรงข้าม',
     'popup.noThesaurus': 'ไม่มีคำพ้องหรือคำตรงข้าม',
+    'popup.lookUp': 'ค้นหา',
   },
   nl: {
     'popup.synonyms': 'Synoniemen',
@@ -128,6 +134,7 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.thesaurus': 'Thesaurus',
     'popup.antonyms': 'Antoniemen',
     'popup.noThesaurus': 'Geen synoniemen of antoniemen beschikbaar.',
+    'popup.lookUp': 'Opzoeken',
   },
   de: {
     'popup.synonyms': 'Synonyme',
@@ -143,6 +150,7 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.thesaurus': 'Thesaurus',
     'popup.antonyms': 'Antonyme',
     'popup.noThesaurus': 'Keine Synonyme oder Antonyme verfügbar.',
+    'popup.lookUp': 'Nachschlagen',
   },
 };
 

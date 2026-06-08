@@ -8,6 +8,7 @@ jest.mock('react-native', () => ({
   Text: 'Text',
   ScrollView: 'ScrollView',
   Pressable: 'Pressable',
+  TextInput: 'TextInput',
   StyleSheet: {create: (s: unknown) => s},
 }));
 
@@ -1059,5 +1060,94 @@ describe('DefinitionPopup — Definition/Thesaurus toggle', () => {
     await flush();
     // No crash; the body stays on the loading placeholder.
     expect(collectText(tree)).toContain('Loading…');
+  });
+});
+
+// --- OCR correction editable field (TF6-FR1..FR5) ------------------
+
+const relookupActions = (
+  relookup: PopupActions['relookup'],
+): PopupActions => ({
+  lookupThesaurus: async () => ({lang: 'en', omw: {synonyms: [], antonyms: []}}),
+  addUserEntry: async () => undefined,
+  relookup,
+});
+
+const findByLabel = (tree: ReactTestRenderer, label: string) =>
+  tree.root.findAll(n => n.props.accessibilityLabel === label);
+
+describe('DefinitionPopup — OCR correction (editable)', () => {
+  test('lasso flow (editable=true) renders the OCR field + Look up button', () => {
+    const tree = renderPopup();
+    act(() => showDefinition(found('WordNet', 'hello', 'a greeting'), 'OCR: hello', true));
+    expect(findByLabel(tree, 'Look up').length).toBe(1);
+    // The OCR field is seeded with the queried word.
+    const input = findByLabel(tree, 'OCR')[0];
+    expect(input.props.value).toBe('hello');
+  });
+
+  test('doc-select flow (editable omitted) has NO OCR field', () => {
+    const tree = renderPopup();
+    act(() => showDefinition(found('WordNet', 'hello', 'a greeting'), 'OCR: hello'));
+    expect(findByLabel(tree, 'Look up').length).toBe(0);
+  });
+
+  test('editable is gated on === true, not ocrLabel presence', () => {
+    // ocrLabel present but editable false-y -> still NO field.
+    const tree = renderPopup();
+    act(() =>
+      showDefinition(found('WordNet', 'hi', 'greeting'), 'OCR: hi', false),
+    );
+    expect(findByLabel(tree, 'Look up').length).toBe(0);
+  });
+
+  test('Look up re-runs the lookup with the corrected (edited) text', async () => {
+    const relookup = jest.fn(async () => undefined);
+    setPopupActions(relookupActions(relookup));
+    const tree = renderPopup();
+    act(() => showDefinition(notFound('helo'), 'OCR: helo', true));
+    // Correct the text.
+    const input = findByLabel(tree, 'OCR')[0];
+    act(() => input.props.onChangeText('hello'));
+    await act(async () => findByLabel(tree, 'Look up')[0].props.onPress());
+    expect(relookup).toHaveBeenCalledWith('hello');
+  });
+
+  test('Look up on empty/whitespace text is a no-op', async () => {
+    const relookup = jest.fn(async () => undefined);
+    setPopupActions(relookupActions(relookup));
+    const tree = renderPopup();
+    act(() => showDefinition(notFound('x'), 'OCR: x', true));
+    const input = findByLabel(tree, 'OCR')[0];
+    act(() => input.props.onChangeText('   '));
+    await act(async () => findByLabel(tree, 'Look up')[0].props.onPress());
+    expect(relookup).not.toHaveBeenCalled();
+  });
+
+  test('Look up swallows a relookup rejection (pipeline surfaces its own errors)', async () => {
+    const relookup = jest.fn(async () => {
+      throw new Error('relookup failed');
+    });
+    setPopupActions(relookupActions(relookup));
+    const tree = renderPopup();
+    act(() => showDefinition(notFound('helo'), 'OCR: helo', true));
+    const input = findByLabel(tree, 'OCR')[0];
+    act(() => input.props.onChangeText('hello'));
+    await act(async () => {
+      findByLabel(tree, 'Look up')[0].props.onPress();
+      await Promise.resolve();
+    });
+    // No unhandled rejection / crash; the handler swallowed it.
+    expect(relookup).toHaveBeenCalledWith('hello');
+  });
+
+  test('Look up with no registered actions does not crash', async () => {
+    const tree = renderPopup();
+    act(() => showDefinition(notFound('x'), 'OCR: x', true));
+    const input = findByLabel(tree, 'OCR')[0];
+    act(() => input.props.onChangeText('hello'));
+    await act(async () => findByLabel(tree, 'Look up')[0].props.onPress());
+    // No throw — assertion is reaching here.
+    expect(findByLabel(tree, 'Look up').length).toBe(1);
   });
 });

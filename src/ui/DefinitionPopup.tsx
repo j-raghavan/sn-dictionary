@@ -1,5 +1,5 @@
 import React, {useCallback, useEffect, useMemo, useState} from 'react';
-import {Pressable, ScrollView, Text, View} from 'react-native';
+import {Pressable, ScrollView, Text, TextInput, View} from 'react-native';
 import {PluginManager} from 'sn-plugin-lib';
 import {
   getCurrentState,
@@ -60,8 +60,18 @@ export default function DefinitionPopup(): React.JSX.Element {
   const [fontSize, setFontSize] = useState<FontSize>('S');
   const [tab, setTab] = useState<Tab>('definition');
   const [thesaurus, setThesaurus] = useState<ThesaurusCache | null>(null);
+  // The OCR-correction field's current text (lasso flow only). Seeded
+  // from the queried word and re-seeded whenever a new result arrives.
+  const [editText, setEditText] = useState('');
 
   useEffect(() => subscribe(setState), []);
+
+  // The word the current result was queried for — the OCR field's seed.
+  const queriedFor =
+    state.visible && state.kind === 'result' ? state.result.queriedFor : '';
+  useEffect(() => {
+    setEditText(queriedFor);
+  }, [queriedFor]);
 
   // The canonical headword + its primary source for this result. Used
   // to drive the thesaurus fetch and to detect a NEW headword (which
@@ -154,6 +164,22 @@ export default function DefinitionPopup(): React.JSX.Element {
   const handleDefinitionTab = useCallback(() => setTab('definition'), []);
   const handleThesaurusTab = useCallback(() => setTab('thesaurus'), []);
 
+  // Re-run the lookup with the corrected OCR text. Empty/whitespace is
+  // a no-op (nothing to look up). getPopupActions() may be null — guard.
+  const handleLookUp = useCallback(() => {
+    const trimmed = editText.trim();
+    if (trimmed === '') {
+      return;
+    }
+    const actions = getPopupActions();
+    if (actions === null) {
+      return;
+    }
+    actions.relookup(trimmed).catch(() => {
+      /* the relookup pipeline surfaces its own failures via showDefinition */
+    });
+  }, [editText]);
+
   if (!state.visible) {
     // Zero-size, non-interactive when nothing to show — matches the
     // sn-formula phase-1 pattern that avoids ghost-touching the page.
@@ -212,6 +238,11 @@ export default function DefinitionPopup(): React.JSX.Element {
   // loading section flips to a hit.
   const showSourceBadges = hits.length + loading.length >= 2;
   const fontScale = FONT_SCALE[fontSize];
+  // OCR-correction field shows ONLY in the lasso flow, gated on an
+  // EXPLICIT editable===true (Designer ruling 4 / flag 5) — never
+  // inferred from ocrLabel presence. doc-select omits editable and so
+  // gets the read-only view.
+  const isEditable = state.editable === true;
   // The Definition/Thesaurus tab strip is only meaningful once we have
   // a real hit (a headword to fetch a thesaurus for).
   const showTabs = hits.length > 0;
@@ -290,6 +321,23 @@ export default function DefinitionPopup(): React.JSX.Element {
         ) : null}
         {state.ocrLabel ? (
           <Text style={styles.ocrLabel}>{state.ocrLabel}</Text>
+        ) : null}
+        {isEditable ? (
+          <View style={styles.editRow}>
+            <TextInput
+              accessibilityLabel={t('popup.ocr')}
+              style={styles.editInput}
+              value={editText}
+              onChangeText={setEditText}
+            />
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={t('popup.lookUp')}
+              onPress={handleLookUp}
+              style={styles.lookUpButton}>
+              <Text style={styles.lookUpLabel}>{t('popup.lookUp')}</Text>
+            </Pressable>
+          </View>
         ) : null}
         {showTabs ? (
           <View style={styles.tabRow} accessibilityRole="tablist">
