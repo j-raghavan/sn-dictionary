@@ -215,4 +215,46 @@ export const popupStyles = StyleSheet.create({
   fontSizeLabelDisabled: {
     color: '#999999',
   },
+  // Definition / Thesaurus tab strip below the header. Two pressable
+  // tabs; the active one carries a heavier underline (e-ink renders a
+  // solid border far more clearly than a fill or colour shift).
+  tabRow: {
+    flexDirection: 'row',
+    marginTop: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#bbbbbb',
+  },
+  tab: {
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    marginRight: 8,
+    borderBottomWidth: 3,
+    borderBottomColor: 'transparent',
+  },
+  tabActive: {
+    borderBottomColor: '#000000',
+  },
+  tabLabel: {
+    fontSize: 16,
+    color: '#555555',
+  },
+  tabLabelActive: {
+    color: '#000000',
+    fontWeight: '700',
+  },
+  // Thesaurus view: a labelled block per relation kind.
+  thesaurusGroup: {
+    marginTop: 12,
+  },
+  thesaurusLabel: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#000000',
+    marginBottom: 4,
+  },
+  thesaurusList: {
+    fontSize: 17,
+    lineHeight: 24,
+    color: '#000000',
+  },
 });

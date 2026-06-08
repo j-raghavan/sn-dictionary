@@ -29,7 +29,11 @@ export type StringId =
   | 'popup.recognizing'
   | 'popup.fontSmaller'
   | 'popup.fontLarger'
-  | 'popup.pronunciation';
+  | 'popup.pronunciation'
+  | 'popup.definition'
+  | 'popup.thesaurus'
+  | 'popup.antonyms'
+  | 'popup.noThesaurus';
 
 // Locale codes use the firmware's convention: en, zh_CN, zh_TW, ja,
 // th, nl. Underscore (not hyphen) matches PluginButton.nameMap shape
@@ -45,6 +49,10 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.fontSmaller': 'Decrease text size',
     'popup.fontLarger': 'Increase text size',
     'popup.pronunciation': 'Pronunciation',
+    'popup.definition': 'Definition',
+    'popup.thesaurus': 'Thesaurus',
+    'popup.antonyms': 'Antonyms',
+    'popup.noThesaurus': 'No synonyms or antonyms available.',
   },
   zh_CN: {
     'popup.synonyms': '同义词',
@@ -56,6 +64,10 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.fontSmaller': '缩小文字',
     'popup.fontLarger': '放大文字',
     'popup.pronunciation': '发音',
+    'popup.definition': '释义',
+    'popup.thesaurus': '词库',
+    'popup.antonyms': '反义词',
+    'popup.noThesaurus': '暂无同义词或反义词。',
   },
   zh_TW: {
     'popup.synonyms': '同義詞',
@@ -67,6 +79,10 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.fontSmaller': '縮小文字',
     'popup.fontLarger': '放大文字',
     'popup.pronunciation': '發音',
+    'popup.definition': '釋義',
+    'popup.thesaurus': '詞庫',
+    'popup.antonyms': '反義詞',
+    'popup.noThesaurus': '暫無同義詞或反義詞。',
   },
   ja: {
     'popup.synonyms': '類義語',
@@ -78,6 +94,10 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.fontSmaller': '文字を小さく',
     'popup.fontLarger': '文字を大きく',
     'popup.pronunciation': '発音',
+    'popup.definition': '定義',
+    'popup.thesaurus': '類語',
+    'popup.antonyms': '対義語',
+    'popup.noThesaurus': '同義語・対義語はありません。',
   },
   th: {
     'popup.synonyms': 'คำพ้องความหมาย',
@@ -89,6 +109,10 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.fontSmaller': 'ลดขนาดตัวอักษร',
     'popup.fontLarger': 'เพิ่มขนาดตัวอักษร',
     'popup.pronunciation': 'การออกเสียง',
+    'popup.definition': 'คำจำกัดความ',
+    'popup.thesaurus': 'อรรถาภิธาน',
+    'popup.antonyms': 'คำตรงข้าม',
+    'popup.noThesaurus': 'ไม่มีคำพ้องหรือคำตรงข้าม',
   },
   nl: {
     'popup.synonyms': 'Synoniemen',
@@ -100,6 +124,10 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.fontSmaller': 'Tekst verkleinen',
     'popup.fontLarger': 'Tekst vergroten',
     'popup.pronunciation': 'Uitspraak',
+    'popup.definition': 'Definitie',
+    'popup.thesaurus': 'Thesaurus',
+    'popup.antonyms': 'Antoniemen',
+    'popup.noThesaurus': 'Geen synoniemen of antoniemen beschikbaar.',
   },
   de: {
     'popup.synonyms': 'Synonyme',
@@ -111,6 +139,10 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.fontSmaller': 'Schrift verkleinern',
     'popup.fontLarger': 'Schrift vergrößern',
     'popup.pronunciation': 'Aussprache',
+    'popup.definition': 'Definition',
+    'popup.thesaurus': 'Thesaurus',
+    'popup.antonyms': 'Antonyme',
+    'popup.noThesaurus': 'Keine Synonyme oder Antonyme verfügbar.',
   },
 };
 

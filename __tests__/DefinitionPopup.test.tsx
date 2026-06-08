@@ -23,9 +23,12 @@ import {
   showDefinition,
   showRecognizing,
   hideDefinition,
+  setPopupActions,
+  type PopupActions,
   __testing__,
 } from '../src/ui/popupController';
 import type {DefinitionFormat, LookupResult} from '../src/core/lookup';
+import type {ThesaurusResult} from '../src/core/dict/sqlite/thesaurusLookup';
 
 const closePluginView = PluginManager.closePluginView as jest.Mock;
 
@@ -803,5 +806,258 @@ describe('DefinitionPopup', () => {
     expect(text).not.toContain('Recognizing…');
     expect(text).toContain('hello');
     expect(text).toContain('a greeting');
+  });
+});
+
+// --- Definition/Thesaurus toggle (TF4-FR4) -------------------------
+
+const flush = async (): Promise<void> => {
+  // Let the thesaurus fetch promise + its setState settle.
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+};
+
+const wordnetHit = (
+  word: string,
+  definition: string,
+): LookupResult => ({
+  queriedFor: word,
+  hits: [{source: 'WordNet', entry: {word, definition, format: 'wordnet'}}],
+  loading: [],
+});
+
+const fakeActions = (
+  lookupThesaurus: PopupActions['lookupThesaurus'],
+): PopupActions => ({
+  lookupThesaurus,
+  addUserEntry: async () => undefined,
+  relookup: async () => undefined,
+});
+
+describe('DefinitionPopup — Definition/Thesaurus toggle', () => {
+  test('renders both tabs once there is a hit', () => {
+    setPopupActions(fakeActions(async () => ({lang: 'en', omw: {synonyms: [], antonyms: []}})));
+    const tree = renderPopup();
+    act(() => showDefinition(found('WordNet', 'hello', 'a greeting')));
+    const text = collectText(tree);
+    expect(text).toContain('Definition');
+    expect(text).toContain('Thesaurus');
+  });
+
+  test('switching to Thesaurus shows synonyms/antonyms; back shows the definition', async () => {
+    setPopupActions(
+      fakeActions(async () => ({
+        lang: 'en',
+        omw: {synonyms: ['glad'], antonyms: ['sad']},
+      })),
+    );
+    const tree = renderPopup();
+    act(() => showDefinition(wordnetHit('happy', 'feeling joy')));
+    // Definition tab first.
+    expect(collectText(tree)).toContain('feeling joy');
+    // Flip to Thesaurus.
+    const thTab = tree.root.findAll(
+      n => n.props.accessibilityLabel === 'Thesaurus' && n.props.onPress,
+    )[0];
+    await act(async () => {
+      thTab.props.onPress();
+    });
+    await flush();
+    const th = collectText(tree);
+    expect(th).toContain('glad');
+    expect(th).toContain('sad');
+    // Flip back to Definition.
+    const defTab = tree.root.findAll(
+      n => n.props.accessibilityLabel === 'Definition' && n.props.onPress,
+    )[0];
+    await act(async () => {
+      defTab.props.onPress();
+    });
+    expect(collectText(tree)).toContain('feeling joy');
+  });
+
+  test('fetches the thesaurus exactly ONCE across def->thes->def->thes flips (cache)', async () => {
+    const spy = jest.fn(async () => ({
+      lang: 'en',
+      omw: {synonyms: ['glad'], antonyms: []} as ThesaurusResult,
+    }));
+    setPopupActions(fakeActions(spy));
+    const tree = renderPopup();
+    act(() => showDefinition(wordnetHit('happy', 'feeling joy')));
+
+    const press = label =>
+      tree.root
+        .findAll(n => n.props.accessibilityLabel === label && n.props.onPress)[0]
+        .props.onPress();
+
+    await act(async () => press('Thesaurus'));
+    await flush();
+    await act(async () => press('Definition'));
+    await act(async () => press('Thesaurus'));
+    await flush();
+    await act(async () => press('Definition'));
+    await act(async () => press('Thesaurus'));
+    await flush();
+
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  test("'und' language -> empty thesaurus -> empty-state, not an error", async () => {
+    // The action returns empty omw for 'und'; assembleThesaurus yields
+    // empty; the component shows the empty-state string.
+    setPopupActions(
+      fakeActions(async () => ({lang: 'und', omw: {synonyms: [], antonyms: []}})),
+    );
+    const tree = renderPopup();
+    act(() => showDefinition(found('User', 'photon', 'a light quantum')));
+    await act(async () =>
+      tree.root
+        .findAll(n => n.props.accessibilityLabel === 'Thesaurus' && n.props.onPress)[0]
+        .props.onPress(),
+    );
+    await flush();
+    const text = collectText(tree);
+    expect(text).toContain('No synonyms or antonyms available.');
+  });
+
+  test('EN WordNet merges sense synonyms with OMW (deduped)', async () => {
+    setPopupActions(
+      fakeActions(async () => ({
+        lang: 'en',
+        omw: {synonyms: ['cheerful'], antonyms: []},
+      })),
+    );
+    const tree = renderPopup();
+    // A real WordNet body: headword on line 0, then an indented sense
+    // line whose [syn:] block carries 'glad' (+ the headword itself).
+    act(() =>
+      showDefinition(
+        wordnetHit(
+          'happy',
+          'happy\n     adj 1: feeling joy [syn: {glad}, {happy}]',
+        ),
+      ),
+    );
+    await act(async () =>
+      tree.root
+        .findAll(n => n.props.accessibilityLabel === 'Thesaurus' && n.props.onPress)[0]
+        .props.onPress(),
+    );
+    await flush();
+    const text = collectText(tree);
+    // sense synonym 'glad' + OMW 'cheerful'; headword 'happy' excluded.
+    expect(text).toContain('glad');
+    expect(text).toContain('cheerful');
+  });
+
+  test('non-EN (plain) source is OMW-only — sense synonyms ignored', async () => {
+    setPopupActions(
+      fakeActions(async () => ({
+        lang: 'de',
+        omw: {synonyms: ['glücklich'], antonyms: []},
+      })),
+    );
+    const tree = renderPopup();
+    // plain-format hit: even if it had [syn:] text, assembleThesaurus
+    // takes OMW only for non-'wordnet' formats.
+    act(() => showDefinition(found('Imported', 'froh', 'froh [syn: {ignored}]', 'plain')));
+    await act(async () =>
+      tree.root
+        .findAll(n => n.props.accessibilityLabel === 'Thesaurus' && n.props.onPress)[0]
+        .props.onPress(),
+    );
+    await flush();
+    const text = collectText(tree);
+    expect(text).toContain('glücklich');
+    expect(text).not.toContain('ignored');
+  });
+
+  test('antonyms-only result renders the Antonyms group (no Synonyms group)', async () => {
+    setPopupActions(
+      fakeActions(async () => ({
+        lang: 'en',
+        omw: {synonyms: [], antonyms: ['cold']},
+      })),
+    );
+    const tree = renderPopup();
+    act(() => showDefinition(found('WordNet', 'hot', 'high temperature')));
+    await act(async () =>
+      tree.root
+        .findAll(n => n.props.accessibilityLabel === 'Thesaurus' && n.props.onPress)[0]
+        .props.onPress(),
+    );
+    await flush();
+    const text = collectText(tree);
+    expect(text).toContain('Antonyms');
+    expect(text).toContain('cold');
+    expect(text).not.toContain('Synonyms');
+  });
+
+  test('a thesaurus fetch rejection -> empty-state, not a crash', async () => {
+    setPopupActions(
+      fakeActions(async () => {
+        throw new Error('db unavailable');
+      }),
+    );
+    const tree = renderPopup();
+    act(() => showDefinition(found('WordNet', 'hello', 'a greeting')));
+    await act(async () =>
+      tree.root
+        .findAll(n => n.props.accessibilityLabel === 'Thesaurus' && n.props.onPress)[0]
+        .props.onPress(),
+    );
+    await flush();
+    expect(collectText(tree)).toContain('No synonyms or antonyms available.');
+  });
+
+  test('switching headword mid-fetch does not clobber the new headword (cancelled)', async () => {
+    // First headword's fetch is deferred; we flip to a new headword
+    // (resetting tab + cache) before it resolves. The stale resolution
+    // must be discarded (cancelled), not written into state.
+    let resolveFirst!: (v: {lang: string; omw: ThesaurusResult}) => void;
+    const spy = jest.fn((word: string) => {
+      if (word === 'first') {
+        return new Promise<{lang: string; omw: ThesaurusResult}>(res => {
+          resolveFirst = res;
+        });
+      }
+      return Promise.resolve({lang: 'en', omw: {synonyms: ['second-syn'], antonyms: []}});
+    });
+    setPopupActions(fakeActions(spy as PopupActions['lookupThesaurus']));
+    const tree = renderPopup();
+
+    act(() => showDefinition(wordnetHit('first', 'def one')));
+    await act(async () =>
+      tree.root
+        .findAll(n => n.props.accessibilityLabel === 'Thesaurus' && n.props.onPress)[0]
+        .props.onPress(),
+    );
+    // New headword arrives before 'first' resolves.
+    act(() => showDefinition(wordnetHit('second', 'def two')));
+    // Now resolve the STALE first fetch — must be ignored.
+    await act(async () => {
+      resolveFirst({lang: 'en', omw: {synonyms: ['stale-syn'], antonyms: []}});
+      await Promise.resolve();
+    });
+    await flush();
+    // Back on Definition tab (reset by new headword); no stale data.
+    expect(collectText(tree)).toContain('def two');
+    expect(collectText(tree)).not.toContain('stale-syn');
+  });
+
+  test('no registered actions -> Thesaurus tab shows loading, never crashes', async () => {
+    // getPopupActions() is null (not registered) — guarded.
+    const tree = renderPopup();
+    act(() => showDefinition(found('WordNet', 'hello', 'a greeting')));
+    await act(async () =>
+      tree.root
+        .findAll(n => n.props.accessibilityLabel === 'Thesaurus' && n.props.onPress)[0]
+        .props.onPress(),
+    );
+    await flush();
+    // No crash; the body stays on the loading placeholder.
+    expect(collectText(tree)).toContain('Loading…');
   });
 });
