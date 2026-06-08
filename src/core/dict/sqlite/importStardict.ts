@@ -19,17 +19,6 @@ import {parseSidecar, slugDbFilename} from './importSidecar';
 import {ensureImportsTable, resolveSlugCollision, upsertImport} from './importAudit';
 import type {RunNativeImport} from './nativeImport';
 
-// Retained for the device adapter's now-dead readSet (removed in the
-// next commit). Kept here so importRnPorts.ts keeps compiling in the
-// interim — no longer used by the orchestration below.
-export type StardictSet = {
-  ifo: Uint8Array;
-  idx: Uint8Array;
-  dict: Uint8Array;
-  syn?: Uint8Array;
-  sidecarText: string;
-};
-
 // Lifecycle of the per-dict slug DB. The native importer WRITES it
 // (importStardict no longer opens a writable handle); JS only reopens a
 // DISTINCT handle to verify committed state and discards a failed import.
