@@ -46,16 +46,34 @@ type RnSqliteStorage = {
   }) => Promise<RnDatabase>;
 };
 
+// Reject if a native call never settles. A wedged executeSql (observed
+// on a bad/locked DB) otherwise hangs forever, which left the handlers'
+// reentrancy guard held -> the "pipeline already running" hang. A
+// timeout turns that into a rejection so the handler's finally releases
+// the guard and the user can retry.
+const QUERY_TIMEOUT_MS = 10000;
+
+const withTimeout = <T>(p: Promise<T>, label: string): Promise<T> => {
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`[sqlite] ${label} timed out after ${QUERY_TIMEOUT_MS}ms`)),
+      QUERY_TIMEOUT_MS,
+    );
+  });
+  return Promise.race([p, timeout]).finally(() => clearTimeout(timer));
+};
+
 const wrap = (db: RnDatabase): SqliteDb => ({
   async query<T = Record<string, unknown>>(
     sql: string,
     params: SqlParam[] = [],
   ): Promise<T[]> {
-    const [result] = await db.executeSql(sql, params);
+    const [result] = await withTimeout(db.executeSql(sql, params), 'query');
     return result.rows.raw() as T[];
   },
   async run(sql: string, params: SqlParam[] = []): Promise<{changes: number}> {
-    const [result] = await db.executeSql(sql, params);
+    const [result] = await withTimeout(db.executeSql(sql, params), 'run');
     return {changes: result.rowsAffected};
   },
   async transaction(fn: (tx: SqliteDb) => Promise<void>): Promise<void> {
