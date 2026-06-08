@@ -1,4 +1,5 @@
 import type {LookupResult} from '../core/lookup';
+import type {ThesaurusResult} from '../core/dict/sqlite/thesaurusLookup';
 
 // Bridge between async handlers (which don't render React) and the
 // popup component (which does). A handler calls one of the show*()
@@ -30,9 +31,44 @@ export type PopupState =
       kind: 'result';
       ocrLabel?: string;
       result: LookupResult;
+      // OPTIONAL: when true the popup shows the OCR-correction editable
+      // field (lasso flow). Absent/false -> read-only view (doc-select).
+      // The component guards on `=== true`, never on ocrLabel presence
+      // (Designer ruling 4 / flag 5). The LookupResult shape itself is
+      // unchanged (IV-1) — editability is popup chrome, not a result
+      // field.
+      editable?: boolean;
     };
 
 type Listener = (state: PopupState) => void;
+
+// Registry seam (Designer ruling 1): the popup needs to call back into
+// the runtime (fetch thesaurus, persist a user word, re-run a lookup)
+// without the controller importing the engine. Handlers are registered
+// at startup via setPopupActions; the component reads them via
+// getPopupActions(), which can be NULL before registration (async) —
+// every call site guards for that (Designer flag 1).
+//
+// Source -> language resolution lives INSIDE lookupThesaurus (it returns
+// {lang, omw}); the 'und' short-circuit is in the action too, so the
+// component stays language-policy-free and IV-1 holds (the thesaurus is
+// a separate lazy query, never a LookupResult field).
+export type PopupActions = {
+  lookupThesaurus(
+    headword: string,
+    sourceName: string,
+  ): Promise<{lang: string; omw: ThesaurusResult}>;
+  addUserEntry(word: string, definition: string): Promise<void>;
+  relookup(text: string): Promise<void>;
+};
+
+let popupActions: PopupActions | null = null;
+
+export const setPopupActions = (actions: PopupActions): void => {
+  popupActions = actions;
+};
+
+export const getPopupActions = (): PopupActions | null => popupActions;
 
 let currentState: PopupState = {visible: false};
 const listeners = new Set<Listener>();
@@ -49,8 +85,9 @@ export const showRecognizing = (ocrLabel?: string): void => {
 export const showDefinition = (
   result: LookupResult,
   ocrLabel?: string,
+  editable?: boolean,
 ): void => {
-  emit({visible: true, kind: 'result', ocrLabel, result});
+  emit({visible: true, kind: 'result', ocrLabel, result, editable});
 };
 
 export const hideDefinition = (): void => {
@@ -70,5 +107,8 @@ export const __testing__ = {
   reset: () => {
     listeners.clear();
     currentState = {visible: false};
+    // Null the registry so suites don't leak actions across tests
+    // (Designer flag 6).
+    popupActions = null;
   },
 };

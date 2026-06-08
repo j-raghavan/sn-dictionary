@@ -59,7 +59,7 @@ export const MANIFEST: DictManifest[] = [
     name: 'wikdict-de-fr',
     url: 'https://download.wikdict.com/dictionaries/stardict/wikdict-de-fr.zip',
     sha256:
-      '2c4d1710086f4d65e00fb0e00a8beaac424d24f842722a5afd1e3f8546e523e3',
+      '023555569aecbe851fa48d030ede0023e4bce012ae1c49d66a90d46b1eafe301',
     description: 'WikDict German→French (Wiktionary-derived, CC-BY-SA)',
     entries: [
       {
@@ -147,7 +147,7 @@ export const MANIFEST: DictManifest[] = [
     name: 'wikdict-fr-de',
     url: 'https://download.wikdict.com/dictionaries/stardict/wikdict-fr-de.zip',
     sha256:
-      '81658ead31852e926e4c739799b92da7958e72d749f6c6a6b391e95ab2b0d587',
+      '4904042598da7d4c779151ea66f32509bbab348bc45a7166119eb5dc0e3b123d',
     description: 'WikDict French→German (Wiktionary-derived, CC-BY-SA)',
     entries: [
       {
@@ -175,7 +175,7 @@ export const MANIFEST: DictManifest[] = [
     name: 'wikdict-de-en',
     url: 'https://download.wikdict.com/dictionaries/stardict/wikdict-de-en.zip',
     sha256:
-      'c94ed34a7e925c1f7f0be1ff08b7032534eb2475352111fd46c1dc183d9390f2',
+      '7fa4ce566f4000c27ab206fad80bf8b4f6e217cb288b47c8fad5497107f01db1',
     description: 'WikDict German→English (Wiktionary-derived, CC-BY-SA)',
     entries: [
       {

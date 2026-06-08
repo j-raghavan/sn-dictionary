@@ -1,54 +1,38 @@
 // Scans the user-dict root (defaults to /storage/emulated/0/MyStyle/SnDict)
-// and returns a DictSource for every recognised dictionary folder.
-// Each DictSource is lazy — discovery only inspects file metadata
-// and (optionally) reads each dict's small `meta.json`. Heavy
-// parsing happens on first lookup against that source.
+// for sideloadable dictionaries and returns an import-job descriptor for
+// each (TF5-FR1, extended M16). Two layouts are discovered:
 //
-// Two layouts are supported. Both can coexist in the same root.
+//   StarDict (subfolder) — each dict in its own folder:
+//     <SnDict-root>/<folder>/
+//       ├── meta.json                    (OPTIONAL sidecar — name+language)
+//       ├── *.ifo + *.idx + *.dict[.dz]  (the StarDict triple)
+//       └── *.syn                        (optional synonym index)
 //
-// Organised layout (one dict per subfolder):
+//   CSV (loose root file) — a single *.csv at the root:
+//     <SnDict-root>/
+//       ├── Dune.csv                     -> a CSV dict named "Dune"
+//       ├── Dune.meta.json               (OPTIONAL per-file sidecar)
+//       └── meta.json                    (OPTIONAL shared root sidecar —
+//                                         its csv.* block applies to every
+//                                         CSV; its name is NOT broadcast)
 //
-//   <SnDict-root>/<name>/
-//     ├── meta.json                      (optional)
-//     ├── *.ifo + *.idx + *.dict[.dz]    -> StarDict
-//     ├── *.csv                          -> CSV
-//     ├── *.json                         -> JSON
-//     └── *.mdx                          -> logged as deferred (skipped)
+// Each descriptor carries a `kind` discriminator ('stardict' | 'csv').
+// Discovery only LOCATES files + resolves the sidecar; it does not read
+// the dictionary bytes or build any DictSource. The import pipeline
+// (runImport + the kind-appropriate produce-step) consumes them.
 //
-// Flat layout (single-file dicts at the root):
-//
-//   <SnDict-root>/
-//     ├── meta.json                      (optional, applies to ALL flat-
-//     │                                   layout files unless overridden)
-//     ├── Dune.csv                       -> CSV
-//     ├── Dune.meta.json                 (optional sidecar; overrides
-//     │                                   the shared meta.json for Dune.csv)
-//     └── medical.json                   -> JSON
-//
-// StarDict has multiple required files and never qualifies for flat
-// layout. CSV/JSON each stand on their own.
-//
-// meta.json schema (all fields optional):
-//
-//   {
-//     "name": "Display Name",
-//     "csv": {
-//       "headwordCol": 0,
-//       "definitionCol": 1,
-//       "phoneticCol": 2,
-//       "hasHeader": false
-//     }
-//   }
-//
-// Per-folder/per-file failures are isolated and logged — one bad
-// dict doesn't break discovery for the others.
+// Per-item failures are isolated and logged — one bad folder/file doesn't
+// break discovery for the rest. Discovery never throws: a missing or
+// unreadable root yields an empty list (the bundled base.db still works).
 
 import {decodeUtf8} from '../../sdk/utf8';
-import type {DictSource} from '../lookup';
-import {createCsvDictSource} from './csvDictSource';
-import {createJsonDictSource} from './jsonDictSource';
-import {createStardictLookup, type DictBytes} from './stardictLookup';
-import type {IndexCacheStorage} from './indexCacheStorage';
+import {isMetaJsonName} from './metaJsonName';
+import {
+  parseCsvConfig,
+  parseSidecar,
+  type CsvColumnConfig,
+  type Sidecar,
+} from './sqlite/importSidecar';
 
 export const DEFAULT_USER_DICT_ROOT = '/storage/emulated/0/MyStyle/SnDict';
 
@@ -70,49 +54,66 @@ export type DiscoveryDeps = {
   rootPath?: string;
   // Injected for tests; defaults to globalThis.fetch at runtime.
   fetchFn?: typeof fetch;
-  // Optional persistent index cache. Threaded into discovered
-  // StarDict sources so they hydrate from disk on subsequent loads
-  // instead of re-parsing the .idx + .syn from scratch. CSV / JSON
-  // sources don't get this — they parse fast enough to not justify
-  // the complexity.
-  cache?: IndexCacheStorage;
   logger?: Logger;
 };
 
-const TAG = '[discovery]';
-
-const fetchAsArrayBuffer = async (
-  path: string,
-  fetchFn: typeof fetch,
-): Promise<ArrayBuffer> => {
-  const res = await fetchFn(`file://${path}`);
-  if (!res.ok) {
-    throw new Error(
-      `fetch ${path} returned status ${res.status}`,
-    );
-  }
-  return await res.arrayBuffer();
+// One sideloadable StarDict found on disk. setPath is the containing
+// folder; the *Path fields are absolute file paths; sidecar is the
+// resolved meta.json (or defaults).
+export type StardictJobDescriptor = {
+  kind: 'stardict';
+  setPath: string;
+  ifoPath: string;
+  idxPath: string;
+  dictPath: string;
+  synPath?: string;
+  // Absent when the folder ships no meta.json (the dict still loads with
+  // a default sidecar). Present when a meta.json exists — used to read it
+  // and to delete it after a verified import.
+  sidecarPath?: string;
+  // Always resolved: the parsed meta.json, or a default {name:
+  // folderName, language:'und'} when meta.json is absent/invalid.
+  sidecar: Sidecar;
 };
+
+// One sideloadable CSV found loose at the root. csvPath is the *.csv
+// file; csvConfig is the resolved column layout (defaults applied
+// downstream); sidecarPath (when present) is the meta.json deleted with
+// the CSV after a verified import.
+export type CsvJobDescriptor = {
+  kind: 'csv';
+  csvPath: string;
+  csvConfig: CsvColumnConfig;
+  sidecarPath?: string;
+  // name = filename-sans-.csv; language from the sidecar or 'und'.
+  sidecar: Sidecar;
+};
+
+export type ImportJobDescriptor = StardictJobDescriptor | CsvJobDescriptor;
+
+const TAG = '[discovery]';
 
 const fetchAsUint8 = async (
   path: string,
   fetchFn: typeof fetch,
-): Promise<Uint8Array> =>
-  new Uint8Array(await fetchAsArrayBuffer(path, fetchFn));
+): Promise<Uint8Array> => {
+  const res = await fetchFn(`file://${path}`);
+  if (!res.ok) {
+    throw new Error(`fetch ${path} returned status ${res.status}`);
+  }
+  return new Uint8Array(await res.arrayBuffer());
+};
 
-// Lower-cased extension or '' if none.
+// Lower-cased extension or '' if none. Special-cases the .dict.dz
+// double extension.
 const extOf = (path: string): string => {
   const slash = path.lastIndexOf('/');
   const base = slash >= 0 ? path.slice(slash + 1) : path;
-  // Special-case the .dict.dz double extension.
   if (base.toLowerCase().endsWith('.dict.dz')) {
     return '.dict.dz';
   }
   const dot = base.lastIndexOf('.');
-  if (dot < 0) {
-    return '';
-  }
-  return base.slice(dot).toLowerCase();
+  return dot < 0 ? '' : base.slice(dot).toLowerCase();
 };
 
 const basenameOf = (path: string): string => {
@@ -120,117 +121,16 @@ const basenameOf = (path: string): string => {
   return slash >= 0 ? path.slice(slash + 1) : path;
 };
 
-// `meta.json` is the shared/folder convention; `<basename>.meta.json`
-// is the per-file sidecar convention at root level. Both must be
-// excluded from JSON-dict detection so the meta config never gets
-// mistaken for an actual dictionary file.
-const isMetaJsonName = (name: string): boolean =>
-  name === 'meta.json' || name.toLowerCase().endsWith('.meta.json');
-
-type CsvMetaConfig = {
-  headwordCol?: number;
-  definitionCol?: number;
-  phoneticCol?: number;
-  hasHeader?: boolean;
+type StardictTriple = {
+  ifo: string;
+  idx: string;
+  dict: string;
+  syn?: string;
 };
 
-type FolderMeta = {
-  name?: string;
-  csv?: CsvMetaConfig;
-};
-
-const isPlainObject = (v: unknown): v is Record<string, unknown> =>
-  typeof v === 'object' && v !== null && !Array.isArray(v);
-
-// Pick a non-negative integer field from a parsed meta blob. Anything
-// non-numeric, negative, or non-integer is dropped — there's no
-// meaningful interpretation, and silently ignoring lets a typo in
-// meta.json fall back to defaults instead of crashing discovery.
-const pickNonNegInt = (
-  obj: Record<string, unknown>,
-  key: string,
-): number | undefined => {
-  const v = obj[key];
-  if (typeof v !== 'number' || !Number.isInteger(v) || v < 0) {
-    return undefined;
-  }
-  return v;
-};
-
-const parseCsvMeta = (raw: unknown): CsvMetaConfig | undefined => {
-  if (!isPlainObject(raw)) {
-    return undefined;
-  }
-  const cfg: CsvMetaConfig = {};
-  const hw = pickNonNegInt(raw, 'headwordCol');
-  if (hw !== undefined) {
-    cfg.headwordCol = hw;
-  }
-  const def = pickNonNegInt(raw, 'definitionCol');
-  if (def !== undefined) {
-    cfg.definitionCol = def;
-  }
-  const phon = pickNonNegInt(raw, 'phoneticCol');
-  if (phon !== undefined) {
-    cfg.phoneticCol = phon;
-  }
-  if (typeof raw.hasHeader === 'boolean') {
-    cfg.hasHeader = raw.hasHeader;
-  }
-  return cfg;
-};
-
-const readMetaFile = async (
-  meta: FileEntry,
-  fetchFn: typeof fetch,
-): Promise<FolderMeta> => {
-  try {
-    const text = decodeUtf8(await fetchAsUint8(meta.path, fetchFn));
-    const parsed: unknown = JSON.parse(text);
-    if (!isPlainObject(parsed)) {
-      return {};
-    }
-    const out: FolderMeta = {};
-    if (typeof parsed.name === 'string' && parsed.name.trim().length > 0) {
-      out.name = parsed.name.trim();
-    }
-    const csv = parseCsvMeta(parsed.csv);
-    if (csv !== undefined) {
-      out.csv = csv;
-    }
-    return out;
-  } catch {
-    return {};
-  }
-};
-
-const readFolderMeta = async (
-  files: FileEntry[],
-  fetchFn: typeof fetch,
-): Promise<FolderMeta> => {
-  const meta = files.find(f => f.type === 1 && basenameOf(f.path) === 'meta.json');
-  return meta ? await readMetaFile(meta, fetchFn) : {};
-};
-
-type DetectedFormat =
-  | {
-      kind: 'stardict';
-      ifo: string;
-      idx: string;
-      dict: string;
-      // Optional StarDict synonym index file. Wiktionary-derived
-      // dicts use this to ship Latin transliterations alongside
-      // native-script headwords; reading it makes Latin lookups
-      // work for non-Latin-script languages.
-      syn?: string;
-    }
-  | {kind: 'csv'; path: string}
-  | {kind: 'json'; path: string}
-  | {kind: 'mdx'; path: string}
-  | {kind: 'none'}
-  | {kind: 'ambiguous'; reasons: string[]};
-
-const detectFormat = (files: FileEntry[]): DetectedFormat => {
+// Locate a complete StarDict triple among a folder's files. Returns
+// null when the triple is incomplete (missing one of ifo/idx/dict).
+const findTriple = (files: FileEntry[]): StardictTriple | null => {
   const filesOnly = files.filter(f => f.type === 1);
   const ifo = filesOnly.find(f => extOf(f.path) === '.ifo');
   const idx = filesOnly.find(f => extOf(f.path) === '.idx');
@@ -238,244 +138,187 @@ const detectFormat = (files: FileEntry[]): DetectedFormat => {
     f => extOf(f.path) === '.dict.dz' || extOf(f.path) === '.dict',
   );
   const syn = filesOnly.find(f => extOf(f.path) === '.syn');
-  const csv = filesOnly.find(f => extOf(f.path) === '.csv');
-  // Exclude meta.json (and any *.meta.json sidecar) from JSON dict
-  // candidates — these are config, not dictionary content.
-  const json = filesOnly.find(
-    f => extOf(f.path) === '.json' && !isMetaJsonName(basenameOf(f.path)),
-  );
-  const mdx = filesOnly.find(f => extOf(f.path) === '.mdx');
-
-  const stardictComplete = ifo && idx && dict;
-  const stardictPartial = (ifo || idx || dict) && !stardictComplete;
-
-  // Format markers found in this folder.
-  const present: string[] = [];
-  if (stardictComplete) {
-    present.push('stardict');
+  if (!ifo || !idx || !dict) {
+    return null;
   }
-  if (csv) {
-    present.push('csv');
-  }
-  if (json) {
-    present.push('json');
-  }
-  if (mdx) {
-    present.push('mdx');
-  }
-
-  if (present.length === 0) {
-    if (stardictPartial) {
-      return {
-        kind: 'ambiguous',
-        reasons: ['partial StarDict triple — needs *.ifo + *.idx + *.dict[.dz]'],
-      };
-    }
-    return {kind: 'none'};
-  }
-  if (present.length > 1) {
-    return {
-      kind: 'ambiguous',
-      reasons: [`multiple formats present: ${present.join(', ')}`],
-    };
-  }
-  // present.length === 1 by elimination: pick the matching detector.
-  if (stardictComplete) {
-    return {
-      kind: 'stardict',
-      ifo: ifo.path,
-      idx: idx.path,
-      dict: dict.path,
-      syn: syn ? syn.path : undefined,
-    };
-  }
-  if (csv) {
-    return {kind: 'csv', path: csv.path};
-  }
-  if (json) {
-    return {kind: 'json', path: json.path};
-  }
-  // mdx — the only remaining option since present.length === 1.
-  return {kind: 'mdx', path: (mdx as FileEntry).path};
+  return {
+    ifo: ifo.path,
+    idx: idx.path,
+    dict: dict.path,
+    syn: syn ? syn.path : undefined,
+  };
 };
 
-const buildSourceForFolder = async (
+// Find the meta.json sidecar in a folder — either the shared
+// `meta.json` or a `<basename>.meta.json` sidecar (shared predicate).
+const findSidecar = (files: FileEntry[]): FileEntry | undefined =>
+  files.find(f => f.type === 1 && isMetaJsonName(basenameOf(f.path)));
+
+const buildDescriptor = async (
   folder: FileEntry,
   files: FileEntry[],
   fetchFn: typeof fetch,
   logger: Logger,
-  cache: IndexCacheStorage | undefined,
-): Promise<DictSource | null> => {
+): Promise<ImportJobDescriptor | null> => {
   const folderName = basenameOf(folder.path);
-  const detected = detectFormat(files);
 
-  if (detected.kind === 'none') {
+  // The triple IS the dictionary — it's the only hard requirement.
+  const triple = findTriple(files);
+  if (triple === null) {
     logger.warn(
-      `${TAG} folder "${folderName}" has no recognised dict files — skipped`,
-    );
-    return null;
-  }
-  if (detected.kind === 'ambiguous') {
-    logger.warn(
-      `${TAG} folder "${folderName}" is ambiguous (${detected.reasons.join('; ')}) — skipped`,
-    );
-    return null;
-  }
-  if (detected.kind === 'mdx') {
-    logger.warn(
-      `${TAG} folder "${folderName}" contains MDX which is not yet supported — skipped`,
+      `${TAG} folder "${folderName}" has no complete StarDict triple (need *.ifo + *.idx + *.dict[.dz]) — skipped`,
     );
     return null;
   }
 
-  const meta = await readFolderMeta(files, fetchFn);
-  const displayName = meta.name ?? folderName;
+  // Default sidecar when meta.json is absent/invalid: the core feature
+  // (definition lookup) must work with minimum input. name = folder
+  // name, language 'und' (so the thesaurus tab cleanly short-circuits to
+  // empty — thesaurus is an enhancement, not a gate). format undefined
+  // -> importStardict derives it from the .ifo sametypesequence.
+  const defaultSidecar: Sidecar = {name: folderName, language: 'und'};
 
-  if (detected.kind === 'stardict') {
-    const synPath = detected.syn;
-    return createStardictLookup({
-      name: displayName,
-      loadBase: async (): Promise<DictBytes | null> => {
-        const [ifo, idx, dict, syn] = await Promise.all([
-          fetchAsUint8(detected.ifo, fetchFn),
-          fetchAsUint8(detected.idx, fetchFn),
-          fetchAsUint8(detected.dict, fetchFn),
-          // .syn is optional. Fetch failures here aren't fatal — fall
-          // back to the .idx-only path, which is what we did before
-          // .syn support landed.
-          synPath
-            ? fetchAsUint8(synPath, fetchFn).catch(e => {
-                logger.warn(
-                  `${TAG} folder "${folderName}" .syn fetch threw: ${(e as Error).message} — continuing without synonyms`,
-                );
-                return undefined;
-              })
-            : Promise.resolve(undefined),
-        ]);
-        return syn ? {ifo, idx, dict, syn} : {ifo, idx, dict};
-      },
-      cache,
-      logger,
-    });
+  const sidecarEntry = findSidecar(files);
+  // No meta.json -> load with defaults (NOT skipped).
+  if (sidecarEntry === undefined) {
+    logger.log(
+      `${TAG} folder "${folderName}" has no meta.json — loading with defaults (name="${folderName}", language="und")`,
+    );
+    return {
+      kind: 'stardict',
+      setPath: folder.path,
+      ifoPath: triple.ifo,
+      idxPath: triple.idx,
+      dictPath: triple.dict,
+      synPath: triple.syn,
+      sidecar: defaultSidecar,
+    };
   }
-  if (detected.kind === 'csv') {
-    return createCsvDictSource({
-      name: displayName,
-      loadBytes: () => fetchAsArrayBuffer(detected.path, fetchFn),
-      headwordCol: meta.csv?.headwordCol,
-      definitionCol: meta.csv?.definitionCol,
-      phoneticCol: meta.csv?.phoneticCol,
-      hasHeader: meta.csv?.hasHeader,
-      logger,
-    });
+
+  // meta.json present — try to use it, but DEGRADE to defaults on any
+  // problem (read error / bad JSON / failed validation), never skip.
+  let sidecar = defaultSidecar;
+  try {
+    const sidecarText = decodeUtf8(await fetchAsUint8(sidecarEntry.path, fetchFn));
+    const parsed: unknown = JSON.parse(sidecarText);
+    const result = parseSidecar(parsed);
+    if (result.ok) {
+      sidecar = result.sidecar;
+    } else {
+      logger.warn(
+        `${TAG} folder "${folderName}" meta.json invalid: ${result.reason} — loading with defaults`,
+      );
+    }
+  } catch (e) {
+    logger.warn(
+      `${TAG} folder "${folderName}" meta.json unreadable: ${(e as Error).message} — loading with defaults`,
+    );
   }
-  // detected.kind === 'json'
-  return createJsonDictSource({
-    name: displayName,
-    loadBytes: () => fetchAsArrayBuffer(detected.path, fetchFn),
-    logger,
-  });
+
+  return {
+    kind: 'stardict',
+    setPath: folder.path,
+    ifoPath: triple.ifo,
+    idxPath: triple.idx,
+    dictPath: triple.dict,
+    synPath: triple.syn,
+    sidecarPath: sidecarEntry.path,
+    sidecar,
+  };
 };
 
-// Strip the trailing extension to derive a display name from a flat
-// file: "medical.csv" -> "medical".
-const nameFromFile = (filePath: string): string => {
-  const base = basenameOf(filePath);
-  const dot = base.lastIndexOf('.');
-  return dot < 0 ? base : base.slice(0, dot);
+// --- CSV (loose root file) discovery (M16) -------------------------
+
+// Read + parse a JSON sidecar file; null on any read/parse failure.
+const readJson = async (
+  path: string,
+  fetchFn: typeof fetch,
+): Promise<Record<string, unknown> | null> => {
+  try {
+    const text = decodeUtf8(await fetchAsUint8(path, fetchFn));
+    const parsed: unknown = JSON.parse(text);
+    return typeof parsed === 'object' && parsed !== null
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
 };
 
-// Locate a per-file meta sidecar — `<base>.meta.json` next to the
-// dict file. Lets users disambiguate when multiple CSVs share the
-// root with different schemas (e.g. Dune.csv + Dune.meta.json,
-// medical.csv + medical.meta.json). Sidecars take precedence over
-// the shared root meta.json.
-const findSidecarMeta = (
-  file: FileEntry,
-  rootFiles: FileEntry[],
-): FileEntry | undefined => {
-  const display = nameFromFile(file.path);
-  const target = `${display}.meta.json`;
-  return rootFiles.find(
-    f => f.type === 1 && basenameOf(f.path) === target,
-  );
+// The CSV display name is ALWAYS the filename sans .csv — a shared root
+// meta.json's `name` is NOT broadcast across CSVs (only its csv.* config
+// is). A per-file sidecar may still set language/format/etc., but not the
+// name (each loose CSV is its own dict, named by its file).
+const csvNameOf = (csvPath: string): string => {
+  const base = basenameOf(csvPath);
+  return base.slice(0, base.length - '.csv'.length);
 };
 
-// Build a source for a single dict file living directly in the root
-// (no surrounding folder). StarDict is multi-file and never qualifies
-// here — it must be in a subfolder. CSV and JSON are single-file and
-// stand on their own. MDX is logged as deferred.
-//
-// `meta` carries the resolved config for this specific file (sidecar
-// override, or fall-back to the shared root meta.json). For CSV that
-// includes phoneticCol — a third column users overwhelmingly want
-// surfaced as pronunciation in the popup header but which discovery
-// previously had no way of binding to a flat-layout file. JSON has no
-// configurable schema, so meta only contributes the display name.
-const buildSourceForRootFile = (
-  file: FileEntry,
+// Build a CSV descriptor for a loose `*.csv`. Sidecar resolution, in
+// precedence order: a per-file `<base>.meta.json` (language/format) over
+// the shared root meta.json (csv.* config); the name is always the
+// filename; language defaults to 'und'. Never throws — a malformed
+// sidecar degrades to defaults.
+const buildCsvDescriptor = async (
+  csvPath: string,
+  perFileSidecarPath: string | undefined,
+  rootMeta: Record<string, unknown> | null,
   fetchFn: typeof fetch,
   logger: Logger,
-  meta: FolderMeta,
-): DictSource | null => {
-  const ext = extOf(file.path);
-  const baseName = basenameOf(file.path);
-  const displayName = meta.name ?? nameFromFile(file.path);
-  if (ext === '.csv') {
-    return createCsvDictSource({
-      name: displayName,
-      loadBytes: () => fetchAsArrayBuffer(file.path, fetchFn),
-      headwordCol: meta.csv?.headwordCol,
-      definitionCol: meta.csv?.definitionCol,
-      phoneticCol: meta.csv?.phoneticCol,
-      hasHeader: meta.csv?.hasHeader,
-      logger,
-    });
+): Promise<CsvJobDescriptor> => {
+  const name = csvNameOf(csvPath);
+  // The shared root meta.json's csv block is the BASE config for every
+  // CSV; a per-file sidecar's csv block overrides it key-by-key.
+  let csvConfig: CsvColumnConfig = rootMeta
+    ? parseCsvConfig(rootMeta.csv)
+    : {};
+  let language = 'und';
+
+  if (perFileSidecarPath !== undefined) {
+    const obj = await readJson(perFileSidecarPath, fetchFn);
+    if (obj === null) {
+      logger.warn(
+        `${TAG} CSV "${name}" sidecar unreadable/malformed — using defaults`,
+      );
+    } else {
+      // Per-file csv block overrides the root one (per-key).
+      csvConfig = {...csvConfig, ...parseCsvConfig(obj.csv)};
+      // Language from the per-file sidecar when valid (name is fixed).
+      const parsed = parseSidecar({name, language: obj.language ?? 'und'});
+      if (parsed.ok) {
+        language = parsed.sidecar.language;
+      }
+    }
   }
-  if (ext === '.json' && !isMetaJsonName(baseName)) {
-    return createJsonDictSource({
-      name: displayName,
-      loadBytes: () => fetchAsArrayBuffer(file.path, fetchFn),
-      logger,
-    });
+
+  logger.log(
+    `${TAG} CSV "${name}" (language="${language}") -> ${basenameOf(csvPath)}`,
+  );
+  const descriptor: CsvJobDescriptor = {
+    kind: 'csv',
+    csvPath,
+    csvConfig,
+    sidecar: {name, language},
+  };
+  if (perFileSidecarPath !== undefined) {
+    descriptor.sidecarPath = perFileSidecarPath;
   }
-  if (ext === '.mdx') {
-    logger.warn(
-      `${TAG} root file "${baseName}" is MDX which is not yet supported — skipped`,
-    );
-    return null;
-  }
-  if (
-    ext === '.ifo' ||
-    ext === '.idx' ||
-    ext === '.dict.dz' ||
-    ext === '.dict'
-  ) {
-    logger.warn(
-      `${TAG} root file "${baseName}" looks like StarDict — put it in a subfolder with its sibling files`,
-    );
-    return null;
-  }
-  // Anything else (README.md, .DS_Store, meta.json at root, …) is
-  // silently ignored.
-  return null;
+  return descriptor;
 };
 
 export const discoverUserDicts = async (
   deps: DiscoveryDeps,
-): Promise<DictSource[]> => {
+): Promise<ImportJobDescriptor[]> => {
   const root = deps.rootPath ?? DEFAULT_USER_DICT_ROOT;
   const fetchFn = deps.fetchFn ?? globalThis.fetch;
   const logger: Logger = deps.logger ?? {log: () => {}, warn: () => {}};
 
-  // Discovery itself never throws — a missing or unreadable root just
-  // yields zero user dicts, base dict still works.
+  // Discovery never throws — a missing/unreadable root just yields zero
+  // import jobs; base.db still works.
   let entries: FileEntry[] | null | undefined;
   try {
     entries = await deps.fileUtils.listFiles(root);
   } catch (e) {
-    // "Dir is not exists" is the firmware's normal "not present yet"
-    // path; that's expected first-run state. Log at info level.
     logger.log(
       `${TAG} root "${root}" not listable (${(e as Error).message}) — no user dicts`,
     );
@@ -486,68 +329,14 @@ export const discoverUserDicts = async (
     return [];
   }
 
-  const folders = entries.filter(e => e.type === 0);
-  const rootFiles = entries.filter(e => e.type === 1);
-
   if (typeof fetchFn !== 'function') {
     logger.warn(`${TAG} no fetch implementation — cannot read user dict files`);
     return [];
   }
 
-  const sources: DictSource[] = [];
+  const folders = entries.filter(e => e.type === 0);
+  const descriptors: ImportJobDescriptor[] = [];
 
-  // Root-level files (flat layout): each .csv / .json IS a complete
-  // dict on its own — no subfolder wrapper needed. StarDict triples
-  // can't live here; they require a subfolder.
-  //
-  // Two opt-in sources of per-file config exist at root level:
-  //   1. `<basename>.meta.json` sidecar — wins if present, scoped to
-  //      that one dict file.
-  //   2. shared `meta.json` at root — applies as the fallback to every
-  //      root-level dict that has no sidecar. Matches the simplest
-  //      single-file layout (one CSV + one meta.json next to it),
-  //      which is what most users reach for first.
-  //
-  // Skip the read entirely when there's no chance the caller cares —
-  // i.e. when the only root file types are unrelated (.txt, .md, etc).
-  const hasRootDictFile = rootFiles.some(f => {
-    const ext = extOf(f.path);
-    if (ext === '.csv') {
-      return true;
-    }
-    if (ext === '.json' && !isMetaJsonName(basenameOf(f.path))) {
-      return true;
-    }
-    return false;
-  });
-  const sharedRootMeta: FolderMeta = hasRootDictFile
-    ? await readFolderMeta(rootFiles, fetchFn)
-    : {};
-
-  for (const file of rootFiles) {
-    try {
-      const sidecar = findSidecarMeta(file, rootFiles);
-      // Sidecar meta is scoped to one file, so its `name` is safe to
-      // honour. Shared root meta is broadcast to every flat-layout
-      // dict — its `name` would collide if there's more than one, so
-      // we strip it and only carry the schema config across.
-      const fileMeta: FolderMeta = sidecar
-        ? await readMetaFile(sidecar, fetchFn)
-        : {csv: sharedRootMeta.csv};
-      const source = buildSourceForRootFile(file, fetchFn, logger, fileMeta);
-      if (source !== null) {
-        sources.push(source);
-      }
-    } catch (e) {
-      logger.warn(
-        `${TAG} root file "${basenameOf(file.path)}" build threw: ${(e as Error).message} — skipped`,
-      );
-    }
-  }
-
-  // Subfolders (organised layout): each subfolder is one dict, in any
-  // supported format. meta.json inside the folder may override the
-  // display name.
   for (const folder of folders) {
     let folderFiles: FileEntry[] | null | undefined;
     try {
@@ -565,15 +354,14 @@ export const discoverUserDicts = async (
       continue;
     }
     try {
-      const source = await buildSourceForFolder(
+      const descriptor = await buildDescriptor(
         folder,
         folderFiles,
         fetchFn,
         logger,
-        deps.cache,
       );
-      if (source !== null) {
-        sources.push(source);
+      if (descriptor !== null) {
+        descriptors.push(descriptor);
       }
     } catch (e) {
       logger.warn(
@@ -582,11 +370,60 @@ export const discoverUserDicts = async (
     }
   }
 
-  sources.sort((a, b) =>
-    a.name.localeCompare(b.name, undefined, {sensitivity: 'base'}),
+  // --- loose CSV pass: root-level *.csv files (not *.meta.json) ------
+  const rootFiles = entries.filter(e => e.type === 1);
+  const csvFiles = rootFiles.filter(
+    f => extOf(f.path) === '.csv' && !isMetaJsonName(basenameOf(f.path)),
+  );
+  if (csvFiles.length > 0) {
+    // The shared root meta.json is the file named EXACTLY "meta.json"
+    // (a `<base>.meta.json` is a per-file sidecar, never the shared one).
+    const sharedMetaEntry = rootFiles.find(
+      f => basenameOf(f.path).toLowerCase() === 'meta.json',
+    );
+    const rootMeta =
+      sharedMetaEntry !== undefined
+        ? await readJson(sharedMetaEntry.path, fetchFn)
+        : null;
+    // Index per-file sidecars by basename for O(1) `<base>.meta.json` hits.
+    const byBasename = new Map<string, string>();
+    for (const f of rootFiles) {
+      if (isMetaJsonName(basenameOf(f.path))) {
+        byBasename.set(basenameOf(f.path), f.path);
+      }
+    }
+    for (const csv of csvFiles) {
+      const base = basenameOf(csv.path);
+      const perFileSidecarPath = byBasename.get(
+        `${base.slice(0, base.length - '.csv'.length)}.meta.json`,
+      );
+      try {
+        descriptors.push(
+          await buildCsvDescriptor(
+            csv.path,
+            perFileSidecarPath,
+            rootMeta,
+            fetchFn,
+            logger,
+          ),
+        );
+      } catch (e) {
+        logger.warn(
+          `${TAG} CSV "${base}" build threw: ${(e as Error).message} — skipped`,
+        );
+      }
+    }
+  }
+
+  descriptors.sort((a, b) =>
+    a.sidecar.name.localeCompare(b.sidecar.name, undefined, {
+      sensitivity: 'base',
+    }),
   );
   logger.log(
-    `${TAG} discovered ${sources.length} user dict(s): [${sources.map(s => s.name).join(', ')}]`,
+    `${TAG} discovered ${descriptors.length} import job(s): [${descriptors
+      .map(d => d.sidecar.name)
+      .join(', ')}]`,
   );
-  return sources;
+  return descriptors;
 };

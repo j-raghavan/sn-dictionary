@@ -1,0 +1,109 @@
+{
+  "_comment": "Cross-language parity oracle for normalizeKey. TS (src/core/dict/normalizeKey.ts) and Kotlin (android/.../imports/NormalizeKey.kt) MUST produce 'expected' for every 'input'. TS pinned by __tests__/normalizeKeyVectors.test.ts; Kotlin verified on-device when the .snplg is compiled+run.",
+  "vectors": [
+    {
+      "input": "Apple",
+      "expected": "apple"
+    },
+    {
+      "input": "BANANA",
+      "expected": "banana"
+    },
+    {
+      "input": "  hello  ",
+      "expected": "hello"
+    },
+    {
+      "input": "   ",
+      "expected": ""
+    },
+    {
+      "input": "",
+      "expected": ""
+    },
+    {
+      "input": "Muad’Dib",
+      "expected": "muad'dib"
+    },
+    {
+      "input": "Muad'Dib",
+      "expected": "muad'dib"
+    },
+    {
+      "input": "it‘s",
+      "expected": "it's"
+    },
+    {
+      "input": "Hawaiʼi",
+      "expected": "hawai'i"
+    },
+    {
+      "input": "a＇b",
+      "expected": "a'b"
+    },
+    {
+      "input": "“hi”",
+      "expected": "\"hi\""
+    },
+    {
+      "input": "„hi‟",
+      "expected": "\"hi\""
+    },
+    {
+      "input": "a–b",
+      "expected": "a-b"
+    },
+    {
+      "input": "a—b",
+      "expected": "a-b"
+    },
+    {
+      "input": "a‐b",
+      "expected": "a-b"
+    },
+    {
+      "input": "a‑b",
+      "expected": "a-b"
+    },
+    {
+      "input": "a‒b",
+      "expected": "a-b"
+    },
+    {
+      "input": "a―b",
+      "expected": "a-b"
+    },
+    {
+      "input": "end…",
+      "expected": "end..."
+    },
+    {
+      "input": "a b",
+      "expected": "a b"
+    },
+    {
+      "input": "Café",
+      "expected": "café"
+    },
+    {
+      "input": "don't",
+      "expected": "don't"
+    },
+    {
+      "input": "a-b",
+      "expected": "a-b"
+    },
+    {
+      "input": "\"hi\"",
+      "expected": "\"hi\""
+    },
+    {
+      "input": "rocket🚀ship",
+      "expected": "rocket🚀ship"
+    },
+    {
+      "input": "🚀’hi’🛸",
+      "expected": "🚀'hi'🛸"
+    }
+  ]
+}

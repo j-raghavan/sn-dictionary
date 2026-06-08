@@ -1,738 +1,565 @@
+// Discovery returning import-job descriptors (TF5-FR1, extended M16).
+// Two layouts: StarDict subfolders (kind:'stardict') and loose root
+// *.csv files (kind:'csv'). Discovery LOCATES files + resolves the
+// sidecar; it does not read dictionary bytes or build sources.
+
 import {
   discoverUserDicts,
-  type DiscoveryDeps,
+  DEFAULT_USER_DICT_ROOT,
   type FileEntry,
-  type FileUtilsLike,
 } from '../src/core/dict/userDictDiscovery';
-import {buildSyntheticStarDict} from './_helpers/buildSyntheticStarDict';
-import {enc, makeVfs, type Vfs} from './_helpers/inMemoryVfs';
 
+const ROOT = '/root';
 const fileEntry = (path: string, type: 0 | 1): FileEntry => ({path, type});
 
-const buildLogger = () => ({log: jest.fn(), warn: jest.fn()});
-
-const ROOT = '/storage/emulated/0/MyStyle/SnDict';
-
-const baseDeps = (
-  vfs: Vfs,
-  overrides: Partial<DiscoveryDeps> = {},
-): DiscoveryDeps => {
-  const built = makeVfs(vfs);
+// Build a fileUtils + fetchFn pair. `tree` maps a directory path to its
+// entries; `meta` maps a meta.json file path to its raw text.
+const makeDeps = (
+  tree: Record<string, FileEntry[]>,
+  meta: Record<string, string>,
+) => {
+  const listFiles = jest.fn(async (path: string) => tree[path] ?? []);
+  const fetchFn = jest.fn(async (url: string) => {
+    const path = url.replace(/^file:\/\//, '');
+    const text = meta[path];
+    if (text === undefined) {
+      return {ok: false, status: 404} as Response;
+    }
+    return {
+      ok: true,
+      status: 200,
+      arrayBuffer: async () => new TextEncoder().encode(text).buffer,
+    } as unknown as Response;
+  });
+  const warnings: string[] = [];
+  const logs: string[] = [];
+  const logger = {
+    warn: (m: string) => warnings.push(m),
+    log: (m: string) => logs.push(m),
+  };
   return {
-    fileUtils: built.fileUtils,
-    fetchFn: built.fetchFn,
-    logger: buildLogger(),
-    rootPath: ROOT,
-    ...overrides,
+    deps: {
+      fileUtils: {exists: jest.fn(async () => true), listFiles},
+      rootPath: ROOT,
+      fetchFn: fetchFn as unknown as typeof fetch,
+      logger,
+    },
+    listFiles,
+    fetchFn,
+    warnings,
+    logs,
   };
 };
 
-const stardictBytes = (entries: Record<string, string>) => {
-  const triple = buildSyntheticStarDict(entries);
-  return {
-    ifo: triple.ifo.buffer.slice(
-      triple.ifo.byteOffset,
-      triple.ifo.byteOffset + triple.ifo.byteLength,
-    ) as ArrayBuffer,
-    idx: triple.idx.buffer.slice(
-      triple.idx.byteOffset,
-      triple.idx.byteOffset + triple.idx.byteLength,
-    ) as ArrayBuffer,
-    dict: triple.dict.buffer.slice(
-      triple.dict.byteOffset,
-      triple.dict.byteOffset + triple.dict.byteLength,
-    ) as ArrayBuffer,
-  };
-};
+const folder = (name: string) => fileEntry(`${ROOT}/${name}`, 0);
+const triple = (dir: string) => [
+  fileEntry(`${dir}/base.ifo`, 1),
+  fileEntry(`${dir}/base.idx`, 1),
+  fileEntry(`${dir}/base.dict.dz`, 1),
+];
 
-describe('discoverUserDicts', () => {
-  test('returns [] when the root dir does not exist', async () => {
-    const deps = baseDeps({});
-    const result = await discoverUserDicts(deps);
-    expect(result).toEqual([]);
-    expect((deps.logger?.log as jest.Mock).mock.calls.flat().join(' ')).toMatch(
-      /not listable.*Dir is not exists/,
+describe('discoverUserDicts — StarDict-only descriptors', () => {
+  it('returns a descriptor for a complete triple + valid meta.json', async () => {
+    const dir = `${ROOT}/dune`;
+    const {deps} = makeDeps(
+      {
+        [ROOT]: [folder('dune')],
+        [dir]: [...triple(dir), fileEntry(`${dir}/meta.json`, 1)],
+      },
+      {[`${dir}/meta.json`]: JSON.stringify({name: 'Dune', language: 'en'})},
     );
-  });
-
-  test('returns [] when the root dir exists but is empty', async () => {
-    const deps = baseDeps({[ROOT]: 'dir'});
-    expect(await discoverUserDicts(deps)).toEqual([]);
-  });
-
-  test('returns [] when the root has only unrecognised files at root', async () => {
-    const deps = baseDeps({
-      [ROOT]: 'dir',
-      [`${ROOT}/loose-file.txt`]: enc('hi'),
-    });
-    expect(await discoverUserDicts(deps)).toEqual([]);
-  });
-
-  test('discovers a single CSV directly at the root (no subfolder needed)', async () => {
-    const deps = baseDeps({
-      [`${ROOT}/medical.csv`]: enc('apple,fruit\nbanana,yellow\n'),
-    });
-    const sources = await discoverUserDicts(deps);
-    expect(sources.length).toBe(1);
-    expect(sources[0].name).toBe('medical');
-    expect((await sources[0].lookup('apple'))?.definition).toBe('fruit');
-  });
-
-  test('discovers a single JSON directly at the root', async () => {
-    const deps = baseDeps({
-      [`${ROOT}/glossary.json`]: enc(JSON.stringify({hello: 'a greeting'})),
-    });
-    const sources = await discoverUserDicts(deps);
-    expect(sources.length).toBe(1);
-    expect(sources[0].name).toBe('glossary');
-    expect((await sources[0].lookup('hello'))?.definition).toBe('a greeting');
-  });
-
-  test('mixes flat-file dicts at root with subfolder dicts', async () => {
-    const triple = stardictBytes({apple: 'fruit (sd)'});
-    const deps = baseDeps({
-      [`${ROOT}/medical.csv`]: enc('apple,fruit (csv)\n'),
-      [`${ROOT}/japanese.json`]: enc(JSON.stringify({apple: 'fruit (json)'})),
-      [`${ROOT}/wordnet/wn.ifo`]: triple.ifo,
-      [`${ROOT}/wordnet/wn.idx`]: triple.idx,
-      [`${ROOT}/wordnet/wn.dict.dz`]: triple.dict,
-    });
-    const sources = await discoverUserDicts(deps);
-    // Sorted alphabetically by display name across both layouts.
-    expect(sources.map(s => s.name)).toEqual([
-      'japanese',
-      'medical',
-      'wordnet',
+    const out = await discoverUserDicts(deps);
+    expect(out).toEqual([
+      {
+        kind: 'stardict',
+        setPath: dir,
+        ifoPath: `${dir}/base.ifo`,
+        idxPath: `${dir}/base.idx`,
+        dictPath: `${dir}/base.dict.dz`,
+        synPath: undefined,
+        sidecarPath: `${dir}/meta.json`,
+        sidecar: {name: 'Dune', language: 'en'},
+      },
     ]);
   });
 
-  test('logs and skips a root MDX file as deferred', async () => {
-    const deps = baseDeps({
-      [`${ROOT}/dict.mdx`]: enc('binary'),
-    });
+  it('captures an optional .syn path', async () => {
+    const dir = `${ROOT}/hi`;
+    const {deps} = makeDeps(
+      {
+        [ROOT]: [folder('hi')],
+        [dir]: [
+          ...triple(dir),
+          fileEntry(`${dir}/base.syn`, 1),
+          fileEntry(`${dir}/meta.json`, 1),
+        ],
+      },
+      {[`${dir}/meta.json`]: JSON.stringify({name: 'Hindi', language: 'hi'})},
+    );
+    const out = await discoverUserDicts(deps);
+    expect(out[0].synPath).toBe(`${dir}/base.syn`);
+  });
+
+  it('accepts a plain .dict (non-dz) member', async () => {
+    const dir = `${ROOT}/plain`;
+    const {deps} = makeDeps(
+      {
+        [ROOT]: [folder('plain')],
+        [dir]: [
+          fileEntry(`${dir}/d.ifo`, 1),
+          fileEntry(`${dir}/d.idx`, 1),
+          fileEntry(`${dir}/d.dict`, 1),
+          fileEntry(`${dir}/meta.json`, 1),
+        ],
+      },
+      {[`${dir}/meta.json`]: JSON.stringify({name: 'Plain', language: 'en'})},
+    );
+    const out = await discoverUserDicts(deps);
+    expect(out[0].dictPath).toBe(`${dir}/d.dict`);
+  });
+
+  it('sorts descriptors by sidecar name (case-insensitive)', async () => {
+    const a = `${ROOT}/a`;
+    const z = `${ROOT}/z`;
+    const {deps} = makeDeps(
+      {
+        [ROOT]: [folder('z'), folder('a')],
+        [a]: [...triple(a), fileEntry(`${a}/meta.json`, 1)],
+        [z]: [...triple(z), fileEntry(`${z}/meta.json`, 1)],
+      },
+      {
+        [`${a}/meta.json`]: JSON.stringify({name: 'Zeta', language: 'en'}),
+        [`${z}/meta.json`]: JSON.stringify({name: 'alpha', language: 'en'}),
+      },
+    );
+    const out = await discoverUserDicts(deps);
+    expect(out.map(d => d.sidecar.name)).toEqual(['alpha', 'Zeta']);
+  });
+});
+
+describe('discoverUserDicts — skip + isolation', () => {
+  it('skips a folder with an incomplete triple (logs)', async () => {
+    const dir = `${ROOT}/partial`;
+    const {deps, warnings} = makeDeps(
+      {
+        [ROOT]: [folder('partial')],
+        [dir]: [fileEntry(`${dir}/base.ifo`, 1), fileEntry(`${dir}/meta.json`, 1)],
+      },
+      {[`${dir}/meta.json`]: JSON.stringify({name: 'P', language: 'en'})},
+    );
     expect(await discoverUserDicts(deps)).toEqual([]);
-    expect(
-      (deps.logger?.warn as jest.Mock).mock.calls.flat().join(' '),
-    ).toMatch(/root file "dict\.mdx" is MDX which is not yet supported/);
+    expect(warnings.some(w => w.includes('no complete StarDict triple'))).toBe(
+      true,
+    );
   });
 
-  test('logs a hint when StarDict files are dropped at root level (need a subfolder)', async () => {
-    const deps = baseDeps({
-      [`${ROOT}/loose.ifo`]: enc('bookname=test\n'),
-    });
-    expect(await discoverUserDicts(deps)).toEqual([]);
-    expect(
-      (deps.logger?.warn as jest.Mock).mock.calls.flat().join(' '),
-    ).toMatch(/looks like StarDict — put it in a subfolder/);
+  // --- minimum-input path: meta.json is OPTIONAL (M9 fix 1) ----------
+  it('NO meta.json -> loads with defaults (name=folderName, language=und)', async () => {
+    const dir = `${ROOT}/jp-en`;
+    const {deps} = makeDeps(
+      {[ROOT]: [folder('jp-en')], [dir]: triple(dir)},
+      {},
+    );
+    const out = await discoverUserDicts(deps);
+    expect(out).toHaveLength(1);
+    expect(out[0].sidecar).toEqual({name: 'jp-en', language: 'und'});
+    // No sidecarPath when there's no meta.json file.
+    expect(out[0].sidecarPath).toBeUndefined();
+    // The triple is still wired.
+    expect(out[0].ifoPath).toBe(`${dir}/base.ifo`);
   });
 
-  test('a lone meta.json at the root with no dict files yields nothing', async () => {
-    const deps = baseDeps({
-      [`${ROOT}/meta.json`]: enc(JSON.stringify({name: 'Stray'})),
-    });
-    // No CSV/JSON to bind it to — meta.json alone is config, not a dict.
-    expect(await discoverUserDicts(deps)).toEqual([]);
+  it('invalid-JSON meta.json -> WARN + fallback descriptor (NOT skipped)', async () => {
+    const dir = `${ROOT}/badjson`;
+    const {deps, warnings} = makeDeps(
+      {
+        [ROOT]: [folder('badjson')],
+        [dir]: [...triple(dir), fileEntry(`${dir}/meta.json`, 1)],
+      },
+      {[`${dir}/meta.json`]: '{not json'},
+    );
+    const out = await discoverUserDicts(deps);
+    expect(out).toHaveLength(1);
+    expect(out[0].sidecar).toEqual({name: 'badjson', language: 'und'});
+    expect(warnings.some(w => w.includes('loading with defaults'))).toBe(true);
   });
 
-  test('shared meta.json at root applies csv.phoneticCol to a flat-layout CSV (mavproductions/Dune issue)', async () => {
-    // Real-world layout from issue #2: user drops a CSV plus a single
-    // meta.json side by side at SnDict root, no subfolder. The third
-    // CSV column is a pronunciation, surfaced via meta.json. Before
-    // this wiring, phoneticCol was silently dropped at root level.
-    const deps = baseDeps({
-      [`${ROOT}/Dune.csv`]: enc(
-        'CALADAN,third planet of Delta Pavonis,KAL-ah-dan\n' +
-          'ARRAKIS,the planet known as Dune,uh-RAK-is\n',
-      ),
-      [`${ROOT}/meta.json`]: enc(JSON.stringify({csv: {phoneticCol: 2}})),
-    });
-    const sources = await discoverUserDicts(deps);
-    expect(sources.length).toBe(1);
-    expect(sources[0].name).toBe('Dune');
-    const caladan = await sources[0].lookup('caladan');
-    expect(caladan?.phonetic).toBe('KAL-ah-dan');
-    expect(caladan?.definition).toBe('third planet of Delta Pavonis');
-    const arrakis = await sources[0].lookup('ARRAKIS');
-    expect(arrakis?.phonetic).toBe('uh-RAK-is');
+  it('sidecar that fails validation -> WARN + fallback (NOT skipped)', async () => {
+    const dir = `${ROOT}/badmeta`;
+    const {deps, warnings} = makeDeps(
+      {
+        [ROOT]: [folder('badmeta')],
+        [dir]: [...triple(dir), fileEntry(`${dir}/meta.json`, 1)],
+      },
+      {[`${dir}/meta.json`]: JSON.stringify({language: 'en'})}, // missing name
+    );
+    const out = await discoverUserDicts(deps);
+    expect(out).toHaveLength(1);
+    expect(out[0].sidecar).toEqual({name: 'badmeta', language: 'und'});
+    expect(warnings.some(w => w.includes('loading with defaults'))).toBe(true);
   });
 
-  test('shared root meta.json `name` is NOT broadcast to flat-layout files (would collide)', async () => {
-    // Shared meta would otherwise force two CSVs into the same display
-    // name. Only `csv.*` schema config is shared; `name` requires a
-    // per-file sidecar to apply.
-    const deps = baseDeps({
-      [`${ROOT}/Dune.csv`]: enc('ARRAKIS,the planet,uh-RAK-is\n'),
-      [`${ROOT}/medical.csv`]: enc('apple,fruit,AP-ul\n'),
-      [`${ROOT}/meta.json`]: enc(
-        JSON.stringify({name: 'Shared', csv: {phoneticCol: 2}}),
-      ),
-    });
-    const sources = await discoverUserDicts(deps);
-    expect(sources.map(s => s.name).sort()).toEqual(['Dune', 'medical']);
-    // csv.phoneticCol still propagates to both.
-    expect((await sources[0].lookup('arrakis'))?.phonetic).toBe('uh-RAK-is');
-    expect((await sources[1].lookup('apple'))?.phonetic).toBe('AP-ul');
+  it('meta.json read failure -> WARN + fallback (NOT skipped)', async () => {
+    const dir = `${ROOT}/readfail`;
+    const {deps, warnings} = makeDeps(
+      {
+        [ROOT]: [folder('readfail')],
+        [dir]: [...triple(dir), fileEntry(`${dir}/meta.json`, 1)],
+      },
+      {}, // meta path 404s -> fetch !ok -> read throws -> fallback
+    );
+    const out = await discoverUserDicts(deps);
+    expect(out).toHaveLength(1);
+    expect(out[0].sidecar).toEqual({name: 'readfail', language: 'und'});
+    expect(warnings.some(w => w.includes('unreadable'))).toBe(true);
   });
 
-  test('per-file `<base>.meta.json` sidecar overrides the shared root meta.json', async () => {
-    // Sidecar gives Dune.csv phoneticCol=2 + a custom display name;
-    // medical.csv has no sidecar so it inherits the shared meta's
-    // hasHeader=true.
-    const deps = baseDeps({
-      [`${ROOT}/Dune.csv`]: enc(
-        'CALADAN,third planet,KAL-ah-dan\nARRAKIS,Dune,uh-RAK-is\n',
-      ),
-      [`${ROOT}/Dune.meta.json`]: enc(
-        JSON.stringify({name: 'Dune (Frank Herbert)', csv: {phoneticCol: 2}}),
-      ),
-      [`${ROOT}/medical.csv`]: enc('term,definition\napple,fruit\n'),
-      [`${ROOT}/meta.json`]: enc(JSON.stringify({csv: {hasHeader: true}})),
-    });
-    const sources = await discoverUserDicts(deps);
-    expect(sources.map(s => s.name)).toEqual(['Dune (Frank Herbert)', 'medical']);
-    const caladan = await sources[0].lookup('caladan');
-    expect(caladan?.phonetic).toBe('KAL-ah-dan');
-    // medical.csv used hasHeader=true from the shared meta, so the
-    // header row "term,definition" was skipped.
-    expect(await sources[1].lookup('term')).toBeNull();
-    expect((await sources[1].lookup('apple'))?.definition).toBe('fruit');
+  it('valid meta.json -> used as-is', async () => {
+    const dir = `${ROOT}/wikt`;
+    const {deps} = makeDeps(
+      {
+        [ROOT]: [folder('wikt')],
+        [dir]: [...triple(dir), fileEntry(`${dir}/meta.json`, 1)],
+      },
+      {[`${dir}/meta.json`]: JSON.stringify({name: 'Wiktionary DE', language: 'de'})},
+    );
+    const out = await discoverUserDicts(deps);
+    expect(out[0].sidecar).toEqual({name: 'Wiktionary DE', language: 'de'});
+    expect(out[0].sidecarPath).toBe(`${dir}/meta.json`);
   });
 
-  test('a `*.meta.json` sidecar is never itself treated as a JSON dict', async () => {
-    // Without isMetaJsonName guarding root-file detection, Dune.meta.json
-    // would be picked up as a JSON dict and confuse the popup.
-    const deps = baseDeps({
-      [`${ROOT}/Dune.csv`]: enc('A,definition,A-fonetik\n'),
-      [`${ROOT}/Dune.meta.json`]: enc(JSON.stringify({csv: {phoneticCol: 2}})),
-    });
-    const sources = await discoverUserDicts(deps);
-    expect(sources.map(s => s.name)).toEqual(['Dune']);
+  it('one bad folder does not break a good sibling', async () => {
+    const good = `${ROOT}/good`;
+    const bad = `${ROOT}/bad`;
+    const {deps} = makeDeps(
+      {
+        [ROOT]: [folder('good'), folder('bad')],
+        [good]: [...triple(good), fileEntry(`${good}/meta.json`, 1)],
+        [bad]: [fileEntry(`${bad}/base.ifo`, 1)], // partial
+      },
+      {[`${good}/meta.json`]: JSON.stringify({name: 'Good', language: 'en'})},
+    );
+    const out = await discoverUserDicts(deps);
+    expect(out.map(d => d.sidecar.name)).toEqual(['Good']);
   });
 
-  test('shared root meta.json is not read at all when no flat-layout dict files exist', async () => {
-    // Subfolder dicts must not pick up the root meta as a sneak override
-    // — that meta belongs to flat-layout files only. Subfolder discovery
-    // continues to use its own per-folder meta.json.
-    const deps = baseDeps({
-      [`${ROOT}/meta.json`]: enc(JSON.stringify({csv: {phoneticCol: 99}})),
-      [`${ROOT}/sub/words.csv`]: enc('apple,fruit,A-pul\n'),
-    });
-    const sources = await discoverUserDicts(deps);
-    expect(sources.length).toBe(1);
-    // phonetic is undefined: the subfolder dict didn't have its own
-    // meta.json, so phoneticCol stays at the default (none).
-    expect((await sources[0].lookup('apple'))?.phonetic).toBeUndefined();
+  it('isolates a folder whose descriptor build throws unexpectedly', async () => {
+    // A malformed file entry (non-string path) makes the internal
+    // path helpers throw — the outer guard must log + continue, never
+    // breaking discovery (the "never throws" contract).
+    const good = `${ROOT}/good`;
+    const {deps, warnings} = makeDeps(
+      {
+        [ROOT]: [folder('boom'), folder('good')],
+        [`${ROOT}/boom`]: [{path: null as unknown as string, type: 1}],
+        [good]: [...triple(good), fileEntry(`${good}/meta.json`, 1)],
+      },
+      {[`${good}/meta.json`]: JSON.stringify({name: 'Good', language: 'en'})},
+    );
+    const out = await discoverUserDicts(deps);
+    expect(out.map(d => d.sidecar.name)).toEqual(['Good']);
+    expect(warnings.some(w => w.includes('build threw'))).toBe(true);
   });
 
-  test('per-file sidecar with malformed JSON falls back to defaults, dict still loads', async () => {
-    const deps = baseDeps({
-      [`${ROOT}/Dune.csv`]: enc('ARRAKIS,the planet,uh-RAK-is\n'),
-      [`${ROOT}/Dune.meta.json`]: enc('{not valid'),
-    });
-    const sources = await discoverUserDicts(deps);
-    expect(sources.length).toBe(1);
-    expect(sources[0].name).toBe('Dune');
-    // No phonetic since the sidecar couldn't be parsed.
-    expect((await sources[0].lookup('arrakis'))?.phonetic).toBeUndefined();
-  });
-
-  test('ignores unrecognised root files silently (e.g. README.md)', async () => {
-    const deps = baseDeps({
-      [`${ROOT}/README.md`]: enc('# notes'),
-      [`${ROOT}/.DS_Store`]: enc('garbage'),
-    });
-    expect(await discoverUserDicts(deps)).toEqual([]);
-  });
-
-  test('discovers a CSV folder', async () => {
-    const deps = baseDeps({
-      [`${ROOT}/glossary/words.csv`]: enc('apple,a fruit\n'),
-    });
-    const sources = await discoverUserDicts(deps);
-    expect(sources.length).toBe(1);
-    expect(sources[0].name).toBe('glossary');
-    expect(await sources[0].lookup('apple')).toEqual({
-      word: 'apple',
-      definition: 'a fruit',
-      format: 'plain',
-    });
-  });
-
-  test('discovers a JSON folder', async () => {
-    const deps = baseDeps({
-      [`${ROOT}/myj/data.json`]: enc(JSON.stringify({hello: 'a greeting'})),
-    });
-    const sources = await discoverUserDicts(deps);
-    expect(sources.length).toBe(1);
-    expect((await sources[0].lookup('hello'))?.definition).toBe('a greeting');
-  });
-
-  test('discovers a StarDict folder', async () => {
-    const triple = stardictBytes({apple: 'a fruit (custom)'});
-    const deps = baseDeps({
-      [`${ROOT}/medical/medical.ifo`]: triple.ifo,
-      [`${ROOT}/medical/medical.idx`]: triple.idx,
-      [`${ROOT}/medical/medical.dict.dz`]: triple.dict,
-    });
-    const sources = await discoverUserDicts(deps);
-    expect(sources.length).toBe(1);
-    expect(sources[0].name).toBe('medical');
-    expect((await sources[0].lookup('apple'))?.definition).toBe('a fruit (custom)');
-  });
-
-  test('logs and skips an MDX folder (deferred format)', async () => {
-    const deps = baseDeps({
-      [`${ROOT}/some-mdx/dict.mdx`]: enc('binary'),
-    });
-    const sources = await discoverUserDicts(deps);
-    expect(sources).toEqual([]);
-    expect(
-      (deps.logger?.warn as jest.Mock).mock.calls.flat().join(' '),
-    ).toMatch(/MDX which is not yet supported/);
-  });
-
-  test('logs and skips a folder with no recognised dict files', async () => {
-    const deps = baseDeps({
-      [`${ROOT}/junk/random.txt`]: enc('not a dict'),
-    });
-    expect(await discoverUserDicts(deps)).toEqual([]);
-    expect(
-      (deps.logger?.warn as jest.Mock).mock.calls.flat().join(' '),
-    ).toMatch(/no recognised dict files/);
-  });
-
-  test('logs and skips a folder with a partial StarDict triple', async () => {
-    const deps = baseDeps({
-      [`${ROOT}/incomplete/m.ifo`]: enc('bookname=test\n'),
-      // missing .idx and .dict
-    });
-    expect(await discoverUserDicts(deps)).toEqual([]);
-    expect(
-      (deps.logger?.warn as jest.Mock).mock.calls.flat().join(' '),
-    ).toMatch(/partial StarDict triple/);
-  });
-
-  test('logs and skips a folder containing multiple format markers', async () => {
-    const deps = baseDeps({
-      [`${ROOT}/mixed/words.csv`]: enc('a,b\n'),
-      [`${ROOT}/mixed/data.json`]: enc('{}'),
-    });
-    expect(await discoverUserDicts(deps)).toEqual([]);
-    expect(
-      (deps.logger?.warn as jest.Mock).mock.calls.flat().join(' '),
-    ).toMatch(/multiple formats present/);
-  });
-
-  test('uses meta.json `name` to override the folder display name', async () => {
-    const deps = baseDeps({
-      [`${ROOT}/folder-name/words.csv`]: enc('apple,fruit\n'),
-      [`${ROOT}/folder-name/meta.json`]: enc(JSON.stringify({name: 'Pretty Name'})),
-    });
-    const sources = await discoverUserDicts(deps);
-    expect(sources[0].name).toBe('Pretty Name');
-  });
-
-  test('meta.json csv.phoneticCol routes a third column into DictEntry.phonetic', async () => {
-    const deps = baseDeps({
-      [`${ROOT}/dune/glossary.csv`]: enc(
-        'ARRAKIS,the planet known as Dune,uh-RAK-is\n',
-      ),
-      [`${ROOT}/dune/meta.json`]: enc(
-        JSON.stringify({name: 'Dune', csv: {phoneticCol: 2}}),
-      ),
-    });
-    const sources = await discoverUserDicts(deps);
-    expect(sources.length).toBe(1);
-    expect(sources[0].name).toBe('Dune');
-    const hit = await sources[0].lookup('arrakis');
-    expect(hit?.phonetic).toBe('uh-RAK-is');
-    expect(hit?.definition).toBe('the planet known as Dune');
-  });
-
-  test('meta.json csv config: hasHeader skips the first row', async () => {
-    const deps = baseDeps({
-      [`${ROOT}/g/words.csv`]: enc('term,definition,phonetic\napple,fruit,AP-ul\n'),
-      [`${ROOT}/g/meta.json`]: enc(
-        JSON.stringify({csv: {phoneticCol: 2, hasHeader: true}}),
-      ),
-    });
-    const sources = await discoverUserDicts(deps);
-    expect(await sources[0].lookup('term')).toBeNull();
-    const apple = await sources[0].lookup('apple');
-    expect(apple?.phonetic).toBe('AP-ul');
-  });
-
-  test('meta.json csv config: headwordCol + definitionCol re-route to other columns', async () => {
-    // CSV with id, term, definition, phonetic — headword is col 1,
-    // definition col 2, phonetic col 3.
-    const deps = baseDeps({
-      [`${ROOT}/g/words.csv`]: enc('1,arrakis,the planet,uh-RAK-is\n'),
-      [`${ROOT}/g/meta.json`]: enc(
-        JSON.stringify({
-          csv: {
-            headwordCol: 1,
-            definitionCol: 2,
-            phoneticCol: 3,
-          },
-        }),
-      ),
-    });
-    const sources = await discoverUserDicts(deps);
-    expect(await sources[0].lookup('1')).toBeNull();
-    const hit = await sources[0].lookup('arrakis');
-    expect(hit?.definition).toBe('the planet');
-    expect(hit?.phonetic).toBe('uh-RAK-is');
-  });
-
-  test('meta.json with a non-object root is ignored, defaults apply', async () => {
-    // E.g. someone writes `[]` or `"name"` at the root. We tolerate
-    // it instead of crashing — fall back to folder name + defaults.
-    const deps = baseDeps({
-      [`${ROOT}/g/words.csv`]: enc('apple,fruit\n'),
-      [`${ROOT}/g/meta.json`]: enc(JSON.stringify([])),
-    });
-    const sources = await discoverUserDicts(deps);
-    expect(sources[0].name).toBe('g');
-    expect((await sources[0].lookup('apple'))?.definition).toBe('fruit');
-  });
-
-  test('meta.json csv config: invalid types are dropped, defaults survive', async () => {
-    // Garbage values shouldn't crash discovery — they fall back to
-    // the source's own defaults.
-    const deps = baseDeps({
-      [`${ROOT}/g/words.csv`]: enc('apple,fruit\n'),
-      [`${ROOT}/g/meta.json`]: enc(
-        JSON.stringify({
-          csv: {
-            headwordCol: 'zero',
-            definitionCol: -1,
-            phoneticCol: 1.5,
-            hasHeader: 'yes',
-          },
-        }),
-      ),
-    });
-    const sources = await discoverUserDicts(deps);
-    expect((await sources[0].lookup('apple'))?.definition).toBe('fruit');
-  });
-
-  test('meta.json without a csv field still yields a working CSV source', async () => {
-    const deps = baseDeps({
-      [`${ROOT}/g/words.csv`]: enc('apple,fruit\n'),
-      [`${ROOT}/g/meta.json`]: enc(JSON.stringify({name: 'G'})),
-    });
-    const sources = await discoverUserDicts(deps);
-    expect(sources[0].name).toBe('G');
-    expect((await sources[0].lookup('apple'))?.definition).toBe('fruit');
-  });
-
-  test('falls back to folder name when meta.json is malformed', async () => {
-    const deps = baseDeps({
-      [`${ROOT}/folder-name/words.csv`]: enc('apple,fruit\n'),
-      [`${ROOT}/folder-name/meta.json`]: enc('{not valid'),
-    });
-    const sources = await discoverUserDicts(deps);
-    expect(sources[0].name).toBe('folder-name');
-  });
-
-  test('falls back to folder name when meta.json has no name field', async () => {
-    const deps = baseDeps({
-      [`${ROOT}/folder-name/words.csv`]: enc('apple,fruit\n'),
-      [`${ROOT}/folder-name/meta.json`]: enc(JSON.stringify({other: 'x'})),
-    });
-    const sources = await discoverUserDicts(deps);
-    expect(sources[0].name).toBe('folder-name');
-  });
-
-  test('json file named meta.json is not treated as a JSON dict', async () => {
-    // A folder with ONLY meta.json is not a dict — no lookup format.
-    const deps = baseDeps({
-      [`${ROOT}/just-meta/meta.json`]: enc(JSON.stringify({name: 'X'})),
-    });
-    expect(await discoverUserDicts(deps)).toEqual([]);
-  });
-
-  test('returns sources sorted alphabetically by name (case-insensitive)', async () => {
-    const deps = baseDeps({
-      [`${ROOT}/zeta/words.csv`]: enc('a,b\n'),
-      [`${ROOT}/Alpha/words.csv`]: enc('a,b\n'),
-      [`${ROOT}/medical/words.csv`]: enc('a,b\n'),
-    });
-    const sources = await discoverUserDicts(deps);
-    expect(sources.map(s => s.name)).toEqual(['Alpha', 'medical', 'zeta']);
-  });
-
-  test('isolates a per-folder failure and continues with the rest', async () => {
-    const triple = stardictBytes({apple: 'fruit'});
-    const fileUtils: FileUtilsLike = {
-      exists: jest.fn(async () => true),
-      listFiles: jest.fn(async (path: string) => {
-        if (path === ROOT) {
-          return [
-            fileEntry(`${ROOT}/good`, 0),
-            fileEntry(`${ROOT}/broken`, 0),
-          ];
-        }
-        if (path === `${ROOT}/broken`) {
-          throw new Error('IO error');
-        }
-        if (path === `${ROOT}/good`) {
-          return [
-            fileEntry(`${ROOT}/good/m.ifo`, 1),
-            fileEntry(`${ROOT}/good/m.idx`, 1),
-            fileEntry(`${ROOT}/good/m.dict.dz`, 1),
-          ];
-        }
-        return [];
-      }),
-    };
-    const fetchFn = jest.fn(async (url: string) => {
-      const path = url.replace(/^file:\/\//, '');
-      if (path.endsWith('.ifo')) {
-        return {ok: true, status: 200, arrayBuffer: async () => triple.ifo} as Response;
+  it('continues past a folder whose listFiles throws', async () => {
+    const good = `${ROOT}/good`;
+    const listFiles = jest.fn(async (path: string) => {
+      if (path === `${ROOT}/boom`) {
+        throw new Error('io error');
       }
-      if (path.endsWith('.idx')) {
-        return {ok: true, status: 200, arrayBuffer: async () => triple.idx} as Response;
+      if (path === ROOT) {
+        return [folder('boom'), folder('good')];
       }
-      if (path.endsWith('.dict.dz')) {
-        return {ok: true, status: 200, arrayBuffer: async () => triple.dict} as Response;
+      if (path === good) {
+        return [...triple(good), fileEntry(`${good}/meta.json`, 1)];
       }
-      return {
-        ok: false,
-        status: 404,
-        arrayBuffer: async () => new ArrayBuffer(0),
-      } as Response;
+      return [];
     });
-    const logger = buildLogger();
-    const sources = await discoverUserDicts({
-      fileUtils,
-      fetchFn: fetchFn as unknown as typeof fetch,
-      logger,
+    const fetchFn = jest.fn(async () => ({
+      ok: true,
+      status: 200,
+      arrayBuffer: async () =>
+        new TextEncoder().encode(JSON.stringify({name: 'Good', language: 'en'}))
+          .buffer,
+    })) as unknown as typeof fetch;
+    const warnings: string[] = [];
+    const out = await discoverUserDicts({
+      fileUtils: {exists: jest.fn(async () => true), listFiles},
       rootPath: ROOT,
+      fetchFn,
+      logger: {log: () => {}, warn: m => warnings.push(m)},
     });
-    expect(sources.map(s => s.name)).toEqual(['good']);
-    expect(
-      (logger.warn as jest.Mock).mock.calls.flat().join(' '),
-    ).toMatch(/folder "broken".*IO error/);
+    expect(out.map(d => d.sidecar.name)).toEqual(['Good']);
+    expect(warnings.some(w => w.includes('listFiles threw'))).toBe(true);
   });
 
-  test('logs and returns [] when no fetch implementation is available', async () => {
-    const built = makeVfs({
-      [`${ROOT}/glossary/words.csv`]: enc('apple,fruit\n'),
+  it('skips an empty subfolder (logs)', async () => {
+    const {deps, warnings} = makeDeps(
+      {[ROOT]: [folder('empty')], [`${ROOT}/empty`]: []},
+      {},
+    );
+    expect(await discoverUserDicts(deps)).toEqual([]);
+    expect(warnings.some(w => w.includes('is empty'))).toBe(true);
+  });
+});
+
+describe('discoverUserDicts — root handling', () => {
+  it('returns [] when the root is not listable (never throws)', async () => {
+    const out = await discoverUserDicts({
+      fileUtils: {
+        exists: jest.fn(async () => false),
+        listFiles: jest.fn(async () => {
+          throw new Error('Dir is not exists');
+        }),
+      },
+      rootPath: ROOT,
+      fetchFn: jest.fn() as unknown as typeof fetch,
+      logger: {log: () => {}, warn: () => {}},
     });
-    const originalFetch = (globalThis as {fetch?: typeof fetch}).fetch;
-    (globalThis as {fetch?: typeof fetch}).fetch = undefined;
-    const logger = buildLogger();
+    expect(out).toEqual([]);
+  });
+
+  it('returns [] when the root is empty', async () => {
+    const {deps} = makeDeps({[ROOT]: []}, {});
+    expect(await discoverUserDicts(deps)).toEqual([]);
+  });
+
+  it('returns [] when no fetch implementation is available', async () => {
+    // Force the no-fetch branch: fetchFn undefined AND globalThis.fetch
+    // absent (the runtime fallback the impl reaches for).
+    const savedFetch = globalThis.fetch;
+    // @ts-expect-error intentionally clearing the global for the test
+    delete globalThis.fetch;
+    const warnings: string[] = [];
     try {
-      const sources = await discoverUserDicts({
-        fileUtils: built.fileUtils,
-        fetchFn: undefined,
-        logger,
+      const out = await discoverUserDicts({
+        fileUtils: {
+          exists: jest.fn(async () => true),
+          listFiles: jest.fn(async () => [folder('x')]),
+        },
         rootPath: ROOT,
+        fetchFn: undefined,
+        logger: {log: () => {}, warn: m => warnings.push(m)},
       });
-      expect(sources).toEqual([]);
-      expect(
-        (logger.warn as jest.Mock).mock.calls.flat().join(' '),
-      ).toMatch(/no fetch implementation/);
+      expect(out).toEqual([]);
+      expect(warnings.some(w => w.includes('no fetch implementation'))).toBe(true);
     } finally {
-      (globalThis as {fetch?: typeof fetch}).fetch = originalFetch;
+      globalThis.fetch = savedFetch;
     }
   });
 
-  test('discovers a mix of formats in one root', async () => {
-    const triple = stardictBytes({apple: 'fruit (sd)'});
-    const deps = baseDeps({
-      [`${ROOT}/medical/m.ifo`]: triple.ifo,
-      [`${ROOT}/medical/m.idx`]: triple.idx,
-      [`${ROOT}/medical/m.dict.dz`]: triple.dict,
-      [`${ROOT}/glossary/words.csv`]: enc('apple,fruit (csv)\n'),
-      [`${ROOT}/japanese/data.json`]: enc(JSON.stringify({apple: 'fruit (json)'})),
-    });
-    const sources = await discoverUserDicts(deps);
-    expect(sources.map(s => s.name)).toEqual(['glossary', 'japanese', 'medical']);
-    expect((await sources[0].lookup('apple'))?.definition).toBe('fruit (csv)');
-    expect((await sources[1].lookup('apple'))?.definition).toBe('fruit (json)');
-    expect((await sources[2].lookup('apple'))?.definition).toBe('fruit (sd)');
-  });
-
-  test('uses the default root path when none is supplied', async () => {
-    // Default root is /storage/emulated/0/MyStyle/SnDict.
-    const built = makeVfs({
-      ['/storage/emulated/0/MyStyle/SnDict/glossary/w.csv']: enc('apple,fruit\n'),
-    });
-    const sources = await discoverUserDicts({
-      fileUtils: built.fileUtils,
-      fetchFn: built.fetchFn,
-      logger: buildLogger(),
-    });
-    expect(sources.map(s => s.name)).toEqual(['glossary']);
-  });
-
-  test('handles a sub-folder whose listFiles returns empty', async () => {
-    const fileUtils: FileUtilsLike = {
-      exists: jest.fn(async () => true),
-      listFiles: jest.fn(async (path: string) => {
-        if (path === ROOT) {
-          return [fileEntry(`${ROOT}/empty`, 0)];
-        }
-        return [];
-      }),
-    };
-    const logger = buildLogger();
-    const sources = await discoverUserDicts({
-      fileUtils,
-      fetchFn: jest.fn() as unknown as typeof fetch,
-      logger,
-      rootPath: ROOT,
-    });
-    expect(sources).toEqual([]);
-    expect(
-      (logger.warn as jest.Mock).mock.calls.flat().join(' '),
-    ).toMatch(/folder "empty" is empty/);
-  });
-
-  test('survives discovery without a logger', async () => {
-    const deps = baseDeps(
-      {[`${ROOT}/glossary/words.csv`]: enc('apple,fruit\n')},
-      {logger: undefined},
+  it('discovers a loose root *.csv but ignores other root files (e.g. *.json)', async () => {
+    const {deps} = makeDeps(
+      {
+        [ROOT]: [
+          fileEntry(`${ROOT}/Dune.csv`, 1),
+          fileEntry(`${ROOT}/medical.json`, 1),
+        ],
+      },
+      {},
     );
-    const sources = await discoverUserDicts(deps);
-    expect(sources.length).toBe(1);
-  });
-
-  test('source returns null when fetch responds with non-ok status', async () => {
-    // Discovery succeeds (the file is listed) but reading its bytes
-    // at lookup time gets a 403/404 — surface as a "no entry" rather
-    // than crashing.
-    const fileUtils: FileUtilsLike = {
-      exists: jest.fn(async () => true),
-      listFiles: jest.fn(async (path: string) => {
-        if (path === ROOT) {
-          return [fileEntry(`${ROOT}/glossary`, 0)];
-        }
-        return [fileEntry(`${ROOT}/glossary/words.csv`, 1)];
-      }),
-    };
-    const fetchFn = jest.fn(async () => ({
-      ok: false,
-      status: 403,
-      arrayBuffer: async () => new ArrayBuffer(0),
-    }) as unknown as Response);
-    const logger = buildLogger();
-    const sources = await discoverUserDicts({
-      fileUtils,
-      fetchFn: fetchFn as unknown as typeof fetch,
-      logger,
-      rootPath: ROOT,
-    });
-    expect(sources.length).toBe(1);
-    expect(await sources[0].lookup('apple')).toBeNull();
-  });
-
-  test('treats files without an extension as not-recognised', async () => {
-    const deps = baseDeps({
-      [`${ROOT}/no-ext/README`]: enc('not a dict'),
-    });
-    expect(await discoverUserDicts(deps)).toEqual([]);
-    expect(
-      (deps.logger?.warn as jest.Mock).mock.calls.flat().join(' '),
-    ).toMatch(/no recognised dict files/);
-  });
-
-  test('discovers a StarDict folder with a .syn file alongside the triple', async () => {
-    // Build a synthetic dict with Latin headwords + a synonym index
-    // aliasing one of them, so we can verify the .syn fetch + merge
-    // path end-to-end through discovery.
-    const triple = stardictBytes({apple: 'a fruit (canonical)'});
-    // Hand-build a tiny .syn pointing the alias "malum" at idx[0].
-    const synBytes = new Uint8Array([
-      // 'malum'
-      0x6d, 0x61, 0x6c, 0x75, 0x6d,
-      0,
-      // index 0, big-endian u32
-      0, 0, 0, 0,
+    const out = await discoverUserDicts(deps);
+    // The .csv is a CSV job (named after the file, no sidecar -> und +
+    // default config); the .json is NOT a recognised format -> ignored.
+    expect(out).toEqual([
+      {
+        kind: 'csv',
+        csvPath: `${ROOT}/Dune.csv`,
+        csvConfig: {},
+        sidecar: {name: 'Dune', language: 'und'},
+      },
     ]);
-    const synBuffer = synBytes.buffer.slice(
-      synBytes.byteOffset,
-      synBytes.byteOffset + synBytes.byteLength,
-    ) as ArrayBuffer;
-    const deps = baseDeps({
-      [`${ROOT}/wiki/dict.ifo`]: triple.ifo,
-      [`${ROOT}/wiki/dict.idx`]: triple.idx,
-      [`${ROOT}/wiki/dict.dict.dz`]: triple.dict,
-      [`${ROOT}/wiki/dict.syn`]: synBuffer,
-    });
-    const sources = await discoverUserDicts(deps);
-    expect(sources.length).toBe(1);
-    // The synonym "malum" resolves to apple's canonical entry.
-    expect((await sources[0].lookup('malum'))?.definition).toBe(
-      'a fruit (canonical)',
-    );
-    expect((await sources[0].lookup('apple'))?.definition).toBe(
-      'a fruit (canonical)',
-    );
   });
 
-  test('StarDict folder with no .syn still discovers and works', async () => {
-    // Back-compat: dicts without a .syn file should behave exactly as
-    // they did before .syn support landed.
-    const triple = stardictBytes({apple: 'a fruit'});
-    const deps = baseDeps({
-      [`${ROOT}/plain/dict.ifo`]: triple.ifo,
-      [`${ROOT}/plain/dict.idx`]: triple.idx,
-      [`${ROOT}/plain/dict.dict.dz`]: triple.dict,
+  it('defaults the root to DEFAULT_USER_DICT_ROOT and tolerates no logger', async () => {
+    // Omit logger to exercise the default no-op logger branch.
+    const listFiles = jest.fn(async () => []);
+    await discoverUserDicts({
+      fileUtils: {exists: jest.fn(async () => true), listFiles},
+      fetchFn: jest.fn() as unknown as typeof fetch,
     });
-    const sources = await discoverUserDicts(deps);
-    expect(sources.length).toBe(1);
-    expect((await sources[0].lookup('apple'))?.definition).toBe('a fruit');
+    expect(listFiles).toHaveBeenCalledWith(DEFAULT_USER_DICT_ROOT);
   });
 
-  test('a failing .syn fetch is non-fatal (dict still loads without synonyms)', async () => {
-    const triple = stardictBytes({apple: 'a fruit'});
-    const fileUtils: FileUtilsLike = {
-      exists: jest.fn(async () => true),
-      listFiles: jest.fn(async (path: string) => {
-        if (path === ROOT) {
-          return [fileEntry(`${ROOT}/wiki`, 0)];
-        }
-        return [
-          fileEntry(`${ROOT}/wiki/dict.ifo`, 1),
-          fileEntry(`${ROOT}/wiki/dict.idx`, 1),
-          fileEntry(`${ROOT}/wiki/dict.dict.dz`, 1),
-          fileEntry(`${ROOT}/wiki/dict.syn`, 1),
-        ];
-      }),
-    };
-    const fetchFn = jest.fn(async (url: string) => {
-      const path = url.replace(/^file:\/\//, '');
-      if (path.endsWith('.syn')) {
-        // Simulate a fetch failure on .syn only.
-        throw new Error('syn read failed');
+  it('tolerates no logger on a warn path (default no-op warn)', async () => {
+    // An incomplete-triple folder triggers logger.warn + skip; with no
+    // logger supplied this exercises the default no-op warn arrow.
+    const dir = `${ROOT}/partial`;
+    const listFiles = jest.fn(async (path: string) => {
+      if (path === ROOT) {
+        return [folder('partial')];
       }
-      if (path.endsWith('.ifo')) {
-        return {ok: true, status: 200, arrayBuffer: async () => triple.ifo} as Response;
+      if (path === dir) {
+        return [fileEntry(`${dir}/base.ifo`, 1)]; // incomplete -> warn + skip
       }
-      if (path.endsWith('.idx')) {
-        return {ok: true, status: 200, arrayBuffer: async () => triple.idx} as Response;
-      }
-      if (path.endsWith('.dict.dz')) {
-        return {ok: true, status: 200, arrayBuffer: async () => triple.dict} as Response;
-      }
-      return {ok: false, status: 404, arrayBuffer: async () => new ArrayBuffer(0)} as Response;
+      return [];
     });
-    const logger = buildLogger();
-    const sources = await discoverUserDicts({
-      fileUtils,
-      fetchFn: fetchFn as unknown as typeof fetch,
-      logger,
+    const out = await discoverUserDicts({
+      fileUtils: {exists: jest.fn(async () => true), listFiles},
       rootPath: ROOT,
+      fetchFn: jest.fn() as unknown as typeof fetch,
     });
-    expect(sources.length).toBe(1);
-    // Dict still works with .idx-only headwords.
-    expect((await sources[0].lookup('apple'))?.definition).toBe('a fruit');
-    // The .syn failure was logged with our continuation message.
-    expect(
-      (logger.warn as jest.Mock).mock.calls.flat().join(' '),
-    ).toMatch(/\.syn fetch threw.*continuing without synonyms/);
+    expect(out).toEqual([]);
+  });
+
+  it('handles bare (slash-less, dot-less) file + folder paths', async () => {
+    // Exercises the extOf/basenameOf no-slash and no-dot branches: a
+    // folder whose path has no slash, holding a triple with bare names
+    // and a dot-less extra file.
+    const {deps} = makeDeps(
+      {
+        // The root lists a folder whose path is itself slash-less.
+        [ROOT]: [{path: 'bare', type: 0}],
+        bare: [
+          {path: 'd.ifo', type: 1},
+          {path: 'd.idx', type: 1},
+          {path: 'd.dict', type: 1},
+          {path: 'README', type: 1}, // dot-less -> extOf '' branch
+          {path: 'meta.json', type: 1},
+        ],
+      },
+      {'meta.json': JSON.stringify({name: 'Bare', language: 'en'})},
+    );
+    const out = await discoverUserDicts(deps);
+    expect(out).toHaveLength(1);
+    expect(out[0].sidecar.name).toBe('Bare');
+    expect(out[0].setPath).toBe('bare');
+  });
+});
+
+// --- loose CSV discovery (M16, FR5) --------------------------------
+
+describe('discoverUserDicts — loose CSV (M16)', () => {
+  it('a loose Dune.csv -> kind:csv, name "Dune", language und, default config', async () => {
+    const {deps} = makeDeps({[ROOT]: [fileEntry(`${ROOT}/Dune.csv`, 1)]}, {});
+    const out = await discoverUserDicts(deps);
+    expect(out).toEqual([
+      {
+        kind: 'csv',
+        csvPath: `${ROOT}/Dune.csv`,
+        csvConfig: {},
+        sidecar: {name: 'Dune', language: 'und'},
+      },
+    ]);
+  });
+
+  it('a per-file Dune.meta.json csv.phoneticCol:2 is honored + sidecarPath set', async () => {
+    const {deps} = makeDeps(
+      {
+        [ROOT]: [
+          fileEntry(`${ROOT}/Dune.csv`, 1),
+          fileEntry(`${ROOT}/Dune.meta.json`, 1),
+        ],
+      },
+      {
+        [`${ROOT}/Dune.meta.json`]: JSON.stringify({
+          language: 'en',
+          csv: {phoneticCol: 2},
+        }),
+      },
+    );
+    const out = await discoverUserDicts(deps);
+    expect(out).toEqual([
+      {
+        kind: 'csv',
+        csvPath: `${ROOT}/Dune.csv`,
+        csvConfig: {phoneticCol: 2},
+        sidecarPath: `${ROOT}/Dune.meta.json`,
+        sidecar: {name: 'Dune', language: 'en'},
+      },
+    ]);
+  });
+
+  it('a shared root meta.json csv.* propagates to every CSV but its name is NOT broadcast', async () => {
+    const {deps} = makeDeps(
+      {
+        [ROOT]: [
+          fileEntry(`${ROOT}/Dune.csv`, 1),
+          fileEntry(`${ROOT}/Cooking.csv`, 1),
+          fileEntry(`${ROOT}/meta.json`, 1),
+        ],
+      },
+      {
+        // name "Glossary" must NOT override the per-file CSV names.
+        [`${ROOT}/meta.json`]: JSON.stringify({
+          name: 'Glossary',
+          csv: {hasHeader: true, phoneticCol: 3},
+        }),
+      },
+    );
+    const out = await discoverUserDicts(deps);
+    // Sorted by name: Cooking, Dune. Each keeps its file-derived name,
+    // both inherit the shared csv config.
+    expect(out.map(d => d.sidecar.name)).toEqual(['Cooking', 'Dune']);
+    for (const d of out) {
+      expect(d.kind).toBe('csv');
+      expect((d as {csvConfig: object}).csvConfig).toEqual({
+        hasHeader: true,
+        phoneticCol: 3,
+      });
+    }
+  });
+
+  it('a per-file csv block OVERRIDES the shared root csv config (per-key)', async () => {
+    const {deps} = makeDeps(
+      {
+        [ROOT]: [
+          fileEntry(`${ROOT}/Dune.csv`, 1),
+          fileEntry(`${ROOT}/Dune.meta.json`, 1),
+          fileEntry(`${ROOT}/meta.json`, 1),
+        ],
+      },
+      {
+        [`${ROOT}/meta.json`]: JSON.stringify({csv: {hasHeader: true, phoneticCol: 2}}),
+        [`${ROOT}/Dune.meta.json`]: JSON.stringify({csv: {phoneticCol: 4}}),
+      },
+    );
+    const out = await discoverUserDicts(deps);
+    // phoneticCol overridden to 4; hasHeader inherited from the root.
+    expect((out[0] as {csvConfig: object}).csvConfig).toEqual({
+      hasHeader: true,
+      phoneticCol: 4,
+    });
+  });
+
+  it('a *.meta.json file is never itself treated as a CSV', async () => {
+    const {deps} = makeDeps(
+      {[ROOT]: [fileEntry(`${ROOT}/Dune.meta.json`, 1)]},
+      {},
+    );
+    expect(await discoverUserDicts(deps)).toEqual([]);
+  });
+
+  it('a malformed per-file sidecar degrades to defaults (name from file, und)', async () => {
+    const {deps, warnings} = makeDeps(
+      {
+        [ROOT]: [
+          fileEntry(`${ROOT}/Dune.csv`, 1),
+          fileEntry(`${ROOT}/Dune.meta.json`, 1),
+        ],
+      },
+      {[`${ROOT}/Dune.meta.json`]: '{not valid json'},
+    );
+    const out = await discoverUserDicts(deps);
+    expect(out[0]).toMatchObject({
+      kind: 'csv',
+      sidecar: {name: 'Dune', language: 'und'},
+      csvConfig: {},
+    });
+    expect(warnings.some(w => /sidecar unreadable\/malformed/.test(w))).toBe(true);
+  });
+
+  it('mixes a StarDict subfolder (kind:stardict) and a loose CSV (kind:csv)', async () => {
+    const dir = `${ROOT}/wiki`;
+    const {deps} = makeDeps(
+      {
+        [ROOT]: [folder('wiki'), fileEntry(`${ROOT}/Dune.csv`, 1)],
+        [dir]: triple(dir),
+      },
+      {},
+    );
+    const out = await discoverUserDicts(deps);
+    const byName = Object.fromEntries(out.map(d => [d.sidecar.name, d.kind]));
+    expect(byName).toEqual({Dune: 'csv', wiki: 'stardict'});
   });
 });

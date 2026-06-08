@@ -30,14 +30,13 @@ import {
   __testing__,
 } from '../src/ui/popupController';
 import {createMultiDictLookup} from '../src/core/dict/multiDictLookup';
-import {createStardictLookup} from '../src/core/dict/stardictLookup';
-import {createCsvDictSource} from '../src/core/dict/csvDictSource';
-import {discoverUserDicts} from '../src/core/dict/userDictDiscovery';
+import {createSqliteDictSource} from '../src/core/dict/sqlite/sqliteDictSource';
+import {buildDict} from '../src/core/dict/stardict/stardictDict';
+import {populateBaseDb, SCHEMA_VERSION} from '../src/core/dict/sqlite/buildBaseDb';
 import type {DictSource} from '../src/core/lookup';
+import type {SqliteDb} from '../src/core/dict/sqlite/db';
 import {buildSyntheticStarDict} from './_helpers/buildSyntheticStarDict';
-import {enc, makeVfs, u8ToArrayBuffer} from './_helpers/inMemoryVfs';
-
-const ROOT = '/storage/emulated/0/MyStyle/SnDict';
+import {createSeededDb} from './_helpers/betterSqliteDb';
 
 const renderPopup = (): ReactTestRenderer => {
   let tree!: ReactTestRenderer;
@@ -66,13 +65,23 @@ const collectText = (tree: ReactTestRenderer): string => {
   return acc.join(' | ');
 };
 
-const stardictBuffers = (entries: Record<string, string>) => {
-  const triple = buildSyntheticStarDict(entries, {gzipDict: true});
-  return {
-    ifo: u8ToArrayBuffer(triple.ifo),
-    idx: u8ToArrayBuffer(triple.idx),
-    dict: u8ToArrayBuffer(triple.dict),
-  };
+// A real SQLite-backed source: build a tiny base.db from a synthetic
+// StarDict triple via the real generator, then wrap it as a DictSource.
+// This is the live engine — the old in-memory createStardictLookup is
+// retired (M14). `format` controls how the popup renders the body
+// ('plain' verbatim, 'html' -> htmlToPlainText).
+const sqliteSourceFor = async (
+  name: string,
+  entries: Record<string, string>,
+  format: 'plain' | 'html' = 'plain',
+): Promise<DictSource> => {
+  const opts = format === 'html' ? {sametypesequence: 'h'} : {};
+  const triple = buildSyntheticStarDict(entries, opts);
+  const parsed = await buildDict(triple.ifo, triple.idx, triple.dict);
+  const db: SqliteDb = await createSeededDb(async d => {
+    await populateBaseDb(d, parsed, SCHEMA_VERSION, format);
+  });
+  return createSqliteDictSource({name, openDb: async () => db});
 };
 
 beforeEach(() => {
@@ -81,15 +90,8 @@ beforeEach(() => {
 
 describe('end-to-end (discovery → registry → popup)', () => {
   test('user-dropped CSV becomes a popup section after lookup', async () => {
-    const vfs = makeVfs({
-      [`${ROOT}/medical/words.csv`]: enc('apple,a fruit\n'),
-    });
-    // 1. Real discovery against the VFS.
-    const userDicts = await discoverUserDicts({
-      fileUtils: vfs.fileUtils,
-      fetchFn: vfs.fetchFn,
-      rootPath: ROOT,
-    });
+    // 1. Real custom source (SQLite base.db engine fixture).
+    const userDicts = [await sqliteSourceFor('medical', {apple: 'a fruit'})];
     // 2. Real registry composition.
     const lookup = createMultiDictLookup(userDicts);
     // 3. Real popup mounting.
@@ -106,23 +108,8 @@ describe('end-to-end (discovery → registry → popup)', () => {
   });
 
   test('multi-source rendering: both dicts hit, popup shows both sections with badges', async () => {
-    const baseTriple = stardictBuffers({apple: 'a fruit (base)'});
-    const vfs = makeVfs({
-      [`${ROOT}/custom/data.csv`]: enc('apple,a fruit (custom)\n'),
-    });
-    const userDicts = await discoverUserDicts({
-      fileUtils: vfs.fileUtils,
-      fetchFn: vfs.fetchFn,
-      rootPath: ROOT,
-    });
-    const baseSource: DictSource = createStardictLookup({
-      name: 'WordNet',
-      loadBase: async () => ({
-        ifo: new Uint8Array(baseTriple.ifo),
-        idx: new Uint8Array(baseTriple.idx),
-        dict: new Uint8Array(baseTriple.dict),
-      }),
-    });
+    const userDicts = [await sqliteSourceFor('custom', {apple: 'a fruit (custom)'})];
+    const baseSource = await sqliteSourceFor('WordNet', {apple: 'a fruit (base)'});
     const lookup = createMultiDictLookup([...userDicts, baseSource]);
     const tree = renderPopup();
     const result = await lookup.lookup('apple');
@@ -139,12 +126,7 @@ describe('end-to-end (discovery → registry → popup)', () => {
   });
 
   test('not-found: lookup misses every source; popup shows the not-found message', async () => {
-    const userDicts = [
-      createCsvDictSource({
-        name: 'A',
-        loadBytes: async () => enc('apple,fruit\n'),
-      }),
-    ];
+    const userDicts = [await sqliteSourceFor('A', {apple: 'fruit'})];
     const lookup = createMultiDictLookup(userDicts);
     const tree = renderPopup();
     const result = await lookup.lookup('xyzzy');
@@ -154,62 +136,22 @@ describe('end-to-end (discovery → registry → popup)', () => {
     expect(collectText(tree)).toMatch(/no definition found/i);
   });
 
-  test('StarDict with .syn: latin transliteration resolves to native-script entry', async () => {
-    // Builds the same kind of cross-script lookup as the real
-    // Wiktionary Hindi-English dict (Devanagari headwords + Latin
-    // transliteration synonyms). Verifies the .syn fix end-to-end.
-    const triple = buildSyntheticStarDict({
-      'नमस्ते': 'a Hindi greeting',
-    });
-    // Hand-build a .syn pointing 'namaste' at idx[0] (the only entry).
-    const synBytes = new Uint8Array([
-      0x6e, 0x61, 0x6d, 0x61, 0x73, 0x74, 0x65, // 'namaste'
-      0,
-      0, 0, 0, 0, // index 0, big-endian u32
-    ]);
-    const vfs = makeVfs({
-      [`${ROOT}/hindi/dict.ifo`]: u8ToArrayBuffer(triple.ifo),
-      [`${ROOT}/hindi/dict.idx`]: u8ToArrayBuffer(triple.idx),
-      [`${ROOT}/hindi/dict.dict.dz`]: u8ToArrayBuffer(triple.dict),
-      [`${ROOT}/hindi/dict.syn`]: u8ToArrayBuffer(synBytes),
-    });
-    const userDicts = await discoverUserDicts({
-      fileUtils: vfs.fileUtils,
-      fetchFn: vfs.fetchFn,
-      rootPath: ROOT,
-    });
-    const lookup = createMultiDictLookup(userDicts);
-    const tree = renderPopup();
-    const result = await lookup.lookup('namaste');
-    act(() => {
-      showDefinition(result);
-    });
-    const text = collectText(tree);
-    // The popup header renders the canonical Devanagari word, not
-    // the latin synonym alias.
-    expect(text).toContain('नमस्ते');
-    // And the definition body of the canonical entry.
-    expect(text).toContain('a Hindi greeting');
-  });
+  // (The old createStardictLookup '.syn latin transliteration' case was
+  // retired with the in-memory engine, M14. The .syn alias-merge is now
+  // a build/import-time concern, host-tested by parseSyn.test.ts +
+  // stardictDict.test.ts (buildDict merge) + importStardict's .syn test;
+  // base.db ships aliases pre-merged into entries.)
 
-  test('HTML-formatted StarDict: tags are stripped end-to-end', async () => {
-    // Mimics a Wiktionary-derived StarDict whose .ifo declares
-    // sametypesequence=h. Discovery -> source picks format='html' ->
-    // popup runs htmlToPlainText. No tags should leak.
-    const triple = buildSyntheticStarDict(
-      {hello: '<i>intj</i><br><ol><li>greeting</li></ol>'},
-      {sametypesequence: 'h'},
-    );
-    const vfs = makeVfs({
-      [`${ROOT}/wikt/d.ifo`]: u8ToArrayBuffer(triple.ifo),
-      [`${ROOT}/wikt/d.idx`]: u8ToArrayBuffer(triple.idx),
-      [`${ROOT}/wikt/d.dict`]: u8ToArrayBuffer(triple.dict),
-    });
-    const userDicts = await discoverUserDicts({
-      fileUtils: vfs.fileUtils,
-      fetchFn: vfs.fetchFn,
-      rootPath: ROOT,
-    });
+  test('HTML-formatted source: tags are stripped end-to-end', async () => {
+    // A source whose entries carry format='html' (e.g. a Wiktionary-
+    // derived dict). The popup runs htmlToPlainText; no tags should leak.
+    const userDicts = [
+      await sqliteSourceFor(
+        'wikt',
+        {hello: '<i>intj</i><br><ol><li>greeting</li></ol>'},
+        'html',
+      ),
+    ];
     const lookup = createMultiDictLookup(userDicts);
     const tree = renderPopup();
     const result = await lookup.lookup('hello');
@@ -227,9 +169,6 @@ describe('end-to-end (discovery → registry → popup)', () => {
     // that gets mutated when discovery completes. Verifies the
     // in-flight lookup snapshot semantics that the reviewer caught
     // pre-merge of v1.0.2.
-    const vfs = makeVfs({
-      [`${ROOT}/extra/words.csv`]: enc('apple,fruit (extra)\n'),
-    });
     // Slow base source so the in-flight lookup is still going when
     // we mutate.
     const slowBase: DictSource = {
@@ -247,14 +186,10 @@ describe('end-to-end (discovery → registry → popup)', () => {
     const sources: DictSource[] = [slowBase];
     const lookup = createMultiDictLookup(sources);
 
-    // Kick off the lookup before discovery completes...
+    // Kick off the lookup before the user dict is added...
     const inFlight = lookup.lookup('apple');
-    // ...then prepend the discovered user dict, the way index.js does.
-    const userDicts = await discoverUserDicts({
-      fileUtils: vfs.fileUtils,
-      fetchFn: vfs.fetchFn,
-      rootPath: ROOT,
-    });
+    // ...then prepend a user dict, the way the runtime mutates sources.
+    const userDicts = [await sqliteSourceFor('extra', {apple: 'fruit (extra)'})];
     sources.unshift(...userDicts);
 
     const result = await inFlight;

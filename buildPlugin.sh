@@ -631,6 +631,31 @@ build_android_apk() {
     local android_dir="$project_root/android"
     [[ ! -d "$android_dir" ]] && { write_color_output "android directory not found" "Red"; return 1; }
 
+    # Gradle 8.13 cannot run on JDK > 23 (Java 24+ = class-file major 68+;
+    # e.g. Java 26 fails with "Unsupported class file major version 70").
+    # If JAVA_HOME isn't pinned and the active `java` is too new, prefer an
+    # installed JDK 21 (then 17) via macOS java_home; error clearly if none.
+    if [[ -z "${JAVA_HOME:-}" ]] && command -v java >/dev/null 2>&1; then
+        local jmajor
+        jmajor="$(java -version 2>&1 | sed -nE 's/.*version "([0-9]+).*/\1/p' | head -1)"
+        if [[ -n "$jmajor" && "$jmajor" -gt 23 ]]; then
+            if command -v /usr/libexec/java_home >/dev/null 2>&1; then
+                local jh v
+                for v in 21 17; do
+                    if jh="$(/usr/libexec/java_home -v "$v" 2>/dev/null)"; then
+                        export JAVA_HOME="$jh"
+                        write_color_output "Active JDK $jmajor too new for Gradle 8.13; selected JDK $v: $JAVA_HOME" "Yellow"
+                        break
+                    fi
+                done
+            fi
+            if [[ -z "${JAVA_HOME:-}" ]]; then
+                write_color_output "Active JDK $jmajor is unsupported by Gradle 8.13 (needs JDK 17-21). Install JDK 21 (e.g. 'brew install temurin@21') or set JAVA_HOME." "Red"
+                return 1
+            fi
+        fi
+    fi
+
     write_color_output "Running gradle task: buildCustomApkDebug..." "Blue"
     local gradlew_path="$android_dir/gradlew"
     (cd "$android_dir"
@@ -815,14 +840,40 @@ main() {
     # hits an opaque platform-mismatch stacktrace.
     ensure_node_modules_platform "$project_root"
 
-    # Stage + regenerate the bundled base dictionary so Metro picks up
-    # the latest src/core/dict/data/baseDictData.ts before bundling.
-    # Idempotent: fetch:dict skips the download if the source files
-    # are already present, and build:dict re-emits in <1s for the
-    # ~10MB WordNet input.
+    # Stage the WordNet StarDict source (fetch:dict) and regenerate the
+    # bundled base data (build:dict). prepare:dict is RETAINED until the
+    # native SQLite path passes the TF1 on-device spike (ADR-0001): the
+    # base64 blob it emits is revert-safety, not the runtime path — the
+    # runtime reads base.db, built+staged below. Idempotent: fetch:dict
+    # skips the download if the source files are already present.
     write_color_output "Preparing base dictionary..." "Blue"
     (cd "$project_root" && npm run --silent prepare:dict) \
         || { write_color_output "Base dictionary preparation failed" "Red"; exit 1; }
+
+    # Prepare the OMW thesaurus (fetch OEWN 2023 + build dict/omw/omw.tsv)
+    # BEFORE build:base-db, which folds the TSV into base.db's thesaurus
+    # table. This MUST fail the build loudly: if it's skipped/failed,
+    # base.db ships with an empty thesaurus table (the M12 bug we are
+    # fixing) — never silently ship without it. Same fail-fast handling
+    # as prepare:dict above.
+    write_color_output "Preparing OMW thesaurus..." "Blue"
+    (cd "$project_root" && npm run --silent prepare:omw) \
+        || { write_color_output "OMW thesaurus preparation failed — refusing to ship an empty thesaurus" "Red"; exit 1; }
+
+    # Build the bundled SQLite base.db and stage it INTO THE .snplg (not
+    # app.npk assets). The spike proved react-native-sqlite-storage's
+    # createFromLocation can't read app.npk assets in a dynamically-
+    # loaded plugin. Instead the host extracts the .snplg into
+    # plugins/<pluginID>/, so shipping base.db at the .snplg ROOT lands
+    # it at plugins/<id>/base.db — exactly what {name:'base.db',
+    # location:'plugins/<id>/'} opens. We copy it into build/generated/
+    # (the dir new_zip_package zips into the .snplg).
+    write_color_output "Building + staging base.db into the .snplg..." "Blue"
+    (cd "$project_root" && npm run --silent build:base-db) \
+        || { write_color_output "base.db build failed" "Red"; exit 1; }
+    cp "$project_root/build/base.db" "$gen_dir/base.db" \
+        || { write_color_output "Could not stage base.db into $gen_dir" "Red"; exit 1; }
+    write_color_output "Staged base.db -> $gen_dir/base.db (ships at .snplg root)" "Green"
 
     build_react_native_bundle "$project_root" "$PACKAGE_NAME" "$gen_dir"
 

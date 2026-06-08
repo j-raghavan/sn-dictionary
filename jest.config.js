@@ -20,7 +20,23 @@ module.exports = {
   // `npm run test:integration`). They are an end-to-end gate, not a
   // coverage source — exclude from coverage measurement so they
   // can't skew the unit-test gate either way.
-  coveragePathIgnorePatterns: ['/__tests__/integration/'],
+  // rnSqliteDb.ts is the on-device SqliteDb adapter — it imports the
+  // react-native-sqlite-storage native module, which isn't bound off
+  // the device, so it cannot run under jest. It is DEVICE-UNVERIFIED
+  // and deliberately kept thin; its behaviour is mirrored by the host
+  // better-sqlite3 adapter that the sqlite suites exercise.
+  // Device-only adapters import native modules unbound off the device,
+  // so they can't run under jest. They are DEVICE-UNVERIFIED, kept
+  // thin, and mirrored by host adapters / pure decision logic that the
+  // sqlite suites exercise.
+  coveragePathIgnorePatterns: [
+    '/__tests__/integration/',
+    '/src/core/dict/sqlite/rnSqliteDb\\.ts$',
+    '/src/core/dict/sqlite/provisionRnPorts\\.ts$',
+    '/src/core/dict/sqlite/importRnPorts\\.ts$',
+    '/src/core/dict/sqlite/importCsvRnPorts\\.ts$',
+    '/src/core/dict/sqlite/nativeImport\\.ts$',
+  ],
   collectCoverageFrom: [
     'src/**/*.{ts,tsx}',
     // Pure-types files have no executable code; istanbul reports

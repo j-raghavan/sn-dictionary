@@ -215,4 +215,171 @@ export const popupStyles = StyleSheet.create({
   fontSizeLabelDisabled: {
     color: '#999999',
   },
+  // Definition / Thesaurus tab strip below the header. Two pressable
+  // tabs; the active one carries a heavier underline (e-ink renders a
+  // solid border far more clearly than a fill or colour shift).
+  tabRow: {
+    flexDirection: 'row',
+    marginTop: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#bbbbbb',
+  },
+  tab: {
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    marginRight: 8,
+    borderBottomWidth: 3,
+    borderBottomColor: 'transparent',
+  },
+  tabActive: {
+    borderBottomColor: '#000000',
+  },
+  tabLabel: {
+    fontSize: 16,
+    color: '#555555',
+  },
+  tabLabelActive: {
+    color: '#000000',
+    fontWeight: '700',
+  },
+  // Thesaurus view: a labelled block per relation kind.
+  thesaurusGroup: {
+    marginTop: 12,
+  },
+  thesaurusLabel: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#000000',
+    marginBottom: 4,
+  },
+  thesaurusList: {
+    fontSize: 17,
+    lineHeight: 24,
+    color: '#000000',
+  },
+  // OCR-correction row (lasso flow): an editable text field + a
+  // "Look up" button to re-run the lookup on the corrected word.
+  editRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  // Display mode for the OCR-correction field (lasso flow): the
+  // recognized word on the left, a pencil glyph on the right. Tapping
+  // the whole row enters edit mode. Read-first so the user isn't
+  // confronted with an edit field when the recognition was correct.
+  ocrDisplayRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 8,
+  },
+  ocrDisplayText: {
+    flexShrink: 1,
+    fontSize: 18,
+    color: '#555555',
+    marginRight: 8,
+  },
+  // Pencil glyph button — same 32×32 circular touch target as the
+  // font-size −/+ glyph buttons (crisp on e-ink; no emoji, no PNG).
+  pencilButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#000000',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pencilLabel: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#000000',
+    lineHeight: 20,
+  },
+  editInput: {
+    flex: 1,
+    fontSize: 18,
+    color: '#000000',
+    borderWidth: 1,
+    borderColor: '#000000',
+    borderRadius: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    marginRight: 8,
+  },
+  lookUpButton: {
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderWidth: 1,
+    borderColor: '#000000',
+    borderRadius: 4,
+  },
+  lookUpLabel: {
+    fontSize: 16,
+    color: '#000000',
+  },
+  // Add-definition form (revealed from the not-found state).
+  addFormButton: {
+    marginTop: 12,
+    alignSelf: 'flex-start',
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderWidth: 1,
+    borderColor: '#000000',
+    borderRadius: 4,
+  },
+  addFormButtonLabel: {
+    fontSize: 16,
+    color: '#000000',
+  },
+  addForm: {
+    marginTop: 12,
+  },
+  addFieldLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#000000',
+    marginBottom: 4,
+    marginTop: 8,
+  },
+  addHeadwordInput: {
+    fontSize: 18,
+    color: '#000000',
+    borderWidth: 1,
+    borderColor: '#000000',
+    borderRadius: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  addBodyInput: {
+    fontSize: 17,
+    color: '#000000',
+    borderWidth: 1,
+    borderColor: '#000000',
+    borderRadius: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    minHeight: 96,
+    textAlignVertical: 'top',
+  },
+  addError: {
+    marginTop: 8,
+    fontSize: 14,
+    color: '#000000',
+    fontStyle: 'italic',
+  },
+  addSaveButton: {
+    marginTop: 12,
+    alignSelf: 'flex-start',
+    paddingVertical: 8,
+    paddingHorizontal: 20,
+    borderWidth: 1,
+    borderColor: '#000000',
+    borderRadius: 4,
+  },
+  addSaveLabel: {
+    fontSize: 16,
+    color: '#000000',
+  },
 });

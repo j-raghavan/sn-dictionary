@@ -613,6 +613,14 @@ Purpose: Build the custom debug APK via gradle.
 function Build-AndroidApk {
     param([string]$ProjectRoot)
 
+    # SnDict's native build (vendored react-native-sqlite-storage Gradle/
+    # NDK + base.db asset staging into android/app/src/main/assets/) is
+    # only wired in buildPlugin.sh. The PowerShell native path is NOT
+    # supported — base.db staging and the custom-APK .so pruning are sh
+    # only. Run buildPlugin.sh on macOS/Linux (or WSL) for a native build.
+    Write-ColorOutput 'Native (SQLite) builds are not supported via buildPlugin.ps1 — use buildPlugin.sh (Gradle/NDK + base.db asset staging).' 'Red'
+    return $false
+
     $androidDir = Join-Path $ProjectRoot 'android'
     if (-not (Test-Path $androidDir)) {
         Write-ColorOutput 'android directory not found' 'Red'

@@ -8,6 +8,7 @@ jest.mock('react-native', () => ({
   Text: 'Text',
   ScrollView: 'ScrollView',
   Pressable: 'Pressable',
+  TextInput: 'TextInput',
   StyleSheet: {create: (s: unknown) => s},
 }));
 
@@ -23,9 +24,12 @@ import {
   showDefinition,
   showRecognizing,
   hideDefinition,
+  setPopupActions,
+  type PopupActions,
   __testing__,
 } from '../src/ui/popupController';
 import type {DefinitionFormat, LookupResult} from '../src/core/lookup';
+import type {ThesaurusResult} from '../src/core/dict/sqlite/thesaurusLookup';
 
 const closePluginView = PluginManager.closePluginView as jest.Mock;
 
@@ -803,5 +807,498 @@ describe('DefinitionPopup', () => {
     expect(text).not.toContain('Recognizing…');
     expect(text).toContain('hello');
     expect(text).toContain('a greeting');
+  });
+});
+
+// --- Definition/Thesaurus toggle (TF4-FR4) -------------------------
+
+const flush = async (): Promise<void> => {
+  // Let the thesaurus fetch promise + its setState settle.
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+};
+
+const wordnetHit = (
+  word: string,
+  definition: string,
+): LookupResult => ({
+  queriedFor: word,
+  hits: [{source: 'WordNet', entry: {word, definition, format: 'wordnet'}}],
+  loading: [],
+});
+
+const fakeActions = (
+  lookupThesaurus: PopupActions['lookupThesaurus'],
+): PopupActions => ({
+  lookupThesaurus,
+  addUserEntry: async () => undefined,
+  relookup: async () => undefined,
+});
+
+describe('DefinitionPopup — Definition/Thesaurus toggle', () => {
+  test('renders both tabs once there is a hit', () => {
+    setPopupActions(fakeActions(async () => ({lang: 'en', omw: {synonyms: [], antonyms: []}})));
+    const tree = renderPopup();
+    act(() => showDefinition(found('WordNet', 'hello', 'a greeting')));
+    const text = collectText(tree);
+    expect(text).toContain('Definition');
+    expect(text).toContain('Thesaurus');
+  });
+
+  test('switching to Thesaurus shows synonyms/antonyms; back shows the definition', async () => {
+    setPopupActions(
+      fakeActions(async () => ({
+        lang: 'en',
+        omw: {synonyms: ['glad'], antonyms: ['sad']},
+      })),
+    );
+    const tree = renderPopup();
+    act(() => showDefinition(wordnetHit('happy', 'feeling joy')));
+    // Definition tab first.
+    expect(collectText(tree)).toContain('feeling joy');
+    // Flip to Thesaurus.
+    const thTab = tree.root.findAll(
+      n => n.props.accessibilityLabel === 'Thesaurus' && n.props.onPress,
+    )[0];
+    await act(async () => {
+      thTab.props.onPress();
+    });
+    await flush();
+    const th = collectText(tree);
+    expect(th).toContain('glad');
+    expect(th).toContain('sad');
+    // Flip back to Definition.
+    const defTab = tree.root.findAll(
+      n => n.props.accessibilityLabel === 'Definition' && n.props.onPress,
+    )[0];
+    await act(async () => {
+      defTab.props.onPress();
+    });
+    expect(collectText(tree)).toContain('feeling joy');
+  });
+
+  test('fetches the thesaurus exactly ONCE across def->thes->def->thes flips (cache)', async () => {
+    const spy = jest.fn(async () => ({
+      lang: 'en',
+      omw: {synonyms: ['glad'], antonyms: []} as ThesaurusResult,
+    }));
+    setPopupActions(fakeActions(spy));
+    const tree = renderPopup();
+    act(() => showDefinition(wordnetHit('happy', 'feeling joy')));
+
+    const press = label =>
+      tree.root
+        .findAll(n => n.props.accessibilityLabel === label && n.props.onPress)[0]
+        .props.onPress();
+
+    await act(async () => press('Thesaurus'));
+    await flush();
+    await act(async () => press('Definition'));
+    await act(async () => press('Thesaurus'));
+    await flush();
+    await act(async () => press('Definition'));
+    await act(async () => press('Thesaurus'));
+    await flush();
+
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  test("'und' language -> empty thesaurus -> empty-state, not an error", async () => {
+    // The action returns empty omw for 'und'; assembleThesaurus yields
+    // empty; the component shows the empty-state string.
+    setPopupActions(
+      fakeActions(async () => ({lang: 'und', omw: {synonyms: [], antonyms: []}})),
+    );
+    const tree = renderPopup();
+    act(() => showDefinition(found('User', 'photon', 'a light quantum')));
+    await act(async () =>
+      tree.root
+        .findAll(n => n.props.accessibilityLabel === 'Thesaurus' && n.props.onPress)[0]
+        .props.onPress(),
+    );
+    await flush();
+    const text = collectText(tree);
+    expect(text).toContain('No synonyms or antonyms available.');
+  });
+
+  test('EN WordNet merges sense synonyms with OMW (deduped)', async () => {
+    setPopupActions(
+      fakeActions(async () => ({
+        lang: 'en',
+        omw: {synonyms: ['cheerful'], antonyms: []},
+      })),
+    );
+    const tree = renderPopup();
+    // A real WordNet body: headword on line 0, then an indented sense
+    // line whose [syn:] block carries 'glad' (+ the headword itself).
+    act(() =>
+      showDefinition(
+        wordnetHit(
+          'happy',
+          'happy\n     adj 1: feeling joy [syn: {glad}, {happy}]',
+        ),
+      ),
+    );
+    await act(async () =>
+      tree.root
+        .findAll(n => n.props.accessibilityLabel === 'Thesaurus' && n.props.onPress)[0]
+        .props.onPress(),
+    );
+    await flush();
+    const text = collectText(tree);
+    // sense synonym 'glad' + OMW 'cheerful'; headword 'happy' excluded.
+    expect(text).toContain('glad');
+    expect(text).toContain('cheerful');
+  });
+
+  test('non-EN (plain) source is OMW-only — sense synonyms ignored', async () => {
+    setPopupActions(
+      fakeActions(async () => ({
+        lang: 'de',
+        omw: {synonyms: ['glücklich'], antonyms: []},
+      })),
+    );
+    const tree = renderPopup();
+    // plain-format hit: even if it had [syn:] text, assembleThesaurus
+    // takes OMW only for non-'wordnet' formats.
+    act(() => showDefinition(found('Imported', 'froh', 'froh [syn: {ignored}]', 'plain')));
+    await act(async () =>
+      tree.root
+        .findAll(n => n.props.accessibilityLabel === 'Thesaurus' && n.props.onPress)[0]
+        .props.onPress(),
+    );
+    await flush();
+    const text = collectText(tree);
+    expect(text).toContain('glücklich');
+    expect(text).not.toContain('ignored');
+  });
+
+  test('antonyms-only result renders the Antonyms group (no Synonyms group)', async () => {
+    setPopupActions(
+      fakeActions(async () => ({
+        lang: 'en',
+        omw: {synonyms: [], antonyms: ['cold']},
+      })),
+    );
+    const tree = renderPopup();
+    act(() => showDefinition(found('WordNet', 'hot', 'high temperature')));
+    await act(async () =>
+      tree.root
+        .findAll(n => n.props.accessibilityLabel === 'Thesaurus' && n.props.onPress)[0]
+        .props.onPress(),
+    );
+    await flush();
+    const text = collectText(tree);
+    expect(text).toContain('Antonyms');
+    expect(text).toContain('cold');
+    expect(text).not.toContain('Synonyms');
+  });
+
+  test('a thesaurus fetch rejection -> empty-state, not a crash', async () => {
+    setPopupActions(
+      fakeActions(async () => {
+        throw new Error('db unavailable');
+      }),
+    );
+    const tree = renderPopup();
+    act(() => showDefinition(found('WordNet', 'hello', 'a greeting')));
+    await act(async () =>
+      tree.root
+        .findAll(n => n.props.accessibilityLabel === 'Thesaurus' && n.props.onPress)[0]
+        .props.onPress(),
+    );
+    await flush();
+    expect(collectText(tree)).toContain('No synonyms or antonyms available.');
+  });
+
+  test('switching headword mid-fetch does not clobber the new headword (cancelled)', async () => {
+    // First headword's fetch is deferred; we flip to a new headword
+    // (resetting tab + cache) before it resolves. The stale resolution
+    // must be discarded (cancelled), not written into state.
+    let resolveFirst!: (v: {lang: string; omw: ThesaurusResult}) => void;
+    const spy = jest.fn((word: string) => {
+      if (word === 'first') {
+        return new Promise<{lang: string; omw: ThesaurusResult}>(res => {
+          resolveFirst = res;
+        });
+      }
+      return Promise.resolve({lang: 'en', omw: {synonyms: ['second-syn'], antonyms: []}});
+    });
+    setPopupActions(fakeActions(spy as PopupActions['lookupThesaurus']));
+    const tree = renderPopup();
+
+    act(() => showDefinition(wordnetHit('first', 'def one')));
+    await act(async () =>
+      tree.root
+        .findAll(n => n.props.accessibilityLabel === 'Thesaurus' && n.props.onPress)[0]
+        .props.onPress(),
+    );
+    // New headword arrives before 'first' resolves.
+    act(() => showDefinition(wordnetHit('second', 'def two')));
+    // Now resolve the STALE first fetch — must be ignored.
+    await act(async () => {
+      resolveFirst({lang: 'en', omw: {synonyms: ['stale-syn'], antonyms: []}});
+      await Promise.resolve();
+    });
+    await flush();
+    // Back on Definition tab (reset by new headword); no stale data.
+    expect(collectText(tree)).toContain('def two');
+    expect(collectText(tree)).not.toContain('stale-syn');
+  });
+
+  test('no registered actions -> Thesaurus tab shows loading, never crashes', async () => {
+    // getPopupActions() is null (not registered) — guarded.
+    const tree = renderPopup();
+    act(() => showDefinition(found('WordNet', 'hello', 'a greeting')));
+    await act(async () =>
+      tree.root
+        .findAll(n => n.props.accessibilityLabel === 'Thesaurus' && n.props.onPress)[0]
+        .props.onPress(),
+    );
+    await flush();
+    // No crash; the body stays on the loading placeholder.
+    expect(collectText(tree)).toContain('Loading…');
+  });
+});
+
+// --- OCR correction editable field (TF6-FR1..FR5) ------------------
+
+const relookupActions = (
+  relookup: PopupActions['relookup'],
+): PopupActions => ({
+  lookupThesaurus: async () => ({lang: 'en', omw: {synonyms: [], antonyms: []}}),
+  addUserEntry: async () => undefined,
+  relookup,
+});
+
+const findByLabel = (tree: ReactTestRenderer, label: string) =>
+  tree.root.findAll(n => n.props.accessibilityLabel === label);
+
+// Tap the pencil to enter edit mode.
+const enterEdit = (tree: ReactTestRenderer) =>
+  act(() => findByLabel(tree, 'Edit recognized text')[0].props.onPress());
+
+describe('DefinitionPopup — OCR correction (display-first → tap-to-edit)', () => {
+  test('CASE 1: editable, fresh result -> DISPLAY mode (text + pencil, NO field)', () => {
+    const tree = renderPopup();
+    act(() => showDefinition(found('WordNet', 'hello', 'a greeting'), 'OCR: hello', true));
+    // The recognized text is shown via a tappable pencil row; NO edit
+    // field or Lookup button yet.
+    expect(findByLabel(tree, 'Edit recognized text').length).toBe(1);
+    expect(findByLabel(tree, 'OCR').length).toBe(0);
+    expect(findByLabel(tree, 'Look up').length).toBe(0);
+    // The display row carries the recognized word (seeded from queriedFor).
+    expect(collectText(tree)).toContain('hello');
+  });
+
+  test('CASE 2: tapping the pencil -> EDIT mode (field + Look up appear)', () => {
+    const tree = renderPopup();
+    act(() => showDefinition(found('WordNet', 'hello', 'a greeting'), 'OCR: hello', true));
+    enterEdit(tree);
+    const input = findByLabel(tree, 'OCR');
+    expect(input.length).toBe(1);
+    expect(input[0].props.value).toBe('hello');
+    expect(input[0].props.autoFocus).toBe(true);
+    expect(findByLabel(tree, 'Look up').length).toBe(1);
+  });
+
+  test('CASE 3: Look up in edit mode re-runs the lookup with the edited text', async () => {
+    const relookup = jest.fn(async () => undefined);
+    setPopupActions(relookupActions(relookup));
+    const tree = renderPopup();
+    act(() => showDefinition(notFound('helo'), 'OCR: helo', true));
+    enterEdit(tree);
+    act(() => findByLabel(tree, 'OCR')[0].props.onChangeText('hello'));
+    await act(async () => findByLabel(tree, 'Look up')[0].props.onPress());
+    expect(relookup).toHaveBeenCalledWith('hello');
+  });
+
+  test('CASE 4: a NEW result resets back to display mode (editing -> false)', () => {
+    const tree = renderPopup();
+    act(() => showDefinition(notFound('helo'), 'OCR: helo', true));
+    enterEdit(tree);
+    expect(findByLabel(tree, 'OCR').length).toBe(1); // editing
+    // A new result arrives (e.g. after relookup) -> back to display mode.
+    act(() => showDefinition(found('WordNet', 'hello', 'a greeting'), 'OCR: hello', true));
+    expect(findByLabel(tree, 'OCR').length).toBe(0); // no field
+    expect(findByLabel(tree, 'Edit recognized text').length).toBe(1); // pencil back
+  });
+
+  test('CASE 5: doc-select flow (editable !== true) has NO pencil and NO field', () => {
+    const tree = renderPopup();
+    act(() => showDefinition(found('WordNet', 'hello', 'a greeting'), 'OCR: hello'));
+    expect(findByLabel(tree, 'Edit recognized text').length).toBe(0);
+    expect(findByLabel(tree, 'OCR').length).toBe(0);
+    expect(findByLabel(tree, 'Look up').length).toBe(0);
+    // The plain OCR label still renders in the non-editable flow.
+    expect(collectText(tree)).toContain('OCR: hello');
+  });
+
+  test('editable is gated on === true, not ocrLabel presence', () => {
+    const tree = renderPopup();
+    act(() =>
+      showDefinition(found('WordNet', 'hi', 'greeting'), 'OCR: hi', false),
+    );
+    expect(findByLabel(tree, 'Edit recognized text').length).toBe(0);
+    expect(findByLabel(tree, 'Look up').length).toBe(0);
+  });
+
+  test('Look up on empty/whitespace text is a no-op', async () => {
+    const relookup = jest.fn(async () => undefined);
+    setPopupActions(relookupActions(relookup));
+    const tree = renderPopup();
+    act(() => showDefinition(notFound('x'), 'OCR: x', true));
+    enterEdit(tree);
+    act(() => findByLabel(tree, 'OCR')[0].props.onChangeText('   '));
+    await act(async () => findByLabel(tree, 'Look up')[0].props.onPress());
+    expect(relookup).not.toHaveBeenCalled();
+  });
+
+  test('Look up swallows a relookup rejection (pipeline surfaces its own errors)', async () => {
+    const relookup = jest.fn(async () => {
+      throw new Error('relookup failed');
+    });
+    setPopupActions(relookupActions(relookup));
+    const tree = renderPopup();
+    act(() => showDefinition(notFound('helo'), 'OCR: helo', true));
+    enterEdit(tree);
+    act(() => findByLabel(tree, 'OCR')[0].props.onChangeText('hello'));
+    await act(async () => {
+      findByLabel(tree, 'Look up')[0].props.onPress();
+      await Promise.resolve();
+    });
+    expect(relookup).toHaveBeenCalledWith('hello');
+  });
+
+  test('Look up with no registered actions does not crash', async () => {
+    const tree = renderPopup();
+    act(() => showDefinition(notFound('x'), 'OCR: x', true));
+    enterEdit(tree);
+    act(() => findByLabel(tree, 'OCR')[0].props.onChangeText('hello'));
+    await act(async () => findByLabel(tree, 'Look up')[0].props.onPress());
+    expect(findByLabel(tree, 'Look up').length).toBe(1);
+  });
+});
+
+// --- Add-word form (TF7-FR3/FR4/FR6) -------------------------------
+
+const addActions = (
+  addUserEntry: PopupActions['addUserEntry'],
+  relookup: PopupActions['relookup'],
+): PopupActions => ({
+  lookupThesaurus: async () => ({lang: 'en', omw: {synonyms: [], antonyms: []}}),
+  addUserEntry,
+  relookup,
+});
+
+describe('DefinitionPopup — add-word form', () => {
+  test('not-found shows an "Add definition" affordance', () => {
+    const tree = renderPopup();
+    act(() => showDefinition(notFound('photon')));
+    expect(findByLabel(tree, 'Add definition').length).toBe(1);
+  });
+
+  test('a found result shows NO add affordance', () => {
+    const tree = renderPopup();
+    act(() => showDefinition(found('WordNet', 'hello', 'a greeting')));
+    expect(findByLabel(tree, 'Add definition').length).toBe(0);
+  });
+
+  test('opening the form prefills the headword with the queried word', () => {
+    const tree = renderPopup();
+    act(() => showDefinition(notFound('photon')));
+    act(() => findByLabel(tree, 'Add definition')[0].props.onPress());
+    const hwInput = findByLabel(tree, 'Headword')[0];
+    expect(hwInput.props.value).toBe('photon');
+    // Body input is multiline.
+    const bodyInput = findByLabel(tree, 'Definition')[0];
+    expect(bodyInput.props.multiline).toBe(true);
+  });
+
+  test('save -> addUserEntry then relookup with the headword', async () => {
+    const addUserEntry = jest.fn(async () => undefined);
+    const relookup = jest.fn(async () => undefined);
+    setPopupActions(addActions(addUserEntry, relookup));
+    const tree = renderPopup();
+    act(() => showDefinition(notFound('photon')));
+    act(() => findByLabel(tree, 'Add definition')[0].props.onPress());
+    act(() =>
+      findByLabel(tree, 'Definition')[0].props.onChangeText('a light quantum'),
+    );
+    await act(async () => {
+      findByLabel(tree, 'Save')[0].props.onPress();
+      await Promise.resolve();
+    });
+    expect(addUserEntry).toHaveBeenCalledWith('photon', 'a light quantum');
+    expect(relookup).toHaveBeenCalledWith('photon');
+  });
+
+  test('the user entry renders first with a User badge after relookup', async () => {
+    // Model relookup surfacing a User hit ahead of WordNet — the
+    // registry order [user, ...imported, base] puts User first.
+    const relookup = jest.fn(async (word: string) => {
+      showDefinition({
+        queriedFor: word,
+        hits: [
+          {source: 'User', entry: {word, definition: 'my def', format: 'plain'}},
+          {source: 'WordNet', entry: {word, definition: 'wn def', format: 'wordnet'}},
+        ],
+        loading: [],
+      });
+    });
+    setPopupActions(addActions(async () => undefined, relookup));
+    const tree = renderPopup();
+    act(() => showDefinition(notFound('photon')));
+    act(() => findByLabel(tree, 'Add definition')[0].props.onPress());
+    act(() => findByLabel(tree, 'Definition')[0].props.onChangeText('my def'));
+    await act(async () => {
+      findByLabel(tree, 'Save')[0].props.onPress();
+      await Promise.resolve();
+    });
+    const text = collectText(tree);
+    // User badge present, and its definition appears before WordNet's.
+    expect(text).toContain('User');
+    expect(text.indexOf('my def')).toBeLessThan(text.indexOf('wn def'));
+  });
+
+  test('empty body -> inline validation error, no action call', async () => {
+    const addUserEntry = jest.fn(async () => undefined);
+    setPopupActions(addActions(addUserEntry, async () => undefined));
+    const tree = renderPopup();
+    act(() => showDefinition(notFound('photon')));
+    act(() => findByLabel(tree, 'Add definition')[0].props.onPress());
+    // Leave body empty.
+    await act(async () => findByLabel(tree, 'Save')[0].props.onPress());
+    expect(addUserEntry).not.toHaveBeenCalled();
+    expect(collectText(tree)).toContain('Enter a headword and a definition.');
+  });
+
+  test('an addUserEntry rejection (IO failure) is surfaced inline', async () => {
+    const addUserEntry = jest.fn(async () => {
+      throw new Error('disk full');
+    });
+    const relookup = jest.fn(async () => undefined);
+    setPopupActions(addActions(addUserEntry, relookup));
+    const tree = renderPopup();
+    act(() => showDefinition(notFound('photon')));
+    act(() => findByLabel(tree, 'Add definition')[0].props.onPress());
+    act(() => findByLabel(tree, 'Definition')[0].props.onChangeText('a def'));
+    await act(async () => {
+      findByLabel(tree, 'Save')[0].props.onPress();
+      await Promise.resolve();
+    });
+    expect(collectText(tree)).toContain('Could not save');
+    expect(relookup).not.toHaveBeenCalled();
+  });
+
+  test('save with no registered actions surfaces the failure inline', async () => {
+    const tree = renderPopup();
+    act(() => showDefinition(notFound('photon')));
+    act(() => findByLabel(tree, 'Add definition')[0].props.onPress());
+    act(() => findByLabel(tree, 'Definition')[0].props.onChangeText('a def'));
+    await act(async () => findByLabel(tree, 'Save')[0].props.onPress());
+    expect(collectText(tree)).toContain('Could not save');
   });
 });

@@ -1,6 +1,6 @@
 // Shared lazy-load + retry harness for any async-loaded DictSource.
-// One helper, regardless of whether the format loads a single byte
-// buffer (CSV, JSON) or a multi-buffer composite (StarDict's
+// One helper, regardless of whether the format loads a single handle
+// (SQLite: open the DB) or a multi-buffer composite (StarDict's
 // {ifo, idx, dict, syn?}).
 //
 // Contract:
@@ -38,8 +38,14 @@ export type LazyAsyncSourceDeps<TLoaded, TParsed> = {
   // here — the harness is format-agnostic. May return a Promise so
   // large parses can yield to the event loop.
   parse: (loaded: TLoaded) => TParsed | Promise<TParsed>;
-  // Format-specific lookup against the parsed dict.
-  lookup: (parsed: TParsed, word: string) => DictEntry | null;
+  // Format-specific lookup against the parsed dict. May return a
+  // Promise so backends whose query is inherently async (SQLite over
+  // a native bridge) compose through the same harness as the
+  // synchronous in-memory StarDict parser.
+  lookup: (
+    parsed: TParsed,
+    word: string,
+  ) => DictEntry | null | Promise<DictEntry | null>;
   logger?: {warn: (msg: string) => void};
 };
 
@@ -130,7 +136,7 @@ export const createLazyAsyncSource = <TLoaded, TParsed>(
       if (parsed === null) {
         return null;
       }
-      return deps.lookup(parsed, trimmed);
+      return await deps.lookup(parsed, trimmed);
     },
   };
 };
