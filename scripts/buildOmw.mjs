@@ -104,28 +104,60 @@ const main = async () => {
 
   const lines = [];
 
-  // Synonyms: every ordered pair of distinct lemmas within a synset.
+  // Synonyms: every ordered pair of distinct lemmas within a synset,
+  // but BOUNDED so the TSV (and the baked base.db) stay small. The
+  // unbounded pairwise expansion produces ~0.6-1.5M rows / 15-30MB;
+  // capping per key + deduping pairs keeps it single-digit MB. The popup
+  // shows a handful of synonyms — 10 per key is plenty.
+  const SYNONYM_CAP = 10;
+  const synCount = new Map(); // key (lemma a) -> synonyms emitted so far
+  const emittedPairs = new Set(); // "a\tb" so duplicates across synsets don't double-count
+  let synonymRows = 0;
+  const distinctKeys = new Set();
   for (const lemmas of synsetToLemmas.values()) {
     for (const a of lemmas) {
       for (const b of lemmas) {
-        if (a !== b) {
-          lines.push(`${a}\t${lang}\tsynonym\t${b}`);
+        if (a === b) {
+          continue;
         }
+        const pair = `${a}\t${b}`;
+        if (emittedPairs.has(pair)) {
+          continue;
+        }
+        const have = synCount.get(a) ?? 0;
+        if (have >= SYNONYM_CAP) {
+          continue;
+        }
+        emittedPairs.add(pair);
+        synCount.set(a, have + 1);
+        distinctKeys.add(a);
+        lines.push(`${a}\t${lang}\tsynonym\t${b}`);
+        synonymRows++;
       }
     }
   }
 
-  // Antonyms: resolve sense ids back to lemmas.
+  // Antonyms: resolve sense ids back to lemmas. UNCAPPED — they're tiny
+  // (a few thousand) and semantically load-bearing.
+  let antonymRows = 0;
   for (const [fromSense, toSense] of antonymPairs) {
     const from = senseToLemma.get(fromSense);
     const to = senseToLemma.get(toSense);
     if (from && to) {
       lines.push(`${from}\t${lang}\tantonym\t${to}`);
+      antonymRows++;
+      distinctKeys.add(from);
     }
   }
 
-  await writeFile(OUT_TSV, lines.join('\n') + '\n', 'utf-8');
-  log(`[build:omw] wrote ${OUT_TSV} (${lines.length} relations, lang=${lang})`);
+  const out = lines.join('\n') + '\n';
+  await writeFile(OUT_TSV, out, 'utf-8');
+  log(
+    `[build:omw] wrote ${OUT_TSV} (lang=${lang}): ` +
+      `${synonymRows} synonym rows (cap ${SYNONYM_CAP}/key), ` +
+      `${antonymRows} antonym rows, ${distinctKeys.size} distinct keys, ` +
+      `${Buffer.byteLength(out, 'utf-8')} bytes`,
+  );
 };
 
 main().catch(err => {
