@@ -232,10 +232,9 @@ android {
     // TODO This is important; keep it.
     aaptOptions {
         additionalParameters '--allow-reserved-package-id', '--package-id', '0x6f' // Replace XX with the ID you want, e.g., 0x60
-        // Do NOT compress the bundled SQLite DB asset: SQLitePlugin's
-        // createFromLocation reads assets/base.db directly, and a
-        // compressed asset can't be opened as a DB (FLAG 1).
-        noCompress 'db'
+        // (base.db is no longer an APK asset — it ships in the .snplg and
+        // is host-extracted to plugins/<id>/, so no noCompress rule is
+        // needed.)
     }
 }
 

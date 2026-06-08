@@ -6,9 +6,10 @@
 // returned lookup into the (unchanged) handlers + popup.
 //
 // ADR-0001: the SQLite engine is the only path — there is NO base64
-// blob fallback. The bundled base.db is provisioned via
-// createFromLocation on first run; subsequent note re-opens just open
-// the file (the cold-start fix this whole milestone exists for).
+// blob fallback. base.db ships INSIDE the .snplg and the plugin host
+// extracts it to plugins/<pluginID>/; every DB is opened by
+// {name, location} (no createFromLocation — the spike proved it can't
+// read app.npk assets in a dynamically-loaded plugin).
 
 import {AppRegistry} from 'react-native';
 import App from './App';
