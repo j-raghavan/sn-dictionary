@@ -108,10 +108,12 @@ export const populateBaseDb = async (
   // Index AFTER the bulk load (cheaper than maintaining it per-insert).
   await db.run(CREATE_ENTRIES_INDEX);
 
-  // Thesaurus (if provided) BEFORE meta so meta remains the last write.
-  if (omwRows !== undefined) {
-    await populateThesaurus(db, omwRows);
-  }
+  // ALWAYS create the thesaurus table + index, BEFORE meta — even with no
+  // OMW rows. base.db then always HAS a thesaurus table (possibly empty),
+  // so lookupThesaurus returns empty cleanly instead of hitting the
+  // native "no such table: thesaurus" error. populateThesaurus inserts
+  // rows only when present.
+  await populateThesaurus(db, omwRows ?? []);
 
   // Meta LAST (Designer flag 4) — a crash before this point leaves the
   // DB without a meta row, which provisioning treats as reprovision.

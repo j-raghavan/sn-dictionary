@@ -30,6 +30,17 @@ describe('lookupThesaurus', () => {
     await db.close();
   });
 
+  it('returns empty (no error) against an EMPTY-but-present thesaurus table (M9 fix 3)', async () => {
+    // A base.db built with no OMW rows still HAS a thesaurus table (fix 3),
+    // so the query runs and returns empty rather than throwing
+    // "no such table: thesaurus".
+    const db = await createSeededDb(async () => undefined);
+    await populateThesaurus(db, []); // creates the table + index, 0 rows
+    const res = await lookupThesaurus(db, 'happy', 'en');
+    expect(res).toEqual({synonyms: [], antonyms: []});
+    await db.close();
+  });
+
   it('folds the query word with normalizeKey', async () => {
     const db = await dbWith(SAMPLE);
     // Mixed case query hits the folded 'happy' key.

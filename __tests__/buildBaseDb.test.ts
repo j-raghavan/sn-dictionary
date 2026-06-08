@@ -170,15 +170,19 @@ describe('populateBaseDb with omwRows (TF4-FR1)', () => {
     {key: 'apple', lang: 'en', rel: 'antonym', target: 'nonfruit'},
   ];
 
-  it('entries-only path (omwRows omitted) creates no thesaurus table — M2 behaviour', async () => {
+  it('ALWAYS creates an (empty) thesaurus table when omwRows is omitted (M9 fix 3)', async () => {
     const db = await emptyDb();
     const t = triple();
     await buildBaseDbFromTriple(db, t.ifo, t.idx, t.dict, SCHEMA_VERSION);
+    // The thesaurus table EXISTS (so lookupThesaurus won't hit
+    // "no such table"), and is empty.
     const tbl = await db.query(
       "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
       ['thesaurus'],
     );
-    expect(tbl).toEqual([]);
+    expect(tbl).toEqual([{name: 'thesaurus'}]);
+    const count = await db.query<{n: number}>('SELECT count(*) AS n FROM thesaurus');
+    expect(count[0].n).toBe(0);
     await db.close();
   });
 
