@@ -1,34 +1,30 @@
-// StarDict sideload import pipeline (TF5-FR3/FR4/FR6 + ADR-0006). The
-// parse+insert now runs NATIVELY (Kotlin, off the Hermes thread); JS
-// orchestrates: validate the sidecar, gate on free space, run the
-// native import into a per-dict slug DB, then VERIFY-then-delete — reopen
-// the slug DB, COUNT the committed rows, and ONLY on a match delete the
-// source files and write the audit row. Any mismatch or throw discards
-// the half-built DB and LEAVES the sources in place, so a failed import
-// is always retryable and never loses the user's files. The verify +
-// audit-then-delete safety is unchanged from the JS-import era — only
-// the parse+insert moved to native.
+// StarDict sideload import (TF5 + ADR-0006), refactored (M16) onto the
+// shared runImport spine. The parse+insert runs NATIVELY (Kotlin, off
+// the Hermes thread) into a per-dict slug DB; this module is now just
+// the StarDict PRODUCE-STEP (produceStardictSlugDb) plus a thin adapter
+// (importStardict) that injects it into runImport. All verify-then-
+// delete / audit / data-safety logic lives in runImport and is shared
+// verbatim with the CSV path.
 //
-// All environment effects are behind ImportPorts (host-testable with a
+// All environment effects stay behind ImportPorts (host-testable with a
 // fake runNativeImport that seeds a better-sqlite3 slug DB). The audit
 // handle is the WRITABLE user.db (Designer flag 4) — base.db is never
 // touched here.
 
-import type {SqliteDb} from './db';
-import {parseSidecar, slugDbFilename} from './importSidecar';
-import {ensureImportsTable, resolveSlugCollision, upsertImport} from './importAudit';
+import {
+  runImport,
+  importInsufficientSpaceMessage,
+  type ImportResult,
+  type RunImportPorts,
+  type SlugDbLifecycle,
+} from './runImport';
 import type {RunNativeImport} from './nativeImport';
+import {parseSidecar} from './importSidecar';
+import type {SqliteDb} from './db';
 
-// Lifecycle of the per-dict slug DB. The native importer WRITES it
-// (importStardict no longer opens a writable handle); JS only reopens a
-// DISTINCT handle to verify committed state and discards a failed import.
-export interface SlugDbLifecycle {
-  // Reopen a DISTINCT handle to read COMMITTED state (Designer flag 5 —
-  // verify-after-commit, against the DB the native side just wrote).
-  reopenForVerify(filename: string): Promise<SqliteDb>;
-  // Delete the slug DB file (used to discard a failed import).
-  discard(filename: string): Promise<void>;
-}
+// Re-exported so existing callers/tests keep their import paths.
+export type {SlugDbLifecycle, ImportResult};
+export {importInsufficientSpaceMessage};
 
 export interface ImportPorts {
   // Run the native StarDict import into `dbPath`, resolving the count.
@@ -62,10 +58,6 @@ export interface ImportPorts {
   now(): string;
 }
 
-export type ImportResult =
-  | {ok: true; filename: string; entryCount: number; name: string; lang: string}
-  | {ok: false; reason: string};
-
 type Logger = {warn: (msg: string) => void; log?: (msg: string) => void};
 
 // Estimate the on-disk bytes an import needs. The dominant cost is the
@@ -75,147 +67,56 @@ type Logger = {warn: (msg: string) => void; log?: (msg: string) => void};
 export const estimateImportBytes = (dictByteLength: number): number =>
   Math.ceil(dictByteLength * 2.5);
 
-// Tagged so the failure is distinguishable from the provision guard's
-// '[provision]' message (both share the verify-before-write contract).
-export const importInsufficientSpaceMessage = (
-  requiredBytes: number,
-  available: number,
-): string =>
-  `[import] insufficient space: need ${requiredBytes}, have ${available}`;
-
-// Returns a reason string when the guard fails, else null. No-op when
-// either the probe or the requirement is absent (matches provision's
-// assertSpace contract).
-const checkSpace = async (
+// StarDict PRODUCE-STEP: run the native parse+insert into the resolved
+// slug DB and resolve the committed count. This is the format-specific
+// seam runImport calls; the `format` comes from the validated sidecar.
+const produceStardictSlugDb = async (
   ports: ImportPorts,
-  requiredBytes: number,
-  logger?: Logger,
-): Promise<string | null> => {
-  if (ports.getAvailableSpace === undefined) {
-    return null;
-  }
-  const available = await ports.getAvailableSpace();
-  if (available < requiredBytes) {
-    const msg = importInsufficientSpaceMessage(requiredBytes, available);
-    logger?.warn(msg);
-    return msg;
-  }
-  return null;
-};
+  format: 'plain' | 'html' | 'wordnet',
+  filename: string,
+): Promise<{entryCount: number}> =>
+  ports.runNativeImport({
+    ifoPath: ports.ifoPath,
+    idxPath: ports.idxPath,
+    dictPath: ports.dictPath,
+    synPath: ports.synPath,
+    dbPath: ports.resolveSlugDbPath(filename),
+    format,
+  });
 
 export const importStardict = async (
   ports: ImportPorts,
   logger?: Logger,
 ): Promise<ImportResult> => {
-  // 1. Sidecar — invalid sidecar fails WITHOUT deleting anything.
-  let parsedJson: unknown;
+  // The space estimate needs the validated sidecar format; the sidecar
+  // is re-validated inside runImport, but the format the native importer
+  // is handed must come from the SAME parse. Parse once here for the
+  // format; runImport's own parse is the authoritative gate (a bad
+  // sidecar fails there before produceSlugDb is ever called).
+  let format: 'plain' | 'html' | 'wordnet' = 'plain';
   try {
-    parsedJson = JSON.parse(ports.sidecarText);
-  } catch (e) {
-    return {ok: false, reason: `sidecar is not valid JSON: ${(e as Error).message}`};
-  }
-  const sidecarResult = parseSidecar(parsedJson);
-  if (!sidecarResult.ok) {
-    return {ok: false, reason: sidecarResult.reason};
-  }
-  const {name, language: lang} = sidecarResult.sidecar;
-
-  // 2. Space guard — shortfall fails WITHOUT importing/deleting anything.
-  //    Size the estimate from a real native stat of the .dict file.
-  const dictBytes = await ports.statDictSize();
-  const spaceReason = await checkSpace(
-    ports,
-    estimateImportBytes(dictBytes),
-    logger,
-  );
-  if (spaceReason !== null) {
-    return {ok: false, reason: spaceReason};
-  }
-
-  // 3. Run the NATIVE parse+insert into the resolved slug DB.
-  let filename: string | null = null;
-  // Flips true once the audit row is written — past that the slug DB is
-  // durably recorded and the catch must never discard it (data-safety).
-  let committedAndAudited = false;
-  try {
-    await ensureImportsTable(ports.audit);
-    filename = await resolveSlugCollision(
-      slugDbFilename(name, lang),
-      name,
-      lang,
-      ports.audit,
-    );
-
-    const {entryCount} = await ports.runNativeImport({
-      ifoPath: ports.ifoPath,
-      idxPath: ports.idxPath,
-      dictPath: ports.dictPath,
-      synPath: ports.synPath,
-      dbPath: ports.resolveSlugDbPath(filename),
-      format: sidecarResult.sidecar.format,
-    });
-
-    // 4. Verify against COMMITTED state via a distinct reopened handle —
-    //    the count the JS side reads must match the count native reports.
-    const verifyDb = await ports.slugDb.reopenForVerify(filename);
-    const countRows = await verifyDb.query<{n: number}>(
-      'SELECT COUNT(*) AS n FROM entries',
-    );
-    const committed = countRows.length > 0 ? countRows[0].n : -1;
-    const expected = entryCount;
-
-    if (committed !== expected) {
-      await ports.slugDb.discard(filename);
-      return {
-        ok: false,
-        reason: `verify failed: committed ${committed} rows, expected ${expected}`,
-      };
+    const parsed = parseSidecar(JSON.parse(ports.sidecarText));
+    if (parsed.ok && parsed.sidecar.format !== undefined) {
+      format = parsed.sidecar.format;
     }
-
-    // 5. MATCH — AUDIT THEN DELETE (data-safety ordering). Write the
-    //    audit row FIRST: it is the only durable record of the verified
-    //    slug DB. If the audit write throws, the catch can still discard
-    //    the (not-yet-recorded) slug DB and the sources remain for a
-    //    clean retry. Only AFTER the audit is committed do we delete the
-    //    sources — and from that point a failure must NOT discard the
-    //    DB (the inverse order could destroy a verified DB whose sources
-    //    are already gone). A stale audit row pointing at still-present
-    //    sources is self-healing: next discovery sees audit-hit +
-    //    files-present and re-adds/replaces.
-    await upsertImport(ports.audit, {
-      name,
-      lang,
-      entry_count: expected,
-      imported_at: ports.now(),
-      filename,
-    });
-    // Past this point the import is durably recorded — never discard.
-    committedAndAudited = true;
-
-    for (const path of ports.sourcePaths) {
-      await ports.deleteFile(path);
-    }
-
-    logger?.log?.(
-      `[import] "${name}" (${lang}) -> ${filename} (${expected} entries)`,
-    );
-    return {ok: true, filename, entryCount: expected, name, lang};
-  } catch (e) {
-    // Any throw BEFORE the audit row is committed: discard the half-built
-    // DB (if it got a name) and LEAVE the sources in place so the import
-    // is retryable. Once committedAndAudited is set, the DB is durably
-    // recorded — a later deleteFile failure must NOT discard it (that
-    // would be the data-loss bug this ordering fixes); the leftover
-    // sources self-heal on the next discovery.
-    if (filename !== null && !committedAndAudited) {
-      try {
-        await ports.slugDb.discard(filename);
-      } catch {
-        // Best-effort cleanup; the original error is what matters.
-      }
-    }
-    const reason = `import failed: ${(e as Error).message}`;
-    logger?.warn(`[import] ${reason}`);
-    return {ok: false, reason};
+  } catch {
+    // A malformed sidecar falls through to runImport, which rejects it
+    // before produceSlugDb runs — `format` is never consulted.
   }
+
+  const runPorts: RunImportPorts = {
+    sidecarText: ports.sidecarText,
+    produceSlugDb: filename => produceStardictSlugDb(ports, format, filename),
+    estimateRequiredBytes: async () =>
+      estimateImportBytes(await ports.statDictSize()),
+    deleteFile: ports.deleteFile,
+    sourcePaths: ports.sourcePaths,
+    slugDb: ports.slugDb,
+    audit: ports.audit,
+    now: ports.now,
+  };
+  if (ports.getAvailableSpace !== undefined) {
+    runPorts.getAvailableSpace = ports.getAvailableSpace;
+  }
+  return runImport(runPorts, logger);
 };
