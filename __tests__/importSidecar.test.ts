@@ -1,6 +1,7 @@
 // Sidecar validation + slug naming (TF5-FR2).
 
 import {
+  parseCsvConfig,
   parseSidecar,
   slugDbFilename,
   slugForName,
@@ -126,5 +127,45 @@ describe('slugDbFilename', () => {
 
   it('falls back to dict-<lang> when the name slugs to empty', () => {
     expect(slugDbFilename('!!!', 'de')).toBe('dict-de.de.db');
+  });
+});
+
+// --- parseCsvConfig (M16) ------------------------------------------
+
+describe('parseCsvConfig', () => {
+  it('returns {} for a non-object / null / undefined block', () => {
+    expect(parseCsvConfig(undefined)).toEqual({});
+    expect(parseCsvConfig(null)).toEqual({});
+    expect(parseCsvConfig('csv')).toEqual({});
+    expect(parseCsvConfig(42)).toEqual({});
+  });
+
+  it('returns {} for an empty object (all defaults applied downstream)', () => {
+    expect(parseCsvConfig({})).toEqual({});
+  });
+
+  it('picks every valid non-negative integer column + boolean hasHeader', () => {
+    expect(
+      parseCsvConfig({
+        headwordCol: 0,
+        definitionCol: 1,
+        phoneticCol: 2,
+        hasHeader: true,
+      }),
+    ).toEqual({headwordCol: 0, definitionCol: 1, phoneticCol: 2, hasHeader: true});
+  });
+
+  it('omits a column with a per-key fallback when invalid (float/neg/non-number)', () => {
+    expect(parseCsvConfig({headwordCol: 1.5})).toEqual({});
+    expect(parseCsvConfig({definitionCol: -1})).toEqual({});
+    expect(parseCsvConfig({phoneticCol: '2'})).toEqual({});
+    // hasHeader only accepts a real boolean.
+    expect(parseCsvConfig({hasHeader: 'yes'})).toEqual({});
+  });
+
+  it('keeps the valid keys and drops the invalid ones in a mixed block', () => {
+    expect(
+      parseCsvConfig({headwordCol: 0, definitionCol: -5, phoneticCol: 3, hasHeader: false}),
+    ).toEqual({headwordCol: 0, phoneticCol: 3, hasHeader: false});
   });
 });

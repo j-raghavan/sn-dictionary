@@ -82,6 +82,61 @@ export const parseSidecar = (raw: unknown): SidecarResult => {
   return {ok: true, sidecar};
 };
 
+// --- CSV column config (M16) ---------------------------------------
+// A meta.json may carry a `csv` block declaring the column layout of a
+// sideloaded CSV (mirrors the v1.x 70e9d9f semantics):
+//   "csv": {"headwordCol": 0, "definitionCol": 1, "phoneticCol": 2,
+//           "hasHeader": false}
+// Each field is OPTIONAL with a per-key fallback to the parser default
+// (headword=0, definition=1, no phonetic, hasHeader=false) — so a block
+// that sets only `phoneticCol` leaves the others at their defaults.
+
+export type CsvColumnConfig = {
+  headwordCol?: number;
+  definitionCol?: number;
+  phoneticCol?: number;
+  hasHeader?: boolean;
+};
+
+// Accept a non-negative integer for a column index, else undefined (the
+// downstream default applies). Rejects floats / negatives / non-numbers.
+const pickNonNegInt = (
+  obj: Record<string, unknown>,
+  key: string,
+): number | undefined => {
+  const v = obj[key];
+  if (typeof v !== 'number' || !Number.isInteger(v) || v < 0) {
+    return undefined;
+  }
+  return v;
+};
+
+// Parse a `csv` config block. NEVER throws; a non-object / absent block
+// yields {} (all defaults). Unknown keys are ignored.
+export const parseCsvConfig = (raw: unknown): CsvColumnConfig => {
+  if (typeof raw !== 'object' || raw === null) {
+    return {};
+  }
+  const obj = raw as Record<string, unknown>;
+  const cfg: CsvColumnConfig = {};
+  const hw = pickNonNegInt(obj, 'headwordCol');
+  if (hw !== undefined) {
+    cfg.headwordCol = hw;
+  }
+  const def = pickNonNegInt(obj, 'definitionCol');
+  if (def !== undefined) {
+    cfg.definitionCol = def;
+  }
+  const phon = pickNonNegInt(obj, 'phoneticCol');
+  if (phon !== undefined) {
+    cfg.phoneticCol = phon;
+  }
+  if (typeof obj.hasHeader === 'boolean') {
+    cfg.hasHeader = obj.hasHeader;
+  }
+  return cfg;
+};
+
 const SLUG_MAX = 48;
 
 // Fold a display name into a filesystem-safe slug: lowercase, collapse

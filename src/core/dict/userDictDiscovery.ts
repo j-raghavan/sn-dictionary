@@ -1,28 +1,38 @@
 // Scans the user-dict root (defaults to /storage/emulated/0/MyStyle/SnDict)
-// for sideloadable StarDict dictionaries and returns an import-job
-// descriptor for each (TF5-FR1). Discovery is StarDict-only: each dict
-// lives in its own subfolder holding the triple (*.ifo + *.idx +
-// *.dict[.dz], optional *.syn) and a meta.json sidecar naming it.
+// for sideloadable dictionaries and returns an import-job descriptor for
+// each (TF5-FR1, extended M16). Two layouts are discovered:
 //
-//   <SnDict-root>/<folder>/
-//     ├── meta.json                      (REQUIRED sidecar — name+language)
-//     ├── *.ifo + *.idx + *.dict[.dz]    (the StarDict triple)
-//     └── *.syn                          (optional synonym index)
+//   StarDict (subfolder) — each dict in its own folder:
+//     <SnDict-root>/<folder>/
+//       ├── meta.json                    (OPTIONAL sidecar — name+language)
+//       ├── *.ifo + *.idx + *.dict[.dz]  (the StarDict triple)
+//       └── *.syn                        (optional synonym index)
 //
-// The import pipeline (importStardict) consumes these descriptors:
-// discovery only LOCATES files + validates the sidecar; it does not
-// read the dictionary bytes or build any DictSource. CSV / JSON / MDX
-// and the old flat (root-level single-file) layout are no longer
-// supported — sideload is StarDict-only.
+//   CSV (loose root file) — a single *.csv at the root:
+//     <SnDict-root>/
+//       ├── Dune.csv                     -> a CSV dict named "Dune"
+//       ├── Dune.meta.json               (OPTIONAL per-file sidecar)
+//       └── meta.json                    (OPTIONAL shared root sidecar —
+//                                         its csv.* block applies to every
+//                                         CSV; its name is NOT broadcast)
 //
-// Per-folder failures are isolated and logged — one bad folder doesn't
+// Each descriptor carries a `kind` discriminator ('stardict' | 'csv').
+// Discovery only LOCATES files + resolves the sidecar; it does not read
+// the dictionary bytes or build any DictSource. The import pipeline
+// (runImport + the kind-appropriate produce-step) consumes them.
+//
+// Per-item failures are isolated and logged — one bad folder/file doesn't
 // break discovery for the rest. Discovery never throws: a missing or
-// unreadable root yields an empty list (the bundled base.db still
-// works).
+// unreadable root yields an empty list (the bundled base.db still works).
 
 import {decodeUtf8} from '../../sdk/utf8';
 import {isMetaJsonName} from './metaJsonName';
-import {parseSidecar, type Sidecar} from './sqlite/importSidecar';
+import {
+  parseCsvConfig,
+  parseSidecar,
+  type CsvColumnConfig,
+  type Sidecar,
+} from './sqlite/importSidecar';
 
 export const DEFAULT_USER_DICT_ROOT = '/storage/emulated/0/MyStyle/SnDict';
 
@@ -47,10 +57,11 @@ export type DiscoveryDeps = {
   logger?: Logger;
 };
 
-// One sideloadable StarDict found on disk, ready to hand to
-// importStardict. setPath is the containing folder; the *Path fields
-// are absolute file paths; sidecar is the validated meta.json.
-export type ImportJobDescriptor = {
+// One sideloadable StarDict found on disk. setPath is the containing
+// folder; the *Path fields are absolute file paths; sidecar is the
+// resolved meta.json (or defaults).
+export type StardictJobDescriptor = {
+  kind: 'stardict';
   setPath: string;
   ifoPath: string;
   idxPath: string;
@@ -64,6 +75,21 @@ export type ImportJobDescriptor = {
   // folderName, language:'und'} when meta.json is absent/invalid.
   sidecar: Sidecar;
 };
+
+// One sideloadable CSV found loose at the root. csvPath is the *.csv
+// file; csvConfig is the resolved column layout (defaults applied
+// downstream); sidecarPath (when present) is the meta.json deleted with
+// the CSV after a verified import.
+export type CsvJobDescriptor = {
+  kind: 'csv';
+  csvPath: string;
+  csvConfig: CsvColumnConfig;
+  sidecarPath?: string;
+  // name = filename-sans-.csv; language from the sidecar or 'und'.
+  sidecar: Sidecar;
+};
+
+export type ImportJobDescriptor = StardictJobDescriptor | CsvJobDescriptor;
 
 const TAG = '[discovery]';
 
@@ -159,6 +185,7 @@ const buildDescriptor = async (
       `${TAG} folder "${folderName}" has no meta.json — loading with defaults (name="${folderName}", language="und")`,
     );
     return {
+      kind: 'stardict',
       setPath: folder.path,
       ifoPath: triple.ifo,
       idxPath: triple.idx,
@@ -189,6 +216,7 @@ const buildDescriptor = async (
   }
 
   return {
+    kind: 'stardict',
     setPath: folder.path,
     ifoPath: triple.ifo,
     idxPath: triple.idx,
@@ -197,6 +225,85 @@ const buildDescriptor = async (
     sidecarPath: sidecarEntry.path,
     sidecar,
   };
+};
+
+// --- CSV (loose root file) discovery (M16) -------------------------
+
+// Read + parse a JSON sidecar file; null on any read/parse failure.
+const readJson = async (
+  path: string,
+  fetchFn: typeof fetch,
+): Promise<Record<string, unknown> | null> => {
+  try {
+    const text = decodeUtf8(await fetchAsUint8(path, fetchFn));
+    const parsed: unknown = JSON.parse(text);
+    return typeof parsed === 'object' && parsed !== null
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+};
+
+// The CSV display name is ALWAYS the filename sans .csv — a shared root
+// meta.json's `name` is NOT broadcast across CSVs (only its csv.* config
+// is). A per-file sidecar may still set language/format/etc., but not the
+// name (each loose CSV is its own dict, named by its file).
+const csvNameOf = (csvPath: string): string => {
+  const base = basenameOf(csvPath);
+  return base.slice(0, base.length - '.csv'.length);
+};
+
+// Build a CSV descriptor for a loose `*.csv`. Sidecar resolution, in
+// precedence order: a per-file `<base>.meta.json` (language/format) over
+// the shared root meta.json (csv.* config); the name is always the
+// filename; language defaults to 'und'. Never throws — a malformed
+// sidecar degrades to defaults.
+const buildCsvDescriptor = async (
+  csvPath: string,
+  perFileSidecarPath: string | undefined,
+  rootMeta: Record<string, unknown> | null,
+  fetchFn: typeof fetch,
+  logger: Logger,
+): Promise<CsvJobDescriptor> => {
+  const name = csvNameOf(csvPath);
+  // The shared root meta.json's csv block is the BASE config for every
+  // CSV; a per-file sidecar's csv block overrides it key-by-key.
+  let csvConfig: CsvColumnConfig = rootMeta
+    ? parseCsvConfig(rootMeta.csv)
+    : {};
+  let language = 'und';
+
+  if (perFileSidecarPath !== undefined) {
+    const obj = await readJson(perFileSidecarPath, fetchFn);
+    if (obj === null) {
+      logger.warn(
+        `${TAG} CSV "${name}" sidecar unreadable/malformed — using defaults`,
+      );
+    } else {
+      // Per-file csv block overrides the root one (per-key).
+      csvConfig = {...csvConfig, ...parseCsvConfig(obj.csv)};
+      // Language from the per-file sidecar when valid (name is fixed).
+      const parsed = parseSidecar({name, language: obj.language ?? 'und'});
+      if (parsed.ok) {
+        language = parsed.sidecar.language;
+      }
+    }
+  }
+
+  logger.log(
+    `${TAG} CSV "${name}" (language="${language}") -> ${basenameOf(csvPath)}`,
+  );
+  const descriptor: CsvJobDescriptor = {
+    kind: 'csv',
+    csvPath,
+    csvConfig,
+    sidecar: {name, language},
+  };
+  if (perFileSidecarPath !== undefined) {
+    descriptor.sidecarPath = perFileSidecarPath;
+  }
+  return descriptor;
 };
 
 export const discoverUserDicts = async (
@@ -260,6 +367,51 @@ export const discoverUserDicts = async (
       logger.warn(
         `${TAG} folder "${basenameOf(folder.path)}" build threw: ${(e as Error).message} — skipped`,
       );
+    }
+  }
+
+  // --- loose CSV pass: root-level *.csv files (not *.meta.json) ------
+  const rootFiles = entries.filter(e => e.type === 1);
+  const csvFiles = rootFiles.filter(
+    f => extOf(f.path) === '.csv' && !isMetaJsonName(basenameOf(f.path)),
+  );
+  if (csvFiles.length > 0) {
+    // The shared root meta.json is the file named EXACTLY "meta.json"
+    // (a `<base>.meta.json` is a per-file sidecar, never the shared one).
+    const sharedMetaEntry = rootFiles.find(
+      f => basenameOf(f.path).toLowerCase() === 'meta.json',
+    );
+    const rootMeta =
+      sharedMetaEntry !== undefined
+        ? await readJson(sharedMetaEntry.path, fetchFn)
+        : null;
+    // Index per-file sidecars by basename for O(1) `<base>.meta.json` hits.
+    const byBasename = new Map<string, string>();
+    for (const f of rootFiles) {
+      if (isMetaJsonName(basenameOf(f.path))) {
+        byBasename.set(basenameOf(f.path), f.path);
+      }
+    }
+    for (const csv of csvFiles) {
+      const base = basenameOf(csv.path);
+      const perFileSidecarPath = byBasename.get(
+        `${base.slice(0, base.length - '.csv'.length)}.meta.json`,
+      );
+      try {
+        descriptors.push(
+          await buildCsvDescriptor(
+            csv.path,
+            perFileSidecarPath,
+            rootMeta,
+            fetchFn,
+            logger,
+          ),
+        );
+      } catch (e) {
+        logger.warn(
+          `${TAG} CSV "${base}" build threw: ${(e as Error).message} — skipped`,
+        );
+      }
     }
   }
 

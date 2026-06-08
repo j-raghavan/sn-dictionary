@@ -1,7 +1,7 @@
-// StarDict-only discovery returning import-job descriptors (TF5-FR1).
-// Discovery LOCATES the triple + validates the meta.json sidecar; it
-// does not read dictionary bytes or build sources. CSV/JSON/MDX and the
-// flat root layout are gone.
+// Discovery returning import-job descriptors (TF5-FR1, extended M16).
+// Two layouts: StarDict subfolders (kind:'stardict') and loose root
+// *.csv files (kind:'csv'). Discovery LOCATES files + resolves the
+// sidecar; it does not read dictionary bytes or build sources.
 
 import {
   discoverUserDicts,
@@ -71,6 +71,7 @@ describe('discoverUserDicts — StarDict-only descriptors', () => {
     const out = await discoverUserDicts(deps);
     expect(out).toEqual([
       {
+        kind: 'stardict',
         setPath: dir,
         ifoPath: `${dir}/base.ifo`,
         idxPath: `${dir}/base.idx`,
@@ -347,7 +348,7 @@ describe('discoverUserDicts — root handling', () => {
     }
   });
 
-  it('ignores root-level files (no flat layout)', async () => {
+  it('discovers a loose root *.csv but ignores other root files (e.g. *.json)', async () => {
     const {deps} = makeDeps(
       {
         [ROOT]: [
@@ -357,7 +358,17 @@ describe('discoverUserDicts — root handling', () => {
       },
       {},
     );
-    expect(await discoverUserDicts(deps)).toEqual([]);
+    const out = await discoverUserDicts(deps);
+    // The .csv is a CSV job (named after the file, no sidecar -> und +
+    // default config); the .json is NOT a recognised format -> ignored.
+    expect(out).toEqual([
+      {
+        kind: 'csv',
+        csvPath: `${ROOT}/Dune.csv`,
+        csvConfig: {},
+        sidecar: {name: 'Dune', language: 'und'},
+      },
+    ]);
   });
 
   it('defaults the root to DEFAULT_USER_DICT_ROOT and tolerates no logger', async () => {
@@ -413,5 +424,142 @@ describe('discoverUserDicts — root handling', () => {
     expect(out).toHaveLength(1);
     expect(out[0].sidecar.name).toBe('Bare');
     expect(out[0].setPath).toBe('bare');
+  });
+});
+
+// --- loose CSV discovery (M16, FR5) --------------------------------
+
+describe('discoverUserDicts — loose CSV (M16)', () => {
+  it('a loose Dune.csv -> kind:csv, name "Dune", language und, default config', async () => {
+    const {deps} = makeDeps({[ROOT]: [fileEntry(`${ROOT}/Dune.csv`, 1)]}, {});
+    const out = await discoverUserDicts(deps);
+    expect(out).toEqual([
+      {
+        kind: 'csv',
+        csvPath: `${ROOT}/Dune.csv`,
+        csvConfig: {},
+        sidecar: {name: 'Dune', language: 'und'},
+      },
+    ]);
+  });
+
+  it('a per-file Dune.meta.json csv.phoneticCol:2 is honored + sidecarPath set', async () => {
+    const {deps} = makeDeps(
+      {
+        [ROOT]: [
+          fileEntry(`${ROOT}/Dune.csv`, 1),
+          fileEntry(`${ROOT}/Dune.meta.json`, 1),
+        ],
+      },
+      {
+        [`${ROOT}/Dune.meta.json`]: JSON.stringify({
+          language: 'en',
+          csv: {phoneticCol: 2},
+        }),
+      },
+    );
+    const out = await discoverUserDicts(deps);
+    expect(out).toEqual([
+      {
+        kind: 'csv',
+        csvPath: `${ROOT}/Dune.csv`,
+        csvConfig: {phoneticCol: 2},
+        sidecarPath: `${ROOT}/Dune.meta.json`,
+        sidecar: {name: 'Dune', language: 'en'},
+      },
+    ]);
+  });
+
+  it('a shared root meta.json csv.* propagates to every CSV but its name is NOT broadcast', async () => {
+    const {deps} = makeDeps(
+      {
+        [ROOT]: [
+          fileEntry(`${ROOT}/Dune.csv`, 1),
+          fileEntry(`${ROOT}/Cooking.csv`, 1),
+          fileEntry(`${ROOT}/meta.json`, 1),
+        ],
+      },
+      {
+        // name "Glossary" must NOT override the per-file CSV names.
+        [`${ROOT}/meta.json`]: JSON.stringify({
+          name: 'Glossary',
+          csv: {hasHeader: true, phoneticCol: 3},
+        }),
+      },
+    );
+    const out = await discoverUserDicts(deps);
+    // Sorted by name: Cooking, Dune. Each keeps its file-derived name,
+    // both inherit the shared csv config.
+    expect(out.map(d => d.sidecar.name)).toEqual(['Cooking', 'Dune']);
+    for (const d of out) {
+      expect(d.kind).toBe('csv');
+      expect((d as {csvConfig: object}).csvConfig).toEqual({
+        hasHeader: true,
+        phoneticCol: 3,
+      });
+    }
+  });
+
+  it('a per-file csv block OVERRIDES the shared root csv config (per-key)', async () => {
+    const {deps} = makeDeps(
+      {
+        [ROOT]: [
+          fileEntry(`${ROOT}/Dune.csv`, 1),
+          fileEntry(`${ROOT}/Dune.meta.json`, 1),
+          fileEntry(`${ROOT}/meta.json`, 1),
+        ],
+      },
+      {
+        [`${ROOT}/meta.json`]: JSON.stringify({csv: {hasHeader: true, phoneticCol: 2}}),
+        [`${ROOT}/Dune.meta.json`]: JSON.stringify({csv: {phoneticCol: 4}}),
+      },
+    );
+    const out = await discoverUserDicts(deps);
+    // phoneticCol overridden to 4; hasHeader inherited from the root.
+    expect((out[0] as {csvConfig: object}).csvConfig).toEqual({
+      hasHeader: true,
+      phoneticCol: 4,
+    });
+  });
+
+  it('a *.meta.json file is never itself treated as a CSV', async () => {
+    const {deps} = makeDeps(
+      {[ROOT]: [fileEntry(`${ROOT}/Dune.meta.json`, 1)]},
+      {},
+    );
+    expect(await discoverUserDicts(deps)).toEqual([]);
+  });
+
+  it('a malformed per-file sidecar degrades to defaults (name from file, und)', async () => {
+    const {deps, warnings} = makeDeps(
+      {
+        [ROOT]: [
+          fileEntry(`${ROOT}/Dune.csv`, 1),
+          fileEntry(`${ROOT}/Dune.meta.json`, 1),
+        ],
+      },
+      {[`${ROOT}/Dune.meta.json`]: '{not valid json'},
+    );
+    const out = await discoverUserDicts(deps);
+    expect(out[0]).toMatchObject({
+      kind: 'csv',
+      sidecar: {name: 'Dune', language: 'und'},
+      csvConfig: {},
+    });
+    expect(warnings.some(w => /sidecar unreadable\/malformed/.test(w))).toBe(true);
+  });
+
+  it('mixes a StarDict subfolder (kind:stardict) and a loose CSV (kind:csv)', async () => {
+    const dir = `${ROOT}/wiki`;
+    const {deps} = makeDeps(
+      {
+        [ROOT]: [folder('wiki'), fileEntry(`${ROOT}/Dune.csv`, 1)],
+        [dir]: triple(dir),
+      },
+      {},
+    );
+    const out = await discoverUserDicts(deps);
+    const byName = Object.fromEntries(out.map(d => [d.sidecar.name, d.kind]));
+    expect(byName).toEqual({Dune: 'csv', wiki: 'stardict'});
   });
 });
