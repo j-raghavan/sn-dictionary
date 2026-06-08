@@ -631,6 +631,31 @@ build_android_apk() {
     local android_dir="$project_root/android"
     [[ ! -d "$android_dir" ]] && { write_color_output "android directory not found" "Red"; return 1; }
 
+    # Gradle 8.13 cannot run on JDK > 23 (Java 24+ = class-file major 68+;
+    # e.g. Java 26 fails with "Unsupported class file major version 70").
+    # If JAVA_HOME isn't pinned and the active `java` is too new, prefer an
+    # installed JDK 21 (then 17) via macOS java_home; error clearly if none.
+    if [[ -z "${JAVA_HOME:-}" ]] && command -v java >/dev/null 2>&1; then
+        local jmajor
+        jmajor="$(java -version 2>&1 | sed -nE 's/.*version "([0-9]+).*/\1/p' | head -1)"
+        if [[ -n "$jmajor" && "$jmajor" -gt 23 ]]; then
+            if command -v /usr/libexec/java_home >/dev/null 2>&1; then
+                local jh v
+                for v in 21 17; do
+                    if jh="$(/usr/libexec/java_home -v "$v" 2>/dev/null)"; then
+                        export JAVA_HOME="$jh"
+                        write_color_output "Active JDK $jmajor too new for Gradle 8.13; selected JDK $v: $JAVA_HOME" "Yellow"
+                        break
+                    fi
+                done
+            fi
+            if [[ -z "${JAVA_HOME:-}" ]]; then
+                write_color_output "Active JDK $jmajor is unsupported by Gradle 8.13 (needs JDK 17-21). Install JDK 21 (e.g. 'brew install temurin@21') or set JAVA_HOME." "Red"
+                return 1
+            fi
+        fi
+    fi
+
     write_color_output "Running gradle task: buildCustomApkDebug..." "Blue"
     local gradlew_path="$android_dir/gradlew"
     (cd "$android_dir"
