@@ -113,7 +113,12 @@ const makeHarness = async (opts: {
   provisionRejects?: boolean;
   userDbThrows?: boolean;
   enableButtonsThrows?: boolean;
-  importOutcome?: (d: ImportJobDescriptor) => {ok: boolean; filename?: string; reason?: string};
+  importOutcome?: (d: ImportJobDescriptor) => {
+    ok: boolean;
+    filename?: string;
+    reason?: string;
+    gate?: Promise<void>;
+  };
 }): Promise<Harness> => {
   const baseDb = await makeBaseDb();
   const userDb = await createSeededDb(async () => undefined);
@@ -182,7 +187,17 @@ jest.mock('../src/core/dict/sqlite/importStardict', () => {
   return {
     ...actual,
     importStardict: jest.fn(async (ports: Record<string, unknown>) => {
-      const outcome = ports.__outcome as {ok: boolean; filename?: string; reason?: string};
+      const outcome = ports.__outcome as {
+        ok: boolean;
+        filename?: string;
+        reason?: string;
+        gate?: Promise<void>;
+      };
+      // A deferred import: wait on the gate so a test can observe the
+      // pre-splice state while the import is "still running".
+      if (outcome.gate) {
+        await outcome.gate;
+      }
       if (outcome.ok) {
         return {
           ok: true,
@@ -240,9 +255,50 @@ describe('bootstrap', () => {
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('enableButtons threw'));
   });
 
-  it('splices a successfully imported source just-before base', async () => {
+  it('the lookup is usable for ready sources BEFORE importsSettled (detached imports)', async () => {
+    // The headline of fix 2: bootstrap returns immediately with a usable
+    // lookup over base/user/already-imported; the imported dict is NOT
+    // yet present until importsSettled resolves (no null-lookup window).
+    // The 'Fresh' import is GATED so it is still running when we observe.
+    let releaseImport!: () => void;
+    const gate = new Promise<void>(res => {
+      releaseImport = res;
+    });
+    const h = await makeHarness({
+      descriptors: [descriptor('Fresh', 'en')],
+      auditSeed: async db => {
+        await upsertImport(db, auditRow('Existing', 'de', 'existing.de.db'));
+      },
+      importOutcome: () => ({ok: true, filename: 'fresh.en.db', gate}),
+    });
+    const handle = await bootstrap(h.ports);
+    // Imports still running (gate not released): base + user + already-
+    // imported are present; 'Fresh' (the pending import) is NOT yet.
+    expect(handle.sources.map(s => s.name)).toEqual([
+      'User',
+      'Existing',
+      'WordNet',
+    ]);
+    // The lookup already works against the ready sources.
+    const res = await handle.lookup.lookup('hello');
+    expect(res.hits.some(hit => hit.source === 'WordNet')).toBe(true);
+    // Release the import; after importsSettled, 'Fresh' is spliced
+    // just-before base.
+    releaseImport();
+    await handle.importsSettled;
+    expect(handle.sources.map(s => s.name)).toEqual([
+      'User',
+      'Existing',
+      'Fresh',
+      'WordNet',
+    ]);
+    expect(handle.sources[handle.sources.length - 1].name).toBe('WordNet');
+  });
+
+  it('splices a successfully imported source just-before base (after importsSettled)', async () => {
     const h = await makeHarness({descriptors: [descriptor('Fresh', 'en')]});
     const handle = await bootstrap(h.ports);
+    await handle.importsSettled;
     // [User, Fresh, WordNet] — Fresh spliced at length-1 (before base).
     expect(handle.sources.map(s => s.name)).toEqual(['User', 'Fresh', 'WordNet']);
     expect(handle.sources[handle.sources.length - 1].name).toBe('WordNet');
@@ -251,8 +307,7 @@ describe('bootstrap', () => {
   it('a snapshotted in-flight lookup is unaffected by a mid-flight splice', async () => {
     const h = await makeHarness({descriptors: [descriptor('Fresh', 'en')]});
     const handle = await bootstrap(h.ports);
-    // After bootstrap resolves, the registry has the spliced source, and
-    // base remains last (precedence preserved).
+    await handle.importsSettled;
     const res = await handle.lookup.lookup('hello');
     expect(res.hits.some(hit => hit.source === 'WordNet')).toBe(true);
   });
@@ -264,6 +319,7 @@ describe('bootstrap', () => {
     });
     const warn = jest.fn();
     const handle = await bootstrap(h.ports, {warn});
+    await handle.importsSettled;
     expect(handle.sources.map(s => s.name)).toEqual(['User', 'WordNet']);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('failed: verify failed'));
   });
@@ -277,6 +333,7 @@ describe('bootstrap', () => {
       },
     });
     const handle = await bootstrap(h.ports);
+    await handle.importsSettled;
     // OnlyAudit -> open bucket (in registry pre-import); ReAdd -> import
     // (spliced after). Final order: [User, OnlyAudit, ReAdd, WordNet].
     expect(handle.sources.map(s => s.name)).toEqual([
@@ -307,6 +364,7 @@ describe('bootstrap', () => {
     });
     const warn = jest.fn();
     const handle = await bootstrap(h.ports, {warn});
+    await handle.importsSettled;
     // Source not added; bootstrap still resolves.
     expect(handle.sources.map(s => s.name)).toEqual(['User', 'WordNet']);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('threw'));
@@ -318,6 +376,7 @@ describe('bootstrap', () => {
     });
     const warn = jest.fn();
     const handle = await bootstrap(h.ports, {warn});
+    await handle.importsSettled;
     // Only ONE Dup source ends up imported.
     expect(handle.sources.filter(s => s.name === 'Dup')).toHaveLength(1);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('skip import'));

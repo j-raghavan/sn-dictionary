@@ -85,8 +85,12 @@ const readText = async path => {
   return decodeUtf8(bytes);
 };
 
-// Captured by the handlers; populated when bootstrap resolves. Until
-// then the buttons are disabled, so no lookup can fire against a null.
+// Captured by the handlers; set when bootstrap resolves — which is NOW
+// fast: bootstrap returns as soon as base + user + already-imported are
+// ready (sideload imports run DETACHED and splice into handle.sources
+// live, rather than blocking the resolve). So runtime.lookup is set
+// quickly after enableButtons, instead of only after every import
+// finishes — closing the long null-lookup window.
 const runtime = {lookup: null};
 
 // --- buttons: register FIRST, then enable after registration ---------
