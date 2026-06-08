@@ -93,6 +93,11 @@ src/core/dict/data/baseDictData.ts
 # not committed.
 dict/omw/
 
+# Generated SQLite base.db APK asset, staged by buildPlugin.sh from
+# build/base.db. Regenerable; never committed (the source is the
+# generator + WordNet/OMW inputs).
+android/app/src/main/assets/base.db
+
 # Local logcat dumps used while debugging on-device sessions.
 logcat.txt
 

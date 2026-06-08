@@ -824,6 +824,21 @@ main() {
     (cd "$project_root" && npm run --silent prepare:dict) \
         || { write_color_output "Base dictionary preparation failed" "Red"; exit 1; }
 
+    # Build the bundled SQLite base.db and stage it as an APK asset.
+    # react-native-sqlite-storage's createFromLocation reads
+    # assets/base.db (index.js wires createFromAsset:"~base.db", FLAG 1),
+    # so the .db must live at android/app/src/main/assets/base.db. The
+    # noCompress 'db' aaptOptions rule keeps it readable as a DB.
+    write_color_output "Building + staging base.db SQLite asset..." "Blue"
+    (cd "$project_root" && npm run --silent build:base-db) \
+        || { write_color_output "base.db build failed" "Red"; exit 1; }
+    local assets_dest="$project_root/android/app/src/main/assets"
+    mkdir -p "$assets_dest" \
+        || { write_color_output "Could not create assets dir: $assets_dest" "Red"; exit 1; }
+    cp "$project_root/build/base.db" "$assets_dest/base.db" \
+        || { write_color_output "Could not stage base.db into $assets_dest" "Red"; exit 1; }
+    write_color_output "Staged base.db -> $assets_dest/base.db" "Green"
+
     build_react_native_bundle "$project_root" "$PACKAGE_NAME" "$gen_dir"
 
     local root_cfg="$project_root/PluginConfig.json"
