@@ -183,6 +183,9 @@ bootstrap(bootstrapPorts, logger)
     setPopupActions({
       lookupThesaurus: async (headword, sourceName) => {
         const lang = sourceLang[sourceName] ?? 'und';
+        // OMW relations live ONLY in base.db (shared across all
+        // same-language sources); the thesaurus query always targets
+        // handle.baseDb by design, scoped by the source's resolved lang.
         const omw = await lookupThesaurus(handle.baseDb, headword, lang, logger);
         return {lang, omw};
       },

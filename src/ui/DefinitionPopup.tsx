@@ -282,10 +282,10 @@ export default function DefinitionPopup(): React.JSX.Element {
     hits.length > 0 ? hits[0].entry.word : state.result.queriedFor;
   // Phonetic comes from the first hit that supplies one. Walking the
   // list (rather than strictly hits[0]) means a multi-dict lookup
-  // where the first source — say, WordNet — has no phonetic but a
-  // user CSV does, still surfaces the phonetic in the header. The
-  // first wins; later disagreements stay visible per-source in their
-  // section bodies.
+  // where the first source — say, the base WordNet — has no phonetic
+  // but an imported dict does, still surfaces the phonetic in the
+  // header. The first wins; later disagreements stay visible per-source
+  // in their section bodies.
   const headerPhonetic = hits.find(h => h.entry.phonetic)?.entry.phonetic;
   // Show source badges as soon as we have ≥2 distinct things to show
   // (hits + loading combined), so the layout doesn't reflow when a
