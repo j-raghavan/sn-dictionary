@@ -75,7 +75,8 @@ const DEFAULTS: CsvParseConfig = {};
 describe('produceCsvSlugDb', () => {
   it('parses the Dune fixture: quoted field, CP1252 0x92, leading-space definition', async () => {
     // Real user file, CRLF + CP1252 (raw bytes, no re-encode).
-    const bytes = readFileSync('spec/Dune.csv');
+    // The committed sample (spec/ is gitignored, so CI can't read it).
+    const bytes = readFileSync('assets/sample-dicts/Dune.csv');
     const {ports, dbPath} = portsFor(
       bytes.buffer.slice(
         bytes.byteOffset,
