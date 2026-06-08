@@ -125,6 +125,9 @@ export const importStardict = async (
 
   // 3. Parse + populate into the slug DB.
   let filename: string | null = null;
+  // Flips true once the audit row is written — past that the slug DB is
+  // durably recorded and the catch must never discard it (data-safety).
+  let committedAndAudited = false;
   try {
     const parsed = await buildDict(set.ifo, set.idx, set.dict, set.syn);
     const entryFormat =
@@ -157,10 +160,16 @@ export const importStardict = async (
       };
     }
 
-    // 5. MATCH — delete sources, then record the audit row.
-    for (const path of ports.sourcePaths) {
-      await ports.deleteFile(path);
-    }
+    // 5. MATCH — AUDIT THEN DELETE (data-safety ordering). Write the
+    //    audit row FIRST: it is the only durable record of the verified
+    //    slug DB. If the audit write throws, the catch can still discard
+    //    the (not-yet-recorded) slug DB and the sources remain for a
+    //    clean retry. Only AFTER the audit is committed do we delete the
+    //    sources — and from that point a failure must NOT discard the
+    //    DB (the inverse order could destroy a verified DB whose sources
+    //    are already gone). A stale audit row pointing at still-present
+    //    sources is self-healing: next discovery sees audit-hit +
+    //    files-present and re-adds/replaces.
     await upsertImport(ports.audit, {
       name,
       lang,
@@ -168,15 +177,25 @@ export const importStardict = async (
       imported_at: ports.now(),
       filename,
     });
+    // Past this point the import is durably recorded — never discard.
+    committedAndAudited = true;
+
+    for (const path of ports.sourcePaths) {
+      await ports.deleteFile(path);
+    }
 
     logger?.log?.(
       `[import] "${name}" (${lang}) -> ${filename} (${expected} entries)`,
     );
     return {ok: true, filename, entryCount: expected, name, lang};
   } catch (e) {
-    // Any throw: discard the half-built DB (if it got a name) and LEAVE
-    // the sources in place so the import is retryable.
-    if (filename !== null) {
+    // Any throw BEFORE the audit row is committed: discard the half-built
+    // DB (if it got a name) and LEAVE the sources in place so the import
+    // is retryable. Once committedAndAudited is set, the DB is durably
+    // recorded — a later deleteFile failure must NOT discard it (that
+    // would be the data-loss bug this ordering fixes); the leftover
+    // sources self-heal on the next discovery.
+    if (filename !== null && !committedAndAudited) {
       try {
         await ports.slugDb.discard(filename);
       } catch {

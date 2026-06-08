@@ -160,6 +160,77 @@ describe('importStardict — happy path', () => {
   });
 });
 
+describe('importStardict — audit-then-delete data safety', () => {
+  it('audit write fails AFTER verify -> slug DB discarded, sources RETAINED (clean retry)', async () => {
+    const h = await makeHarness(baseSet());
+    // upsertImport runs inside audit.transaction — make it throw so the
+    // audit never commits. Sources must NOT be deleted (the delete only
+    // happens after a successful audit), and the not-yet-recorded slug
+    // DB is discarded so a retry starts clean.
+    h.ports.audit = {
+      ...h.audit,
+      query: h.audit.query.bind(h.audit),
+      run: h.audit.run.bind(h.audit),
+      transaction: async () => {
+        throw new Error('audit db locked');
+      },
+      close: h.audit.close.bind(h.audit),
+    };
+    const res = await importStardict(h.ports);
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.reason).toContain('audit db locked');
+    }
+    // Sources retained (delete is post-audit), slug DB discarded.
+    expect(h.deleteFile).not.toHaveBeenCalled();
+    expect(h.discard).toHaveBeenCalledWith('my-dict.en.db');
+  });
+
+  it('delete fails AFTER audit -> audit row PRESENT + slug DB NOT discarded (no data loss)', async () => {
+    const h = await makeHarness(baseSet());
+    // The audit succeeds, then a source delete throws. The verified DB
+    // is already durably recorded — it must NOT be discarded, and the
+    // audit row must remain (the leftover sources self-heal on the next
+    // discovery). This is the inverse of the old data-loss ordering.
+    h.deleteFile.mockImplementation(async () => {
+      throw new Error('deleteFile: permission denied');
+    });
+    const res = await importStardict(h.ports);
+    expect(res.ok).toBe(false); // the delete failure surfaces as not-ok
+    // Audit row was committed BEFORE the delete attempt.
+    const audited = await findImportByNameLang(h.audit, 'My Dict', 'en');
+    expect(audited).not.toBeNull();
+    expect(audited?.filename).toBe('my-dict.en.db');
+    // The committed, verified slug DB was NOT discarded — no data loss.
+    expect(h.discard).not.toHaveBeenCalled();
+    expect(h.slugFiles.has('my-dict.en.db')).toBe(true);
+  });
+
+  it('happy path writes the audit row BEFORE deleting sources (ordering)', async () => {
+    const order: string[] = [];
+    const h = await makeHarness(baseSet());
+    const realTxn = h.audit.transaction.bind(h.audit);
+    h.ports.audit = {
+      ...h.audit,
+      query: h.audit.query.bind(h.audit),
+      run: h.audit.run.bind(h.audit),
+      transaction: async fn => {
+        order.push('audit');
+        return realTxn(fn);
+      },
+      close: h.audit.close.bind(h.audit),
+    };
+    h.deleteFile.mockImplementation(async () => {
+      order.push('delete');
+    });
+    const res = await importStardict(h.ports);
+    expect(res.ok).toBe(true);
+    // First recorded event is the audit upsert; deletes follow.
+    expect(order[0]).toBe('audit');
+    expect(order.slice(1).every(e => e === 'delete')).toBe(true);
+  });
+});
+
 describe('importStardict — failure isolation (sources LEFT)', () => {
   it('invalid sidecar JSON -> {ok:false}, nothing deleted', async () => {
     const h = await makeHarness(baseSet({sidecarText: '{not json'}));
