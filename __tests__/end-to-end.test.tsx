@@ -30,7 +30,6 @@ import {
   __testing__,
 } from '../src/ui/popupController';
 import {createMultiDictLookup} from '../src/core/dict/multiDictLookup';
-import {createStardictLookup} from '../src/core/dict/stardictLookup';
 import {createSqliteDictSource} from '../src/core/dict/sqlite/sqliteDictSource';
 import {buildDict} from '../src/core/dict/stardict/stardictDict';
 import {populateBaseDb, SCHEMA_VERSION} from '../src/core/dict/sqlite/buildBaseDb';
@@ -38,7 +37,6 @@ import type {DictSource} from '../src/core/lookup';
 import type {SqliteDb} from '../src/core/dict/sqlite/db';
 import {buildSyntheticStarDict} from './_helpers/buildSyntheticStarDict';
 import {createSeededDb} from './_helpers/betterSqliteDb';
-import {u8ToArrayBuffer} from './_helpers/inMemoryVfs';
 
 const renderPopup = (): ReactTestRenderer => {
   let tree!: ReactTestRenderer;
@@ -67,29 +65,21 @@ const collectText = (tree: ReactTestRenderer): string => {
   return acc.join(' | ');
 };
 
-const stardictBuffers = (entries: Record<string, string>) => {
-  const triple = buildSyntheticStarDict(entries, {gzipDict: true});
-  return {
-    ifo: u8ToArrayBuffer(triple.ifo),
-    idx: u8ToArrayBuffer(triple.idx),
-    dict: u8ToArrayBuffer(triple.dict),
-  };
-};
-
 // A real SQLite-backed source: build a tiny base.db from a synthetic
-// StarDict triple via the real generator (entryFormat 'plain' to match
-// the old CSV engine's output), then wrap it as a DictSource. Replaces
-// the retired CSV engine fixture; popup assertions are byte-identical
-// because the produced {word, definition, format:'plain'} entries are
-// the same the CSV source emitted.
+// StarDict triple via the real generator, then wrap it as a DictSource.
+// This is the live engine — the old in-memory createStardictLookup is
+// retired (M14). `format` controls how the popup renders the body
+// ('plain' verbatim, 'html' -> htmlToPlainText).
 const sqliteSourceFor = async (
   name: string,
   entries: Record<string, string>,
+  format: 'plain' | 'html' = 'plain',
 ): Promise<DictSource> => {
-  const triple = buildSyntheticStarDict(entries);
+  const opts = format === 'html' ? {sametypesequence: 'h'} : {};
+  const triple = buildSyntheticStarDict(entries, opts);
   const parsed = await buildDict(triple.ifo, triple.idx, triple.dict);
   const db: SqliteDb = await createSeededDb(async d => {
-    await populateBaseDb(d, parsed, SCHEMA_VERSION, 'plain');
+    await populateBaseDb(d, parsed, SCHEMA_VERSION, format);
   });
   return createSqliteDictSource({name, openDb: async () => db});
 };
@@ -118,16 +108,8 @@ describe('end-to-end (discovery → registry → popup)', () => {
   });
 
   test('multi-source rendering: both dicts hit, popup shows both sections with badges', async () => {
-    const baseTriple = stardictBuffers({apple: 'a fruit (base)'});
     const userDicts = [await sqliteSourceFor('custom', {apple: 'a fruit (custom)'})];
-    const baseSource: DictSource = createStardictLookup({
-      name: 'WordNet',
-      loadBase: async () => ({
-        ifo: new Uint8Array(baseTriple.ifo),
-        idx: new Uint8Array(baseTriple.idx),
-        dict: new Uint8Array(baseTriple.dict),
-      }),
-    });
+    const baseSource = await sqliteSourceFor('WordNet', {apple: 'a fruit (base)'});
     const lookup = createMultiDictLookup([...userDicts, baseSource]);
     const tree = renderPopup();
     const result = await lookup.lookup('apple');
@@ -154,61 +136,21 @@ describe('end-to-end (discovery → registry → popup)', () => {
     expect(collectText(tree)).toMatch(/no definition found/i);
   });
 
-  test('StarDict with .syn: latin transliteration resolves to native-script entry', async () => {
-    // Builds the same kind of cross-script lookup as the real
-    // Wiktionary Hindi-English dict (Devanagari headwords + Latin
-    // transliteration synonyms). Verifies the .syn fix end-to-end.
-    const triple = buildSyntheticStarDict({
-      'नमस्ते': 'a Hindi greeting',
-    });
-    // Hand-build a .syn pointing 'namaste' at idx[0] (the only entry).
-    const synBytes = new Uint8Array([
-      0x6e, 0x61, 0x6d, 0x61, 0x73, 0x74, 0x65, // 'namaste'
-      0,
-      0, 0, 0, 0, // index 0, big-endian u32
-    ]);
-    const userDicts = [
-      createStardictLookup({
-        name: 'hindi',
-        loadBase: async () => ({
-          ifo: triple.ifo,
-          idx: triple.idx,
-          dict: triple.dict,
-          syn: synBytes,
-        }),
-      }),
-    ];
-    const lookup = createMultiDictLookup(userDicts);
-    const tree = renderPopup();
-    const result = await lookup.lookup('namaste');
-    act(() => {
-      showDefinition(result);
-    });
-    const text = collectText(tree);
-    // The popup header renders the canonical Devanagari word, not
-    // the latin synonym alias.
-    expect(text).toContain('नमस्ते');
-    // And the definition body of the canonical entry.
-    expect(text).toContain('a Hindi greeting');
-  });
+  // (The old createStardictLookup '.syn latin transliteration' case was
+  // retired with the in-memory engine, M14. The .syn alias-merge is now
+  // a build/import-time concern, host-tested by parseSyn.test.ts +
+  // stardictDict.test.ts (buildDict merge) + importStardict's .syn test;
+  // base.db ships aliases pre-merged into entries.)
 
-  test('HTML-formatted StarDict: tags are stripped end-to-end', async () => {
-    // Mimics a Wiktionary-derived StarDict whose .ifo declares
-    // sametypesequence=h. Discovery -> source picks format='html' ->
-    // popup runs htmlToPlainText. No tags should leak.
-    const triple = buildSyntheticStarDict(
-      {hello: '<i>intj</i><br><ol><li>greeting</li></ol>'},
-      {sametypesequence: 'h'},
-    );
+  test('HTML-formatted source: tags are stripped end-to-end', async () => {
+    // A source whose entries carry format='html' (e.g. a Wiktionary-
+    // derived dict). The popup runs htmlToPlainText; no tags should leak.
     const userDicts = [
-      createStardictLookup({
-        name: 'wikt',
-        loadBase: async () => ({
-          ifo: triple.ifo,
-          idx: triple.idx,
-          dict: triple.dict,
-        }),
-      }),
+      await sqliteSourceFor(
+        'wikt',
+        {hello: '<i>intj</i><br><ol><li>greeting</li></ol>'},
+        'html',
+      ),
     ];
     const lookup = createMultiDictLookup(userDicts);
     const tree = renderPopup();
