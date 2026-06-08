@@ -34,6 +34,7 @@ module.exports = {
     '/src/core/dict/sqlite/rnSqliteDb\\.ts$',
     '/src/core/dict/sqlite/provisionRnPorts\\.ts$',
     '/src/core/dict/sqlite/importRnPorts\\.ts$',
+    '/src/core/dict/sqlite/nativeImport\\.ts$',
   ],
   collectCoverageFrom: [
     'src/**/*.{ts,tsx}',
