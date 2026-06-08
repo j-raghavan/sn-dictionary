@@ -72,12 +72,16 @@ The plugin scans `MyStyle/SnDict/` on every launch. A discovered dict is **impor
 
 ### Layout
 
-**StarDict only** (`.ifo` + `.idx` + (`.dict.dz` or `.dict`), optional `.syn`), one subfolder per dict — the triple is multiple files that must live together:
+Two layouts are supported — **StarDict** (one subfolder per dict; the triple is multiple files that must live together) and **CSV** (a single loose file dropped at the root):
 
 ```
 MyStyle/
 └── SnDict/
-    ├── medical-en/
+    ├── Dune.csv                      (CSV — a loose file IS a dict, named "Dune")
+    ├── Dune.meta.json                (OPTIONAL per-file sidecar for Dune.csv)
+    ├── meta.json                     (OPTIONAL shared sidecar — its csv.* config
+    │                                  applies to every CSV; its name is NOT used)
+    ├── medical-en/                   (StarDict — one subfolder per dict)
     │   ├── meta.json                  (OPTIONAL — name + language)
     │   ├── medical.ifo
     │   ├── medical.idx
@@ -89,7 +93,9 @@ MyStyle/
         └── de.dict.dz                (no meta.json — loads with defaults)
 ```
 
-`meta.json` is **optional**:
+Both formats are imported the same way (parsed → inserted into a SQLite DB → **source files deleted after a verified commit**); for StarDict the now-empty subfolder is removed too.
+
+`meta.json` is **optional** for both. For StarDict:
 
 ```json
 { "name": "Medical en→en", "language": "en" }
@@ -98,13 +104,24 @@ MyStyle/
 - **With `meta.json`** — `name` is the popup section label; `language` (ISO-639-1) enables the Thesaurus tab for that dict.
 - **Without `meta.json`** (or an invalid one) — the dict still loads with the **folder name** as the label and language `und` (undetermined). Definitions work fully; the Thesaurus tab is simply empty (it needs a known language). *Definition lookup is never gated on the sidecar* (ADR-0007).
 
-### Supported format
+For a CSV the name is **always the filename** (`Dune.csv` → "Dune"); a sidecar only adds `language` and the column layout:
+
+```json
+{ "language": "en", "csv": { "headwordCol": 0, "definitionCol": 1, "phoneticCol": 2, "hasHeader": false } }
+```
+
+- **Defaults** (no sidecar / no `csv` block): column 0 = headword, column 1 = definition, no phonetic, no header row, language `und`.
+- A per-file `Dune.meta.json` overrides the shared root `meta.json` (key by key); the shared `meta.json`'s `csv` block is the base config for **every** CSV, but its `name` is never broadcast.
+- CSV parsing is **RFC-4180** (quoted fields, embedded commas/newlines, `CRLF`/`LF`/lone-`CR`), with **CP1252** and **UTF-16** (BOM-sniffed) decoding. The headword is trimmed; the **definition is preserved verbatim** (leading/trailing whitespace kept); an optional `phoneticCol` surfaces a pronunciation. First occurrence wins on duplicate (folded) keys.
+
+### Supported formats
 
 | Format | Files | Notes |
 |---|---|---|
-| **StarDict** | `*.ifo` + `*.idx` + (`*.dict.dz` or `*.dict`) [+ optional `*.syn`] | The only supported sideload format. Free dictionaries at [FreeDict](https://freedict.org) and [dict.org](http://dict.org). CSV/JSON/MDX are **not** supported — convert to StarDict via [`pyglossary`](https://github.com/ilius/pyglossary) (`pip install pyglossary`; reads ~50 formats, writes StarDict). |
+| **StarDict** | `*.ifo` + `*.idx` + (`*.dict.dz` or `*.dict`) [+ optional `*.syn`] | One subfolder per dict. Free dictionaries at [FreeDict](https://freedict.org) and [dict.org](http://dict.org). |
+| **CSV** | a loose `*.csv` at the `SnDict/` root [+ optional `*.meta.json`] | RFC-4180; CP1252/UTF-16 aware; ≤ 10 MB. Drop a glossary `Name.csv` directly in `SnDict/`. |
 
-A subfolder without a complete StarDict triple is logged and skipped — discovery is fault-isolated, so one bad folder doesn't break the rest.
+A subfolder without a complete StarDict triple — or a CSV over the size cap — is logged and skipped; discovery is fault-isolated, so one bad item doesn't break the rest. For **other** formats (MDX, EPUB, Babylon, …) convert to StarDict via [`pyglossary`](https://github.com/ilius/pyglossary) (`pip install pyglossary`; reads ~50 formats, writes StarDict).
 
 ### Where to find dictionaries
 
@@ -143,10 +160,8 @@ Most users won't author a StarDict from scratch — there are huge corpora of pr
 
 | Format | Hard cap | Notes |
 |---|---|---|
-| **CSV** | **10 MB** | Refused with a `[WARN]` log; the source returns "not found" for every lookup. |
-| **JSON** | **10 MB** | Same as CSV. |
+| **CSV** | **10 MB** | A file over the cap is refused with a `[WARN]` log and skipped (the import returns `{ok:false}`; the registry is untouched). Under the cap it imports normally. |
 | **StarDict** | **no explicit cap** | Bound by device RAM. The bundled WordNet at ~16 MB works fine; 50 MB+ dicts (e.g. JMdict, Wiktionary-derived) should also work but are untested on-device — file an issue if you hit a hang. |
-| MDX | n/a — deferred | Format not yet supported. |
 
 The cap is per file, so you can have many dictionaries side by side without their sizes adding up against any combined limit.
 
@@ -156,7 +171,7 @@ After you drop a dict into `MyStyle/SnDict/` and restart the plugin: discovery i
 
 Rough timings, anchored on the one measured number we have (`fetch(file://...)` bridge throughput ≈ 0.85 MB/s on a Nomad) and the existing WordNet baseline of ~30–60 s for the bundled 16 MB dictionary. **These are extrapolated, not benchmarked across the whole grid** — file an issue if your real-world numbers diverge meaningfully:
 
-| File size | StarDict (first lookup) | CSV / JSON (first lookup) |
+| File size | StarDict (first lookup) | CSV (first lookup) |
 |---|---|---|
 | **100 KB** | ~1 s | <1 s |
 | **500 KB** | ~2 s | ~1 s |
@@ -220,7 +235,7 @@ To regenerate the sample after editing entries in `scripts/buildSampleDicts.mjs`
 
 ## Limits
 
-- **English only** for the bundled dictionary content. Other languages are out of scope for the base; see *Adding your own dictionary* above for sideloading user dicts in StarDict / CSV / JSON formats.
+- **English only** for the bundled dictionary content. Other languages are out of scope for the base; see *Adding your own dictionary* above for sideloading user dicts in StarDict or CSV format.
 - **Tap-on-existing-word** (no lasso, just tap a written word) is **not currently supported by the SDK** — there is no spatial-query API to ask "what stroke is under this point?". A pen/touch event API is on Dunn-sn's roadmap; tap-to-define is tracked for v1.x.
 - **`PEN_UP` auto-define** — explicitly *not* a feature. The "OCR every stroke as you write" UX is intrusive without a clean word-boundary signal; lookups are user-initiated only.
 - **Bundle size:** the `.snplg` ships the prebuilt `base.db` (WordNet + EN OMW thesaurus) plus the native `app.npk` and the JS bundle. There is no base64 blob and no first-run parse — the native SQLite engine opens `base.db` directly, so Lookup is ready in well under a second (no per-reload cost).
