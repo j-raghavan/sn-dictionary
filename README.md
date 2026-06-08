@@ -392,7 +392,8 @@ buildPlugin.ps1                  build (Windows): same pipeline as buildPlugin.s
 
 - **Dunn-sn** (Supernote SDK engineer) — direct DM responses on plugin SDK questions: confirmed the DOC text-selection model (`getLastSelectedText`), the `EventType.PEN_UP` listener's behaviour, the deprecation of `NativePluginManager.showPluginView()`, and that `.snplg` packaging auto-includes everything in `build/generated/`. The reader and handler design are downstream of those answers.
 - **`OkReward5192`** (r/Supernote_dev) — community thread on dictionary plugins, including the empirical observation that the SDK only supports lasso / text-selection entry gestures (no tap-on-word).
-- **Princeton WordNet** (BSD-style license) — the bundled English content. Distribution via the dict.org community mirror.
+- **Princeton WordNet** (BSD-style license) — the bundled English definitions. Distribution via the dict.org community mirror.
+- **Open English WordNet 2023** ([CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), <https://en-word.net/>) — the bundled English thesaurus (synonyms / antonyms in `base.db`).
 - **`pako`** (MIT) — the only third-party runtime dependency.
 - Sibling Supernote plugins **`sn-shapes`** and **`sn-mindmap`** — patterns for the lasso pipeline (delete-before-recognize, `setLassoBoxState(2)`, reentrancy guard with sync-release), popup close semantics (`PluginManager.closePluginView` from the close button), and the localized `nameMap` shape on `PluginButton.name`.
 
@@ -410,13 +411,13 @@ The bundled English dictionary is generated from **Princeton WordNet®** and shi
 
 No WordNet content is modified semantically by the build: the generator only re-shapes the existing StarDict triple into indexed SQLite rows (`scripts/buildBaseDb.mjs`).
 
-### Bundled thesaurus content (Open Multilingual Wordnet)
+### Bundled thesaurus content (Open English WordNet)
 
-The thesaurus (synonyms / antonyms) is built from the **Open Multilingual Wordnet (OMW)** and stored in the same `base.db` (the `thesaurus` table), staged via `npm run prepare:omw` (fetch + build) and folded into `base.db` by `npm run build:base-db`.
+The thesaurus (synonyms / antonyms) is **English-only** and built from **Open English WordNet 2023**, stored in the same `base.db` (the `thesaurus` table). It is staged via `npm run prepare:omw` (fetch + build → `dict/omw/omw.tsv`) and folded into `base.db` by `npm run build:base-db`.
 
-- **Source.** Open Multilingual Wordnet — <https://omwn.org/>. The English layer is Princeton WordNet itself; the multilingual layers are contributed wordnets.
-- **License.** OMW aggregates per-language wordnets under their own licenses (the English Wordnet is under the WordNet license above; other languages vary — CC-BY, CC-BY-SA, MIT, and similar). Any redistribution must preserve each contributing wordnet's license and attribution. See the OMW [citation and license page](https://omwn.org/omw1.html) for the per-language list.
-- **Scope used.** Only `synonym` and `antonym` relations are extracted (`scripts/buildOmw.mjs`); other OMW relations are not bundled.
+- **Source.** Open English WordNet 2023 — <https://en-word.net/> (`scripts/fetchOmw.mjs` downloads the WN-LMF release `english-wordnet-2023.xml.gz`).
+- **License.** [Creative Commons Attribution 4.0 International (CC BY 4.0)](https://creativecommons.org/licenses/by/4.0/) — free to use, share, and adapt (including commercially) provided appropriate credit is given. **Attribution:** *Open English WordNet 2023, https://en-word.net/, licensed under CC BY 4.0.* Any redistribution of `base.db` must preserve this attribution.
+- **Scope used.** English (`lang='en'`) only; just the `synonym` and `antonym` relations are extracted (`scripts/buildOmw.mjs`). Synonyms are capped at 10 per headword to bound the bundle size; antonyms are uncapped. No other WordNet relations are bundled.
 
 > **RO-7 (coverage note).** `scripts/fetchOmw.mjs` and `scripts/buildOmw.mjs` perform network I/O and filesystem extraction and are therefore **not** measured by the jest coverage gate (same posture as `scripts/fetchBaseDict.mjs` / `scripts/buildBaseDict.mjs`). The data-shaping logic they feed *is* covered: the TSV parser (`parseOmwTsv`) and the DB population (`populateThesaurus`) live in `src/` and are unit-tested to the 97% gate against synthetic fixtures.
 
