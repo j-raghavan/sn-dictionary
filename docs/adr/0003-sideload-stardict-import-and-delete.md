@@ -1,6 +1,6 @@
 # ADR-0003: Sideloaded dictionaries — StarDict-only, on-device import to self-contained SQLite, verify-then-delete
 
-- Status: accepted
+- Status: **Superseded by [ADR-0007](0007-snplg-bundled-provisioning-and-optional-sidecar.md)** — meta.json is now OPTIONAL (no-meta loads with the folder name + language `und`; we don't gate definition lookup on enhancement metadata). The import also moved to native Kotlin off the JS thread (ADR-0006). The StarDict-only / verify-then-delete decisions still hold.
 - Date: 2026-06-07
 - Deciders: J-Raghavan
 - Spec: `spec/SPEC-THESAURUS-NEW-FEATURES.md` (TF5)

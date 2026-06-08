@@ -12,7 +12,7 @@ A Supernote plugin that adds offline English-word lookup to handwritten notes an
 ## Features
 
 - **Two entry gestures, one popup.** Lasso handwritten or already-recognised text on a note page → tap **Lookup** in the lasso toolbar; or select text in the PDF reader → tap **Lookup** in the selection toolbar. Both flows feed the same on-device dictionary and render in the same structured popup.
-- **Real WordNet content.** 149,535 entries from Princeton WordNet 2.x (BSD-style license), shipped as a base64-embedded StarDict triple (`.ifo` + `.idx` + `.dict.dz`) inside the plugin bundle. No network at runtime.
+- **Real WordNet content + thesaurus.** 149,535 Princeton WordNet 2.x definitions (BSD-style license) plus an English synonym/antonym thesaurus from Open English WordNet 2023 (CC BY 4.0), built into a single prebuilt SQLite `base.db` that ships inside the `.snplg` and is opened on-device by the native SQLite engine. No network at runtime; lookup is one indexed `SELECT` (no per-reload parse).
 - **OCR-aware.** When you lasso handwriting, the plugin runs the firmware's stroke recogniser (`recognizeElements`) before the lookup, so the popup shows what was *recognised* alongside the matching definition. Saved-and-reloaded handwriting (`trailLink`) and recognised titles (`title`) are covered by the same path — not just freshly-drawn strokes.
 - **Structured popup.** Each WordNet sense renders as its own block: a part-of-speech badge (*noun* / *verb* / *adjective* / *adverb*), a numbered sense, the definition, italicised example sentences in curly quotes, and a `Synonyms:` line. Senses are visually separated so multi-sense entries (e.g. "AI" — Army Intelligence vs. artificial intelligence vs. three-toed sloth vs. artificial insemination) are scannable at a glance.
 - **Bilingual UI chrome.** The plugin name on the plugin manager card, the **Lookup** toolbar label, and every popup label (`Synonyms:`, `OCR:`, `No definition found for…`, `Close`) localise into Simplified Chinese, Traditional Chinese, Japanese, Thai, and Dutch based on the device's system locale. The dictionary content stays English; the surrounding chrome doesn't.
@@ -41,8 +41,8 @@ The plugin owns **the OCR-to-lookup pipeline and the rendering**. On lasso tap o
 1. **Reentrancy guard** acquired (single in-flight pipeline at a time, regardless of context). Released synchronously *before* awaiting `closePluginView` — the host's `state:stop` transition can suspend the JS context, and clearing the flag after the await would leave it stuck.
 2. **NOTE lasso path:** `getLassoElementTypeCounts` → branches if any of `trailNum`, `trailLinkNum`, or `titleNum` is non-zero → `getLassoElements` + page-info → `recognizeElements` (no `deleteLassoElements`; lookup is non-destructive) → `setLassoBoxState(2)` clears the lasso UI.
 3. **DOC selection path:** `getLastSelectedText` returns the user's selected text directly.
-4. **Lookup core** (`createStardictLookup`) — case-insensitive, lazy-initialised on first lookup. The base WordNet bytes are decoded from a base64 string in the bundle, the `.dict.dz` is gunzipped via `pako` at startup, and a `Map<lowercased-word, IdxEntry>` is built once.
-5. **Popup** — the raw WordNet entry is parsed into `{senses: [{pos, index, definition, examples, synonyms}]}` by `wordnetFormatter.ts`, then rendered as discrete sense blocks.
+4. **Lookup core** — a native SQLite engine over the bundled `base.db` (host-extracted to `plugins/<id>/`, opened by `{name, location}`). A lookup is one indexed `SELECT word, definition, format FROM entries WHERE key = ?` with a normalized key — no parse, no in-memory index, constant cold-start. Multiple sources (`[user.db, …imported, base.db]`) fan out and return the union.
+5. **Popup** — a WordNet-format entry is parsed into `{senses: [{pos, index, definition, examples, synonyms}]}` by `wordnetFormatter.ts` and rendered as discrete sense blocks; a Definition/Thesaurus toggle shows synonyms/antonyms (lazy `lookupThesaurus`).
 6. **Close** — the popup's Close button calls `PluginManager.closePluginView()` directly (fire-and-forget, sn-mindmap's pattern). The handler does *not* close the view on the success path — closing while the popup is still on-screen leaves the host's input channel in a bad state and the device hangs on subsequent pen taps.
 
 By design, **the plugin is pure read** — it never modifies the page, never deletes strokes, never inserts text. Lookup is a side-effect-free overlay.
@@ -64,86 +64,47 @@ By design, **the plugin is pure read** — it never modifies the page, never del
 4. Tap **Lookup** in the selection toolbar that appears.
 5. Read the definition. Tap **Close** when done.
 
-The first lookup after the plugin process spins up takes ~30–60 seconds (Hermes/JSC parses the bundle, decodes the base64, gunzips the StarDict, builds the index). After that, every subsequent lookup is instant for the rest of the session — the index lives in JS heap memory until the plugin host is killed.
+Lookup is ready in well under a second after the plugin process spins up — the native SQLite engine just opens the prebuilt `base.db` (no parse, no in-memory index build), and every lookup is a single indexed `SELECT`. (Measured ~250 ms to Lookup-ready on a note re-open; ADR-0007.)
 
 ## Adding your own dictionary
 
-The plugin scans `MyStyle/SnDict/` on every launch and registers any dictionaries it finds there. User dicts appear as separate sections in the popup, ahead of the bundled WordNet base — so a domain glossary like "medical" supplements the general definition rather than replacing it.
+The plugin scans `MyStyle/SnDict/` on every launch. A discovered dict is **imported** — parsed (natively, off the JS thread) and inserted into a self-contained SQLite DB under the plugin dir, then the source files are deleted after a verified commit. Imported dicts appear as separate sections in the popup, ahead of the bundled WordNet base — so a domain glossary like "medical" supplements the general definition rather than replacing it. Re-dropping the same dict replaces it; multiple dicts per language coexist.
 
 ### Layout
 
-Two layouts are accepted, mix freely:
+**StarDict only** (`.ifo` + `.idx` + (`.dict.dz` or `.dict`), optional `.syn`), one subfolder per dict — the triple is multiple files that must live together:
 
 ```
 MyStyle/
 └── SnDict/
-    ├── medical.csv                  ← flat: a single CSV at the root IS a complete dict
-    ├── japanese.json                ← flat: a single JSON at the root IS a complete dict
-    ├── medical-en/                  ← organised: subfolder per dict (REQUIRED for StarDict)
-    │   ├── meta.json                  (optional)
+    ├── medical-en/
+    │   ├── meta.json                  (OPTIONAL — name + language)
     │   ├── medical.ifo
     │   ├── medical.idx
-    │   └── medical.dict.dz
-    └── my-glossary/                 ← organised: subfolder works for any format
-        └── words.csv
+    │   ├── medical.dict.dz
+    │   └── medical.syn               (optional — synonym/transliteration index)
+    └── wikdict-de/
+        ├── de.ifo
+        ├── de.idx
+        └── de.dict.dz                (no meta.json — loads with defaults)
 ```
 
-**Flat layout** is the path of least resistance for a single CSV or JSON file — the filename (without extension) becomes the popup section label. Drop `medical.csv` directly into `MyStyle/SnDict/`, done.
-
-**Organised layout** (one subfolder per dict) is required for StarDict (it's three files that need to live together) and lets you supply a friendlier display name via an optional `meta.json` inside the folder:
+`meta.json` is **optional**:
 
 ```json
-{ "name": "Medical en→en" }
+{ "name": "Medical en→en", "language": "en" }
 ```
 
-Without `meta.json`, the display name falls back to the folder name.
+- **With `meta.json`** — `name` is the popup section label; `language` (ISO-639-1) enables the Thesaurus tab for that dict.
+- **Without `meta.json`** (or an invalid one) — the dict still loads with the **folder name** as the label and language `und` (undetermined). Definitions work fully; the Thesaurus tab is simply empty (it needs a known language). *Definition lookup is never gated on the sidecar* (ADR-0007).
 
-### Supported formats
+### Supported format
 
 | Format | Files | Notes |
 |---|---|---|
-| **StarDict** | `*.ifo` + `*.idx` + (`*.dict.dz` or `*.dict`) | The native format. Free dictionaries available at [FreeDict](https://freedict.org) and [dict.org](http://dict.org). |
-| **CSV** | one `*.csv` | Headword in column 0, definition in column 1, by default. Quoted fields with embedded commas / newlines / escaped quotes are handled per RFC 4180. UTF-8 BOM is tolerated. |
-| **JSON** | one `*.json` | Two shapes accepted: `{"word": "definition", ...}` or `[{"word": "...", "definition": "..."}, ...]`. Field aliases recognised: `headword`/`term`/`key` and `def`/`meaning`/`value`. |
-| MDX | *(deferred)* | Not yet supported. Folder is logged and skipped — convert to StarDict via [`mdict-utils`](https://pypi.org/project/mdict-utils/) or [`pyglossary`](https://github.com/ilius/pyglossary) until then. |
+| **StarDict** | `*.ifo` + `*.idx` + (`*.dict.dz` or `*.dict`) [+ optional `*.syn`] | The only supported sideload format. Free dictionaries at [FreeDict](https://freedict.org) and [dict.org](http://dict.org). CSV/JSON/MDX are **not** supported — convert to StarDict via [`pyglossary`](https://github.com/ilius/pyglossary) (`pip install pyglossary`; reads ~50 formats, writes StarDict). |
 
-A folder with no recognised files, a partial StarDict triple, or multiple format markers is logged and skipped — discovery is fault-isolated, so one bad folder doesn't break the rest.
-
-#### What CSV and JSON should look like
-
-The simplest CSV — headword in column 0, definition in column 1, no header row:
-
-```csv
-braise,a slow cooking method that combines searing with simmering in a covered pot
-deglaze,"to add liquid to a hot pan to dissolve and lift caramelised browned bits stuck to the bottom"
-emulsify,"to combine two liquids that don't normally mix, such as oil and vinegar, into a stable suspension"
-julienne,to cut food into long thin strips of roughly equal size
-```
-
-Quote a field if its content contains commas, newlines, or `"` (double quotes inside a quoted field are escaped as `""`). UTF-8 BOM at the file start is tolerated. The lookup is case-insensitive — `Braise`, `BRAISE`, and `braise` all hit the same entry.
-
-JSON, "object-map" shape — the simplest case:
-
-```json
-{
-  "EPD": "Electrophoretic Paper Display — the e-ink panel technology used in Supernote devices.",
-  "lasso": "A freeform selection tool: enclose strokes or elements with a hand-drawn loop to act on them as a group.",
-  "trail": "A freshly-drawn ink stroke that has not yet been linked to any recognition result."
-}
-```
-
-JSON, "array of entries" shape — useful when you want to keep extra fields per entry without breaking lookup:
-
-```json
-[
-  { "word": "EPD",   "definition": "Electrophoretic Paper Display — the e-ink panel technology used in Supernote devices." },
-  { "word": "lasso", "definition": "A freeform selection tool: enclose strokes or elements with a hand-drawn loop." }
-]
-```
-
-Recognised aliases for the array shape: the headword side accepts `word` / `headword` / `term` / `key`; the definition side accepts `definition` / `def` / `meaning` / `value`. Entries that don't match any shape (missing fields, wrong types, scalar rows) are skipped silently — your other entries still load.
-
-Concrete copy-pasteable starting points live at [`assets/sample-dicts/`](assets/sample-dicts/) — one CSV, one JSON, and one StarDict folder.
+A subfolder without a complete StarDict triple is logged and skipped — discovery is fault-isolated, so one bad folder doesn't break the rest.
 
 ### Where to find dictionaries
 
@@ -262,25 +223,27 @@ To regenerate the sample after editing entries in `scripts/buildSampleDicts.mjs`
 - **English only** for the bundled dictionary content. Other languages are out of scope for the base; see *Adding your own dictionary* above for sideloading user dicts in StarDict / CSV / JSON formats.
 - **Tap-on-existing-word** (no lasso, just tap a written word) is **not currently supported by the SDK** — there is no spatial-query API to ask "what stroke is under this point?". A pen/touch event API is on Dunn-sn's roadmap; tap-to-define is tracked for v1.x.
 - **`PEN_UP` auto-define** — explicitly *not* a feature. The "OCR every stroke as you write" UX is intrusive without a clean word-boundary signal; lookups are user-initiated only.
-- **Bundle size:** ~17MB (~16MB of base64-encoded WordNet plus the JS bundle). The Supernote firmware confirmed no `.snplg` size limit, but the bundle parse on first plugin-host spin-up is the main rough edge today (~30–60s on a Nomad). Once parsed, lookups are instant.
+- **Bundle size:** the `.snplg` ships the prebuilt `base.db` (WordNet + EN OMW thesaurus) plus the native `app.npk` and the JS bundle. There is no base64 blob and no first-run parse — the native SQLite engine opens `base.db` directly, so Lookup is ready in well under a second (no per-reload cost).
 
 ## Building
 
-Make sure you have Node.js 18+ installed, then:
+The plugin ships **native code** (a vendored SQLite module + a Kotlin StarDict importer), so a build needs Node.js 18+ **and** the Android toolchain (Gradle/NDK). Build on macOS/Linux (or WSL):
 
 ```sh
 npm install
-./buildPlugin.sh         # macOS / Linux
-# or
-powershell -ExecutionPolicy Bypass -File .\buildPlugin.ps1   # Windows
+./buildPlugin.sh         # macOS / Linux (the native build path)
 ```
 
-Both scripts produce `build/outputs/SnDict.snplg` and run the same logical pipeline. They each automatically run `npm run prepare:dict` first, which:
+`buildPlugin.sh` produces `build/outputs/SnDict.snplg` and runs the full pipeline:
 
-1. Fetches the WordNet StarDict bundle (~10MB tar.bz2) from the dict.org community mirror to `dict/wordnet/` if not already present.
-2. Base64-encodes the three files (`.ifo`, `.idx`, `.dict.dz`) and emits `src/core/dict/data/baseDictData.ts`.
+1. `npm run prepare:dict` — fetches the WordNet StarDict source to `dict/wordnet/` (read directly by the generator; no base64 blob).
+2. `npm run prepare:omw` — fetches Open English WordNet 2023 and builds the EN thesaurus TSV.
+3. `npm run build:base-db` — folds the WordNet entries + OMW thesaurus into a prebuilt `build/base.db`, staged at the **`.snplg` root** (the host extracts it to `plugins/<id>/base.db`).
+4. Metro bundle → `gradlew buildCustomApkDebug` → `app.npk` → zips everything into `SnDict.snplg`.
 
-Both `dict/wordnet/*` and `src/core/dict/data/baseDictData.ts` are git-ignored — they are regenerable from the build pipeline and would otherwise add ~16MB of base64 to every commit.
+`dict/wordnet/`, `dict/omw/`, and `build/` are git-ignored (regenerable). **`buildPlugin.ps1` does NOT support native builds** — it errors and points you to `buildPlugin.sh`.
+
+> **Note on `nativeCodePackage`.** `PluginConfig.json`'s `nativeCodePackage` field (pointing at the built `app.npk`) is **injected by `./buildPlugin.sh` at build time** — it is not committed. Local native development therefore requires running `./buildPlugin.sh` (a Metro-only `npm start` won't produce the native module or wire it up).
 
 ## Installing on the device
 
@@ -335,16 +298,14 @@ src/
     reentrancyGuard.ts           module-level guard, sync-release-before-await
     lookup.ts                    type-only DictLookup contract
     dict/
-      stardictLookup.ts          DictLookup impl: lazy-init + custom-shadows-base
-      stardict/
-        parseIfo.ts              .ifo header parser
-        parseIdx.ts              .idx (32 / 64-bit offsets, UTF-8 words) parser
-        decompressDict.ts        pako wrapper: gzip magic detection, full inflate
-        stardictDict.ts          orchestrator: case-insensitive Map index + lookup
-        writeStardict.ts         StarDict writer used by tests + build pipeline
-      data/
-        baseDictData.ts          AUTO-GENERATED: base64-encoded WordNet
-                                 (gitignored; regenerated by `npm run build:dict`)
+      normalizeKey.ts            shared lookup-key fold (TS; Kotlin port mirrors it)
+      multiDictLookup.ts         registry: fan out over sources, return the union
+      userDictDiscovery.ts       scan MyStyle/SnDict → StarDict import-job descriptors
+      sqlite/                    the LIVE engine: db port, sqliteDictSource, provision,
+                                 bootstrap, buildBaseDb, thesaurus, import orchestration
+      stardict/                  BUILD-TIME parsers (used by build:base-db + tests)
+        parseIfo.ts / parseIdx.ts / parseSyn.ts / dictReader.ts / stardictDict.ts
+        writeStardict.ts         StarDict writer used by tests
   handlers/
     onNoteLassoDefine.ts         NOTE pipeline (counts → recognize → lookup → setLassoBoxState)
     onDocSelectDefine.ts         DOC pipeline (getLastSelectedText → lookup)
@@ -356,15 +317,17 @@ src/
     unwrap.ts                    APIResponse<T> → T or throw
     closeView.ts                 safeClosePluginView wrapper
     utf8.ts                      Platform Intl + manual UTF-8 codec fallback
-    base64.ts                    Platform atob + manual base64 decoder fallback
   ui/
     DefinitionPopup.tsx          popup: structured senses or raw fallback + Close
     popupController.ts           module-level state + subscribe; getCurrentState
                                  for initial value (avoids React commit-phase warn)
     wordnetFormatter.ts          parses raw WordNet entry → senses[]; labelForPos
+  android/                       Gradle project: vendored SQLite module +
+                                 com/sndict/imports/* (the native Kotlin StarDict importer)
 scripts/
-  fetchBaseDict.mjs              idempotent download from dict.org mirror
-  buildBaseDict.mjs              base64-encode → emit baseDictData.ts
+  fetchBaseDict.mjs              idempotent WordNet download from dict.org mirror
+  fetchOmw.mjs / buildOmw.mjs    fetch + build the EN OMW thesaurus TSV
+  buildBaseDb.mjs                fold WordNet + OMW into the prebuilt base.db
 .github/workflows/
   ci.yml                         lint + test + build .snplg artifact per push
   release.yml                    manual workflow_dispatch; lint+test, version
@@ -382,7 +345,7 @@ buildPlugin.ps1                  build (Windows): same pipeline as buildPlugin.s
 
 **The reader is vendored, not a third-party dependency.** The MIT-compatible `mdict-js` package on npm is named confusingly close to the AGPL-3.0 `js-mdict` (different maintainers, different licenses) — bundling the AGPL one into the `.snplg` would force the entire plugin to AGPL on distribution, which I explicitly didn't want. No maintained MIT-licensed StarDict reader exists on npm, so I wrote one (~250 LoC across `parseIfo`, `parseIdx`, `decompressDict`, `stardictDict`). The only third-party runtime dependency is `pako` (MIT) for gzip / dictzip inflate.
 
-**Hermes / JSC defensive polyfills.** Early on-device runs revealed that `console.warn` output is not reliably visible in `adb logcat` on the Supernote firmware — every `ReactNativeJS:` line lands at info level. This forced two defensive layers: (1) the logger in `index.js` routes every level through `console.log` with `[WARN]` / `[ERROR]` prefixes; (2) `src/sdk/utf8.ts` and `src/sdk/base64.ts` try platform globals (`TextEncoder` / `TextDecoder` / `atob`) but fall back to portable inline implementations when the host throws on construction or returns malformed values. These fallbacks are tested via `jest.isolateModules`-based simulations of missing or broken globals.
+**Hermes / JSC defensive polyfills.** Early on-device runs revealed that `console.warn` output is not reliably visible in `adb logcat` on the Supernote firmware — every `ReactNativeJS:` line lands at info level. This forced two defensive layers: (1) the logger in `index.js` routes every level through `console.log` with `[WARN]` / `[ERROR]` prefixes; (2) `src/sdk/utf8.ts` tries the platform `TextEncoder`/`TextDecoder` but falls back to a portable inline UTF-8 codec when the host throws on construction or returns malformed values. The fallback is tested via `jest.isolateModules`-based simulations of missing or broken globals. (The old `sdk/base64.ts` was removed with the base64 blob — M14.)
 
 **The popup never closes the firmware overlay from the handler.** Initial implementation called `closePluginView()` in the handler's `finally` block (matching the sn-formula pipeline pattern, where there is no popup). On a popup-bearing flow this orphans the firmware overlay window — pen taps land nowhere afterwards and the device hangs. Fixed to track a `popupShown` flag in the handler; `closePluginView` only fires on early-exit paths (empty lasso, recognize-empty, busy guard, pipeline crash). On the success path the popup's Close button calls `PluginManager.closePluginView()` directly, fire-and-forget — sn-shapes and sn-mindmap use the same pattern.
 
@@ -419,7 +382,7 @@ The thesaurus (synonyms / antonyms) is **English-only** and built from **Open En
 - **License.** [Creative Commons Attribution 4.0 International (CC BY 4.0)](https://creativecommons.org/licenses/by/4.0/) — free to use, share, and adapt (including commercially) provided appropriate credit is given. **Attribution:** *Open English WordNet 2023, https://en-word.net/, licensed under CC BY 4.0.* Any redistribution of `base.db` must preserve this attribution.
 - **Scope used.** English (`lang='en'`) only; just the `synonym` and `antonym` relations are extracted (`scripts/buildOmw.mjs`). Synonyms are capped at 10 per headword to bound the bundle size; antonyms are uncapped. No other WordNet relations are bundled.
 
-> **RO-7 (coverage note).** `scripts/fetchOmw.mjs` and `scripts/buildOmw.mjs` perform network I/O and filesystem extraction and are therefore **not** measured by the jest coverage gate (same posture as `scripts/fetchBaseDict.mjs` / `scripts/buildBaseDict.mjs`). The data-shaping logic they feed *is* covered: the TSV parser (`parseOmwTsv`) and the DB population (`populateThesaurus`) live in `src/` and are unit-tested to the 97% gate against synthetic fixtures.
+> **RO-7 (coverage note).** `scripts/fetchOmw.mjs` and `scripts/buildOmw.mjs` perform network I/O and filesystem extraction and are therefore **not** measured by the jest coverage gate (same posture as `scripts/fetchBaseDict.mjs` / `scripts/buildBaseDb.mjs`). The data-shaping logic they feed *is* covered: the TSV parser (`parseOmwTsv`) and the DB population (`populateThesaurus`) live in `src/` and are unit-tested to the 97% gate against synthetic fixtures.
 
 ---
 

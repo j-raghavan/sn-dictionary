@@ -1,6 +1,6 @@
 # ADR-0002: Bundle English as a prebuilt SQLite DB (createFromLocation, all-text), retire the base64 blob
 
-- Status: accepted
+- Status: **Superseded by [ADR-0007](0007-snplg-bundled-provisioning-and-optional-sidecar.md)** — on-device, `createFromLocation` can't read a dynamically-loaded plugin's app.npk assets, so base.db now ships INSIDE the `.snplg` (host-extracted to `plugins/<id>/`) and is opened via `{name, location}`. (Bundling EN as a prebuilt SQLite DB + retiring the blob still holds; only the provisioning mechanism changed.)
 - Date: 2026-06-07
 - Deciders: J-Raghavan
 - Spec: `spec/SPEC-THESAURUS-NEW-FEATURES.md` (TF3)
