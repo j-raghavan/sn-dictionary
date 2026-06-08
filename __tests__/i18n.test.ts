@@ -41,21 +41,77 @@ describe('t (popup string lookup)', () => {
     expect(t('popup.close', 'xx_YY')).toBe('Close');
   });
 
-  test('renders all configured locales for every popup string', () => {
-    const localeRows = Object.keys(STRINGS);
-    const ids: Array<'popup.synonyms' | 'popup.close' | 'popup.notFoundFor' | 'popup.ocr'> = [
+  test('every locale DEFINES every popup string (no en-fallback gaps)', () => {
+    // Assert against the raw STRINGS table, NOT t() — t() silently
+    // falls back to English for a missing key, so it would never catch a
+    // per-locale gap. This guard verifies each locale row actually
+    // carries every popup.* key (so a new key added to one locale but
+    // forgotten in another fails the suite instead of shipping an
+    // en-fallback on-device).
+    const ids = [
       'popup.synonyms',
-      'popup.close',
-      'popup.notFoundFor',
       'popup.ocr',
-    ];
+      'popup.notFoundFor',
+      'popup.close',
+      'popup.loading',
+      'popup.recognizing',
+      'popup.fontSmaller',
+      'popup.fontLarger',
+      'popup.pronunciation',
+      'popup.definition',
+      'popup.thesaurus',
+      'popup.antonyms',
+      'popup.noThesaurus',
+      'popup.lookUp',
+      'popup.addDefinition',
+      'popup.headword',
+      'popup.definitionBody',
+      'popup.save',
+      'popup.addEmptyError',
+      'popup.addFailedError',
+    ] as const;
+    const localeRows = Object.keys(STRINGS);
+    expect(localeRows.length).toBeGreaterThan(0);
     for (const locale of localeRows) {
       for (const id of ids) {
-        const value = t(id, locale);
-        expect(typeof value).toBe('string');
-        expect(value.length).toBeGreaterThan(0);
+        const value = STRINGS[locale][id];
+        expect(
+          typeof value === 'string' && value.length > 0,
+        ).toBe(true);
       }
     }
+  });
+
+  test('the asserted popup-id list is exhaustive (no StringId left unguarded)', () => {
+    // Pin completeness: the en locale's popup.* key set must equal the
+    // list the per-locale test iterates, so a future popup.* key forces
+    // an update to the guard above rather than slipping through.
+    const enPopupKeys = Object.keys(STRINGS.en)
+      .filter(k => k.startsWith('popup.'))
+      .sort();
+    const guarded = [
+      'popup.synonyms',
+      'popup.ocr',
+      'popup.notFoundFor',
+      'popup.close',
+      'popup.loading',
+      'popup.recognizing',
+      'popup.fontSmaller',
+      'popup.fontLarger',
+      'popup.pronunciation',
+      'popup.definition',
+      'popup.thesaurus',
+      'popup.antonyms',
+      'popup.noThesaurus',
+      'popup.lookUp',
+      'popup.addDefinition',
+      'popup.headword',
+      'popup.definitionBody',
+      'popup.save',
+      'popup.addEmptyError',
+      'popup.addFailedError',
+    ].sort();
+    expect(enPopupKeys).toEqual(guarded);
   });
 
   test('every locale defines a non-empty popup.pronunciation', () => {
