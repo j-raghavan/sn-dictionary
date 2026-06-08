@@ -61,6 +61,18 @@ describe('parseSidecar', () => {
     expect(parseSidecar({name: 'D'}).ok).toBe(false);
   });
 
+  it("accepts the 'und' (undetermined) language tag", () => {
+    // 'und' is the discovery default for a meta-less dict — a valid
+    // language value (thesaurus short-circuits to empty), so the strict
+    // parser must accept it.
+    const res = parseSidecar({name: 'D', language: 'und'});
+    expect(res).toEqual({ok: true, sidecar: {name: 'D', language: 'und'}});
+    expect(parseSidecar({name: 'D', language: 'UND'})).toEqual({
+      ok: true,
+      sidecar: {name: 'D', language: 'und'},
+    });
+  });
+
   it('rejects non-object input without throwing', () => {
     expect(parseSidecar(null).ok).toBe(false);
     expect(parseSidecar('str').ok).toBe(false);

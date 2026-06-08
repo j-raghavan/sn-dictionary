@@ -22,7 +22,11 @@ export type SidecarResult =
   | {ok: true; sidecar: Sidecar}
   | {ok: false; reason: string};
 
-const ISO_639_1 = /^[a-z]{2}$/;
+// ISO-639-1 (two-letter) OR the BCP-47 'und' (undetermined) tag. 'und'
+// is the discovery default when a dict ships no meta.json — a valid
+// language value (its thesaurus tab short-circuits to empty), so the
+// strict parser accepts it rather than rejecting a minimum-input dict.
+const ISO_639_1_OR_UND = /^([a-z]{2}|und)$/;
 
 const asString = (v: unknown): string | undefined =>
   typeof v === 'string' ? v : undefined;
@@ -43,10 +47,10 @@ export const parseSidecar = (raw: unknown): SidecarResult => {
   }
 
   const language = (asString(obj.language) ?? '').trim().toLowerCase();
-  if (!ISO_639_1.test(language)) {
+  if (!ISO_639_1_OR_UND.test(language)) {
     return {
       ok: false,
-      reason: `sidecar "language" must be an ISO-639-1 code, got "${
+      reason: `sidecar "language" must be an ISO-639-1 code or "und", got "${
         asString(obj.language) ?? ''
       }"`,
     };

@@ -152,17 +152,23 @@ describe('discoverUserDicts — skip + isolation', () => {
     );
   });
 
-  it('skips a folder with no meta.json (logs)', async () => {
-    const dir = `${ROOT}/nometa`;
-    const {deps, warnings} = makeDeps(
-      {[ROOT]: [folder('nometa')], [dir]: triple(dir)},
+  // --- minimum-input path: meta.json is OPTIONAL (M9 fix 1) ----------
+  it('NO meta.json -> loads with defaults (name=folderName, language=und)', async () => {
+    const dir = `${ROOT}/jp-en`;
+    const {deps} = makeDeps(
+      {[ROOT]: [folder('jp-en')], [dir]: triple(dir)},
       {},
     );
-    expect(await discoverUserDicts(deps)).toEqual([]);
-    expect(warnings.some(w => w.includes('no meta.json sidecar'))).toBe(true);
+    const out = await discoverUserDicts(deps);
+    expect(out).toHaveLength(1);
+    expect(out[0].sidecar).toEqual({name: 'jp-en', language: 'und'});
+    // No sidecarPath when there's no meta.json file.
+    expect(out[0].sidecarPath).toBeUndefined();
+    // The triple is still wired.
+    expect(out[0].ifoPath).toBe(`${dir}/base.ifo`);
   });
 
-  it('skips a folder whose meta.json is invalid JSON (logs)', async () => {
+  it('invalid-JSON meta.json -> WARN + fallback descriptor (NOT skipped)', async () => {
     const dir = `${ROOT}/badjson`;
     const {deps, warnings} = makeDeps(
       {
@@ -171,11 +177,13 @@ describe('discoverUserDicts — skip + isolation', () => {
       },
       {[`${dir}/meta.json`]: '{not json'},
     );
-    expect(await discoverUserDicts(deps)).toEqual([]);
-    expect(warnings.some(w => w.includes('not valid JSON'))).toBe(true);
+    const out = await discoverUserDicts(deps);
+    expect(out).toHaveLength(1);
+    expect(out[0].sidecar).toEqual({name: 'badjson', language: 'und'});
+    expect(warnings.some(w => w.includes('loading with defaults'))).toBe(true);
   });
 
-  it('skips a folder whose sidecar fails validation (logs reason)', async () => {
+  it('sidecar that fails validation -> WARN + fallback (NOT skipped)', async () => {
     const dir = `${ROOT}/badmeta`;
     const {deps, warnings} = makeDeps(
       {
@@ -184,21 +192,39 @@ describe('discoverUserDicts — skip + isolation', () => {
       },
       {[`${dir}/meta.json`]: JSON.stringify({language: 'en'})}, // missing name
     );
-    expect(await discoverUserDicts(deps)).toEqual([]);
-    expect(warnings.some(w => w.includes('invalid'))).toBe(true);
+    const out = await discoverUserDicts(deps);
+    expect(out).toHaveLength(1);
+    expect(out[0].sidecar).toEqual({name: 'badmeta', language: 'und'});
+    expect(warnings.some(w => w.includes('loading with defaults'))).toBe(true);
   });
 
-  it('skips a folder whose meta.json read throws (logs)', async () => {
+  it('meta.json read failure -> WARN + fallback (NOT skipped)', async () => {
     const dir = `${ROOT}/readfail`;
     const {deps, warnings} = makeDeps(
       {
         [ROOT]: [folder('readfail')],
         [dir]: [...triple(dir), fileEntry(`${dir}/meta.json`, 1)],
       },
-      {}, // meta path 404s -> fetch !ok -> read throws
+      {}, // meta path 404s -> fetch !ok -> read throws -> fallback
     );
-    expect(await discoverUserDicts(deps)).toEqual([]);
-    expect(warnings.some(w => w.includes('meta.json read threw'))).toBe(true);
+    const out = await discoverUserDicts(deps);
+    expect(out).toHaveLength(1);
+    expect(out[0].sidecar).toEqual({name: 'readfail', language: 'und'});
+    expect(warnings.some(w => w.includes('unreadable'))).toBe(true);
+  });
+
+  it('valid meta.json -> used as-is', async () => {
+    const dir = `${ROOT}/wikt`;
+    const {deps} = makeDeps(
+      {
+        [ROOT]: [folder('wikt')],
+        [dir]: [...triple(dir), fileEntry(`${dir}/meta.json`, 1)],
+      },
+      {[`${dir}/meta.json`]: JSON.stringify({name: 'Wiktionary DE', language: 'de'})},
+    );
+    const out = await discoverUserDicts(deps);
+    expect(out[0].sidecar).toEqual({name: 'Wiktionary DE', language: 'de'});
+    expect(out[0].sidecarPath).toBe(`${dir}/meta.json`);
   });
 
   it('one bad folder does not break a good sibling', async () => {
@@ -345,15 +371,15 @@ describe('discoverUserDicts — root handling', () => {
   });
 
   it('tolerates no logger on a warn path (default no-op warn)', async () => {
-    // A folder that gets skipped triggers logger.warn; with no logger
-    // supplied this exercises the default no-op warn arrow.
-    const dir = `${ROOT}/nometa`;
+    // An incomplete-triple folder triggers logger.warn + skip; with no
+    // logger supplied this exercises the default no-op warn arrow.
+    const dir = `${ROOT}/partial`;
     const listFiles = jest.fn(async (path: string) => {
       if (path === ROOT) {
-        return [folder('nometa')];
+        return [folder('partial')];
       }
       if (path === dir) {
-        return triple(dir); // no meta.json -> warn + skip
+        return [fileEntry(`${dir}/base.ifo`, 1)]; // incomplete -> warn + skip
       }
       return [];
     });

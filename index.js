@@ -182,7 +182,10 @@ const bootstrapPorts = {
       idxPath: descriptor.idxPath,
       dictPath: descriptor.dictPath,
       synPath: descriptor.synPath,
+      // sidecarPath may be undefined (no meta.json); the resolved sidecar
+      // is then serialized in its place by readSet.
       sidecarPath: descriptor.sidecarPath,
+      sidecar: descriptor.sidecar,
       fileUtils: FileUtils,
       readers: {readBytes, readText},
       // Slug DBs are opened by {name: filename, location: plugins/<id>/}

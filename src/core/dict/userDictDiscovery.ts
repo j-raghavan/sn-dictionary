@@ -56,7 +56,12 @@ export type ImportJobDescriptor = {
   idxPath: string;
   dictPath: string;
   synPath?: string;
-  sidecarPath: string;
+  // Absent when the folder ships no meta.json (the dict still loads with
+  // a default sidecar). Present when a meta.json exists — used to read it
+  // and to delete it after a verified import.
+  sidecarPath?: string;
+  // Always resolved: the parsed meta.json, or a default {name:
+  // folderName, language:'und'} when meta.json is absent/invalid.
   sidecar: Sidecar;
 };
 
@@ -131,6 +136,7 @@ const buildDescriptor = async (
 ): Promise<ImportJobDescriptor | null> => {
   const folderName = basenameOf(folder.path);
 
+  // The triple IS the dictionary — it's the only hard requirement.
   const triple = findTriple(files);
   if (triple === null) {
     logger.warn(
@@ -139,40 +145,47 @@ const buildDescriptor = async (
     return null;
   }
 
+  // Default sidecar when meta.json is absent/invalid: the core feature
+  // (definition lookup) must work with minimum input. name = folder
+  // name, language 'und' (so the thesaurus tab cleanly short-circuits to
+  // empty — thesaurus is an enhancement, not a gate). format undefined
+  // -> importStardict derives it from the .ifo sametypesequence.
+  const defaultSidecar: Sidecar = {name: folderName, language: 'und'};
+
   const sidecarEntry = findSidecar(files);
+  // No meta.json -> load with defaults (NOT skipped).
   if (sidecarEntry === undefined) {
-    logger.warn(
-      `${TAG} folder "${folderName}" has no meta.json sidecar — skipped`,
+    logger.log(
+      `${TAG} folder "${folderName}" has no meta.json — loading with defaults (name="${folderName}", language="und")`,
     );
-    return null;
+    return {
+      setPath: folder.path,
+      ifoPath: triple.ifo,
+      idxPath: triple.idx,
+      dictPath: triple.dict,
+      synPath: triple.syn,
+      sidecar: defaultSidecar,
+    };
   }
 
-  let sidecarText: string;
+  // meta.json present — try to use it, but DEGRADE to defaults on any
+  // problem (read error / bad JSON / failed validation), never skip.
+  let sidecar = defaultSidecar;
   try {
-    sidecarText = decodeUtf8(await fetchAsUint8(sidecarEntry.path, fetchFn));
+    const sidecarText = decodeUtf8(await fetchAsUint8(sidecarEntry.path, fetchFn));
+    const parsed: unknown = JSON.parse(sidecarText);
+    const result = parseSidecar(parsed);
+    if (result.ok) {
+      sidecar = result.sidecar;
+    } else {
+      logger.warn(
+        `${TAG} folder "${folderName}" meta.json invalid: ${result.reason} — loading with defaults`,
+      );
+    }
   } catch (e) {
     logger.warn(
-      `${TAG} folder "${folderName}" meta.json read threw: ${(e as Error).message} — skipped`,
+      `${TAG} folder "${folderName}" meta.json unreadable: ${(e as Error).message} — loading with defaults`,
     );
-    return null;
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(sidecarText);
-  } catch (e) {
-    logger.warn(
-      `${TAG} folder "${folderName}" meta.json is not valid JSON: ${(e as Error).message} — skipped`,
-    );
-    return null;
-  }
-
-  const result = parseSidecar(parsed);
-  if (!result.ok) {
-    logger.warn(
-      `${TAG} folder "${folderName}" meta.json invalid: ${result.reason} — skipped`,
-    );
-    return null;
   }
 
   return {
@@ -182,7 +195,7 @@ const buildDescriptor = async (
     dictPath: triple.dict,
     synPath: triple.syn,
     sidecarPath: sidecarEntry.path,
-    sidecar: result.sidecar,
+    sidecar,
   };
 };
 

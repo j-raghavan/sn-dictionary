@@ -33,7 +33,13 @@ export type RnImportConfig = {
   idxPath: string;
   dictPath: string;
   synPath?: string;
-  sidecarPath: string;
+  // Absent when the folder ships no meta.json — then `sidecar` (the
+  // discovery-resolved default) is serialized in its place and no
+  // sidecar file is read or deleted.
+  sidecarPath?: string;
+  // The discovery-resolved sidecar — used as the readSet sidecarText when
+  // there is no sidecar file on disk.
+  sidecar: {name: string; language: string; format?: string};
   fileUtils: FileUtils;
   readers: SourceReaders;
   // Slug-DB lifecycle keyed by FILENAME (e.g. 'wikdict-de.de.db'). The
@@ -58,7 +64,8 @@ export const createRnImportPorts = (config: RnImportConfig): ImportPorts => {
     config.idxPath,
     config.dictPath,
     ...(config.synPath !== undefined ? [config.synPath] : []),
-    config.sidecarPath,
+    // Only delete the sidecar file if there actually is one.
+    ...(config.sidecarPath !== undefined ? [config.sidecarPath] : []),
   ];
 
   const slugDb: SlugDbLifecycle = {
@@ -85,12 +92,18 @@ export const createRnImportPorts = (config: RnImportConfig): ImportPorts => {
 
   return {
     async readSet(): Promise<StardictSet> {
-      const [ifo, idx, dict, sidecarText] = await Promise.all([
+      const [ifo, idx, dict] = await Promise.all([
         config.readers.readBytes(config.ifoPath),
         config.readers.readBytes(config.idxPath),
         config.readers.readBytes(config.dictPath),
-        config.readers.readText(config.sidecarPath),
       ]);
+      // Read the meta.json when present; otherwise synthesize it from the
+      // discovery-resolved default sidecar so importStardict's sidecar
+      // parse still succeeds (the no-meta minimum-input path).
+      const sidecarText =
+        config.sidecarPath !== undefined
+          ? await config.readers.readText(config.sidecarPath)
+          : JSON.stringify(config.sidecar);
       const syn =
         config.synPath !== undefined
           ? await config.readers.readBytes(config.synPath)
