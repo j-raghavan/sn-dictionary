@@ -63,6 +63,11 @@ export default function DefinitionPopup(): React.JSX.Element {
   // The OCR-correction field's current text (lasso flow only). Seeded
   // from the queried word and re-seeded whenever a new result arrives.
   const [editText, setEditText] = useState('');
+  // Display-first OCR correction (lasso flow): false = show the
+  // recognized word + a pencil to edit; true = show the editable field
+  // + Lookup. Reset to false on every new result so each lookup opens in
+  // display mode (the common case — the OCR was correct).
+  const [editing, setEditing] = useState(false);
   // Add-definition form (shown from the not-found state). headword is
   // seeded with the queried word; body is the user's definition.
   const [showAddForm, setShowAddForm] = useState(false);
@@ -77,6 +82,8 @@ export default function DefinitionPopup(): React.JSX.Element {
     state.visible && state.kind === 'result' ? state.result.queriedFor : '';
   useEffect(() => {
     setEditText(queriedFor);
+    // A new result opens in display mode (the OCR was usually correct).
+    setEditing(false);
     // A new query resets the add-definition form (collapsed, headword
     // re-seeded, body + error cleared).
     setShowAddForm(false);
@@ -187,6 +194,7 @@ export default function DefinitionPopup(): React.JSX.Element {
   );
   const handleDefinitionTab = useCallback(() => setTab('definition'), []);
   const handleThesaurusTab = useCallback(() => setTab('thesaurus'), []);
+  const handleEditOcr = useCallback(() => setEditing(true), []);
 
   // Re-run the lookup with the corrected OCR text. Empty/whitespace is
   // a no-op (nothing to look up). getPopupActions() may be null — guard.
@@ -373,25 +381,48 @@ export default function DefinitionPopup(): React.JSX.Element {
             {headerPhonetic}
           </Text>
         ) : null}
-        {state.ocrLabel ? (
+        {/* Non-editable (doc-select) flow: the bare OCR label, unchanged.
+            The editable (lasso) flow shows the display/edit row below
+            INSTEAD, so the recognized text isn't shown twice. */}
+        {state.ocrLabel && !isEditable ? (
           <Text style={styles.ocrLabel}>{state.ocrLabel}</Text>
         ) : null}
         {isEditable ? (
-          <View style={styles.editRow}>
-            <TextInput
-              accessibilityLabel={t('popup.ocr')}
-              style={styles.editInput}
-              value={editText}
-              onChangeText={setEditText}
-            />
+          editing ? (
+            // EDIT mode: editable field + Lookup. autoFocus so the caret
+            // is ready when the user taps in to correct the word.
+            <View style={styles.editRow}>
+              <TextInput
+                accessibilityLabel={t('popup.ocr')}
+                style={styles.editInput}
+                value={editText}
+                onChangeText={setEditText}
+                autoFocus
+              />
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={t('popup.lookUp')}
+                onPress={handleLookUp}
+                style={styles.lookUpButton}>
+                <Text style={styles.lookUpLabel}>{t('popup.lookUp')}</Text>
+              </Pressable>
+            </View>
+          ) : (
+            // DISPLAY mode (default): show the recognized word + a pencil
+            // to edit. Tapping the text OR the pencil enters edit mode.
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel={t('popup.lookUp')}
-              onPress={handleLookUp}
-              style={styles.lookUpButton}>
-              <Text style={styles.lookUpLabel}>{t('popup.lookUp')}</Text>
+              accessibilityLabel={t('popup.editOcr')}
+              onPress={handleEditOcr}
+              style={styles.ocrDisplayRow}>
+              <Text style={styles.ocrDisplayText} numberOfLines={1}>
+                {editText}
+              </Text>
+              <View style={styles.pencilButton}>
+                <Text style={styles.pencilLabel}>✎</Text>
+              </View>
             </Pressable>
-          </View>
+          )
         ) : null}
         {showTabs ? (
           <View style={styles.tabRow} accessibilityRole="tablist">

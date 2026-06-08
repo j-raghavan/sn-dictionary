@@ -35,6 +35,7 @@ export type StringId =
   | 'popup.antonyms'
   | 'popup.noThesaurus'
   | 'popup.lookUp'
+  | 'popup.editOcr'
   | 'popup.addDefinition'
   | 'popup.headword'
   | 'popup.definitionBody'
@@ -61,6 +62,7 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.antonyms': 'Antonyms',
     'popup.noThesaurus': 'No synonyms or antonyms available.',
     'popup.lookUp': 'Look up',
+    'popup.editOcr': 'Edit recognized text',
     'popup.addDefinition': 'Add definition',
     'popup.headword': 'Headword',
     'popup.definitionBody': 'Definition',
@@ -83,6 +85,7 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.antonyms': '反义词',
     'popup.noThesaurus': '暂无同义词或反义词。',
     'popup.lookUp': '查询',
+    'popup.editOcr': '编辑识别文字',
     'popup.addDefinition': '添加释义',
     'popup.headword': '词条',
     'popup.definitionBody': '释义',
@@ -105,6 +108,7 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.antonyms': '反義詞',
     'popup.noThesaurus': '暫無同義詞或反義詞。',
     'popup.lookUp': '查詢',
+    'popup.editOcr': '編輯辨識文字',
     'popup.addDefinition': '新增釋義',
     'popup.headword': '詞條',
     'popup.definitionBody': '釋義',
@@ -127,6 +131,7 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.antonyms': '対義語',
     'popup.noThesaurus': '同義語・対義語はありません。',
     'popup.lookUp': '検索',
+    'popup.editOcr': '認識テキストを編集',
     'popup.addDefinition': '定義を追加',
     'popup.headword': '見出し語',
     'popup.definitionBody': '定義',
@@ -149,6 +154,7 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.antonyms': 'คำตรงข้าม',
     'popup.noThesaurus': 'ไม่มีคำพ้องหรือคำตรงข้าม',
     'popup.lookUp': 'ค้นหา',
+    'popup.editOcr': 'แก้ไขข้อความที่รู้จำ',
     'popup.addDefinition': 'เพิ่มคำจำกัดความ',
     'popup.headword': 'คำหลัก',
     'popup.definitionBody': 'คำจำกัดความ',
@@ -171,6 +177,7 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.antonyms': 'Antoniemen',
     'popup.noThesaurus': 'Geen synoniemen of antoniemen beschikbaar.',
     'popup.lookUp': 'Opzoeken',
+    'popup.editOcr': 'Herkende tekst bewerken',
     'popup.addDefinition': 'Definitie toevoegen',
     'popup.headword': 'Trefwoord',
     'popup.definitionBody': 'Definitie',
@@ -193,6 +200,7 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.antonyms': 'Antonyme',
     'popup.noThesaurus': 'Keine Synonyme oder Antonyme verfügbar.',
     'popup.lookUp': 'Nachschlagen',
+    'popup.editOcr': 'Erkannten Text bearbeiten',
     'popup.addDefinition': 'Definition hinzufügen',
     'popup.headword': 'Stichwort',
     'popup.definitionBody': 'Definition',

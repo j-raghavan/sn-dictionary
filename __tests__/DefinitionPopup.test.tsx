@@ -1076,41 +1076,73 @@ const relookupActions = (
 const findByLabel = (tree: ReactTestRenderer, label: string) =>
   tree.root.findAll(n => n.props.accessibilityLabel === label);
 
-describe('DefinitionPopup — OCR correction (editable)', () => {
-  test('lasso flow (editable=true) renders the OCR field + Look up button', () => {
+// Tap the pencil to enter edit mode.
+const enterEdit = (tree: ReactTestRenderer) =>
+  act(() => findByLabel(tree, 'Edit recognized text')[0].props.onPress());
+
+describe('DefinitionPopup — OCR correction (display-first → tap-to-edit)', () => {
+  test('CASE 1: editable, fresh result -> DISPLAY mode (text + pencil, NO field)', () => {
     const tree = renderPopup();
     act(() => showDefinition(found('WordNet', 'hello', 'a greeting'), 'OCR: hello', true));
+    // The recognized text is shown via a tappable pencil row; NO edit
+    // field or Lookup button yet.
+    expect(findByLabel(tree, 'Edit recognized text').length).toBe(1);
+    expect(findByLabel(tree, 'OCR').length).toBe(0);
+    expect(findByLabel(tree, 'Look up').length).toBe(0);
+    // The display row carries the recognized word (seeded from queriedFor).
+    expect(collectText(tree)).toContain('hello');
+  });
+
+  test('CASE 2: tapping the pencil -> EDIT mode (field + Look up appear)', () => {
+    const tree = renderPopup();
+    act(() => showDefinition(found('WordNet', 'hello', 'a greeting'), 'OCR: hello', true));
+    enterEdit(tree);
+    const input = findByLabel(tree, 'OCR');
+    expect(input.length).toBe(1);
+    expect(input[0].props.value).toBe('hello');
+    expect(input[0].props.autoFocus).toBe(true);
     expect(findByLabel(tree, 'Look up').length).toBe(1);
-    // The OCR field is seeded with the queried word.
-    const input = findByLabel(tree, 'OCR')[0];
-    expect(input.props.value).toBe('hello');
   });
 
-  test('doc-select flow (editable omitted) has NO OCR field', () => {
-    const tree = renderPopup();
-    act(() => showDefinition(found('WordNet', 'hello', 'a greeting'), 'OCR: hello'));
-    expect(findByLabel(tree, 'Look up').length).toBe(0);
-  });
-
-  test('editable is gated on === true, not ocrLabel presence', () => {
-    // ocrLabel present but editable false-y -> still NO field.
-    const tree = renderPopup();
-    act(() =>
-      showDefinition(found('WordNet', 'hi', 'greeting'), 'OCR: hi', false),
-    );
-    expect(findByLabel(tree, 'Look up').length).toBe(0);
-  });
-
-  test('Look up re-runs the lookup with the corrected (edited) text', async () => {
+  test('CASE 3: Look up in edit mode re-runs the lookup with the edited text', async () => {
     const relookup = jest.fn(async () => undefined);
     setPopupActions(relookupActions(relookup));
     const tree = renderPopup();
     act(() => showDefinition(notFound('helo'), 'OCR: helo', true));
-    // Correct the text.
-    const input = findByLabel(tree, 'OCR')[0];
-    act(() => input.props.onChangeText('hello'));
+    enterEdit(tree);
+    act(() => findByLabel(tree, 'OCR')[0].props.onChangeText('hello'));
     await act(async () => findByLabel(tree, 'Look up')[0].props.onPress());
     expect(relookup).toHaveBeenCalledWith('hello');
+  });
+
+  test('CASE 4: a NEW result resets back to display mode (editing -> false)', () => {
+    const tree = renderPopup();
+    act(() => showDefinition(notFound('helo'), 'OCR: helo', true));
+    enterEdit(tree);
+    expect(findByLabel(tree, 'OCR').length).toBe(1); // editing
+    // A new result arrives (e.g. after relookup) -> back to display mode.
+    act(() => showDefinition(found('WordNet', 'hello', 'a greeting'), 'OCR: hello', true));
+    expect(findByLabel(tree, 'OCR').length).toBe(0); // no field
+    expect(findByLabel(tree, 'Edit recognized text').length).toBe(1); // pencil back
+  });
+
+  test('CASE 5: doc-select flow (editable !== true) has NO pencil and NO field', () => {
+    const tree = renderPopup();
+    act(() => showDefinition(found('WordNet', 'hello', 'a greeting'), 'OCR: hello'));
+    expect(findByLabel(tree, 'Edit recognized text').length).toBe(0);
+    expect(findByLabel(tree, 'OCR').length).toBe(0);
+    expect(findByLabel(tree, 'Look up').length).toBe(0);
+    // The plain OCR label still renders in the non-editable flow.
+    expect(collectText(tree)).toContain('OCR: hello');
+  });
+
+  test('editable is gated on === true, not ocrLabel presence', () => {
+    const tree = renderPopup();
+    act(() =>
+      showDefinition(found('WordNet', 'hi', 'greeting'), 'OCR: hi', false),
+    );
+    expect(findByLabel(tree, 'Edit recognized text').length).toBe(0);
+    expect(findByLabel(tree, 'Look up').length).toBe(0);
   });
 
   test('Look up on empty/whitespace text is a no-op', async () => {
@@ -1118,8 +1150,8 @@ describe('DefinitionPopup — OCR correction (editable)', () => {
     setPopupActions(relookupActions(relookup));
     const tree = renderPopup();
     act(() => showDefinition(notFound('x'), 'OCR: x', true));
-    const input = findByLabel(tree, 'OCR')[0];
-    act(() => input.props.onChangeText('   '));
+    enterEdit(tree);
+    act(() => findByLabel(tree, 'OCR')[0].props.onChangeText('   '));
     await act(async () => findByLabel(tree, 'Look up')[0].props.onPress());
     expect(relookup).not.toHaveBeenCalled();
   });
@@ -1131,23 +1163,21 @@ describe('DefinitionPopup — OCR correction (editable)', () => {
     setPopupActions(relookupActions(relookup));
     const tree = renderPopup();
     act(() => showDefinition(notFound('helo'), 'OCR: helo', true));
-    const input = findByLabel(tree, 'OCR')[0];
-    act(() => input.props.onChangeText('hello'));
+    enterEdit(tree);
+    act(() => findByLabel(tree, 'OCR')[0].props.onChangeText('hello'));
     await act(async () => {
       findByLabel(tree, 'Look up')[0].props.onPress();
       await Promise.resolve();
     });
-    // No unhandled rejection / crash; the handler swallowed it.
     expect(relookup).toHaveBeenCalledWith('hello');
   });
 
   test('Look up with no registered actions does not crash', async () => {
     const tree = renderPopup();
     act(() => showDefinition(notFound('x'), 'OCR: x', true));
-    const input = findByLabel(tree, 'OCR')[0];
-    act(() => input.props.onChangeText('hello'));
+    enterEdit(tree);
+    act(() => findByLabel(tree, 'OCR')[0].props.onChangeText('hello'));
     await act(async () => findByLabel(tree, 'Look up')[0].props.onPress());
-    // No throw — assertion is reaching here.
     expect(findByLabel(tree, 'Look up').length).toBe(1);
   });
 });

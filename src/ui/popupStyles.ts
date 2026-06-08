@@ -264,6 +264,39 @@ export const popupStyles = StyleSheet.create({
     alignItems: 'center',
     marginTop: 8,
   },
+  // Display mode for the OCR-correction field (lasso flow): the
+  // recognized word on the left, a pencil glyph on the right. Tapping
+  // the whole row enters edit mode. Read-first so the user isn't
+  // confronted with an edit field when the recognition was correct.
+  ocrDisplayRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 8,
+  },
+  ocrDisplayText: {
+    flexShrink: 1,
+    fontSize: 18,
+    color: '#555555',
+    marginRight: 8,
+  },
+  // Pencil glyph button — same 32×32 circular touch target as the
+  // font-size −/+ glyph buttons (crisp on e-ink; no emoji, no PNG).
+  pencilButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#000000',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pencilLabel: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#000000',
+    lineHeight: 20,
+  },
   editInput: {
     flex: 1,
     fontSize: 18,
