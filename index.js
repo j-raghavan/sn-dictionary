@@ -205,6 +205,9 @@ const bootstrapPorts = {
             idxPath: descriptor.idxPath,
             dictPath: descriptor.dictPath,
             synPath: descriptor.synPath,
+            // The containing subfolder — removed (best-effort) after the
+            // files are deleted so an empty dir isn't left behind (FR3).
+            setPath: descriptor.setPath,
             // sidecarPath may be undefined (no meta.json) — then no sidecar
             // file is deleted. The sidecarText is the discovery-resolved
             // sidecar serialized (discovery already read+validated meta.json,

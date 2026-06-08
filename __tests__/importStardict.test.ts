@@ -30,6 +30,7 @@ type Harness = {
   runNativeImport: jest.Mock;
   statDictSize: jest.Mock;
   deleteFile: jest.Mock;
+  deleteFolder: jest.Mock;
   slugFiles: Map<string, SqliteDb>;
   discard: jest.Mock;
   audit: SqliteDb;
@@ -49,6 +50,8 @@ type Opts = {
   // mismatch even when rows are inserted) and/or make it throw.
   nativeReports?: number;
   nativeThrows?: Error;
+  // Wire the FR3 subfolder cleanup (sourceFolder + deleteFolder).
+  sourceFolder?: string;
 };
 
 const DEFAULT_ROWS = [
@@ -63,6 +66,7 @@ const makeHarness = async (opts: Opts = {}): Promise<Harness> => {
   // filename -> the slug DB the (fake) native importer wrote.
   const slugFiles = new Map<string, SqliteDb>();
   const deleteFile = jest.fn(async () => undefined);
+  const deleteFolder = jest.fn(async () => true);
   const discard = jest.fn(async (filename: string) => {
     slugFiles.delete(filename);
   });
@@ -124,7 +128,20 @@ const makeHarness = async (opts: Opts = {}): Promise<Harness> => {
     const space = opts.space;
     ports.getAvailableSpace = async () => space;
   }
-  return {ports, runNativeImport, statDictSize, deleteFile, slugFiles, discard, audit};
+  if (opts.sourceFolder !== undefined) {
+    ports.sourceFolder = opts.sourceFolder;
+    ports.deleteFolder = deleteFolder;
+  }
+  return {
+    ports,
+    runNativeImport,
+    statDictSize,
+    deleteFile,
+    deleteFolder,
+    slugFiles,
+    discard,
+    audit,
+  };
 };
 
 describe('importStardict — happy path', () => {
@@ -429,5 +446,24 @@ describe('importStardict — space guard (TF5-FR6)', () => {
     const res = await importStardict(h.ports);
     expect(res.ok).toBe(true);
     expect(h.runNativeImport).toHaveBeenCalled();
+  });
+});
+
+describe('importStardict — subfolder cleanup (FR3)', () => {
+  it('removes the StarDict subfolder after a verified import', async () => {
+    const h = await makeHarness({
+      sourcePaths: ['/d/Fr/x.ifo', '/d/Fr/x.idx', '/d/Fr/x.dict', '/d/Fr/meta.json'],
+      sourceFolder: '/d/Fr',
+    });
+    const res = await importStardict(h.ports);
+    expect(res.ok).toBe(true);
+    expect(h.deleteFolder).toHaveBeenCalledWith('/d/Fr');
+  });
+
+  it('does not remove the subfolder on a failed import (verify mismatch)', async () => {
+    const h = await makeHarness({nativeReports: 99, sourceFolder: '/d/Fr'});
+    const res = await importStardict(h.ports);
+    expect(res.ok).toBe(false);
+    expect(h.deleteFolder).not.toHaveBeenCalled();
   });
 });

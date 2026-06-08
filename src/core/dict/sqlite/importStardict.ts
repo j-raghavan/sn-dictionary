@@ -48,6 +48,10 @@ export interface ImportPorts {
   deleteFile(path: string): Promise<void>;
   // The source files to delete on success (triple + syn + sidecar).
   sourcePaths: string[];
+  // The StarDict subfolder, removed (best-effort) once its files are
+  // deleted so an empty dir isn't left behind (M17-FR3).
+  sourceFolder?: string;
+  deleteFolder?(path: string): Promise<boolean>;
   // Optional free-space probe (bytes). With the estimate it gates the
   // import (TF5-FR6).
   getAvailableSpace?(): Promise<number>;
@@ -118,6 +122,12 @@ export const stardictRunPorts = (ports: ImportPorts): RunImportPorts => {
   };
   if (ports.getAvailableSpace !== undefined) {
     runPorts.getAvailableSpace = ports.getAvailableSpace;
+  }
+  // Pass the subfolder cleanup through only when BOTH are wired (the
+  // spine no-ops otherwise).
+  if (ports.sourceFolder !== undefined && ports.deleteFolder !== undefined) {
+    runPorts.sourceFolder = ports.sourceFolder;
+    runPorts.deleteFolder = ports.deleteFolder;
   }
   return runPorts;
 };

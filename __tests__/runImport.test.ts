@@ -24,15 +24,22 @@ type Opts = {
   required?: number;
   sourcePaths?: string[];
   deleteThrowsOn?: string;
+  // The StarDict subfolder to remove after the files (FR3). Omit to model
+  // a loose CSV (no folder cleanup).
+  sourceFolder?: string;
+  // Make deleteFolder throw / resolve false (still a success import).
+  deleteFolderThrows?: Error;
 };
 
 type Harness = {
   ports: RunImportPorts;
   produceSlugDb: jest.Mock;
   deleteFile: jest.Mock;
+  deleteFolder: jest.Mock;
   discard: jest.Mock;
   slugFiles: Map<string, SqliteDb>;
   audit: SqliteDb;
+  deleteOrder: string[];
 };
 
 const DEFAULT_ROWS = [
@@ -45,10 +52,21 @@ const makeHarness = async (opts: Opts = {}): Promise<Harness> => {
     await ensureImportsTable(d);
   });
   const slugFiles = new Map<string, SqliteDb>();
+  // Records the order of file vs folder deletes so a test can assert the
+  // folder is removed AFTER the files.
+  const deleteOrder: string[] = [];
   const deleteFile = jest.fn(async (path: string) => {
+    deleteOrder.push(`file:${path}`);
     if (opts.deleteThrowsOn === path) {
       throw new Error(`delete failed: ${path}`);
     }
+  });
+  const deleteFolder = jest.fn(async (path: string) => {
+    deleteOrder.push(`folder:${path}`);
+    if (opts.deleteFolderThrows) {
+      throw opts.deleteFolderThrows;
+    }
+    return true;
   });
   const discard = jest.fn(async (filename: string) => {
     slugFiles.delete(filename);
@@ -92,7 +110,20 @@ const makeHarness = async (opts: Opts = {}): Promise<Harness> => {
     ports.getAvailableSpace = async () => space;
     ports.estimateRequiredBytes = async () => required;
   }
-  return {ports, produceSlugDb, deleteFile, discard, slugFiles, audit};
+  if (opts.sourceFolder !== undefined) {
+    ports.sourceFolder = opts.sourceFolder;
+    ports.deleteFolder = deleteFolder;
+  }
+  return {
+    ports,
+    produceSlugDb,
+    deleteFile,
+    deleteFolder,
+    discard,
+    slugFiles,
+    audit,
+    deleteOrder,
+  };
 };
 
 describe('runImport — happy path', () => {
@@ -174,5 +205,53 @@ describe('runImport — data safety', () => {
     expect(await findImportByNameLang(h.audit, 'My Dict', 'en')).toMatchObject({
       filename: 'my-dict.en.db',
     });
+  });
+});
+
+describe('runImport — source folder cleanup (FR3)', () => {
+  it('removes the source folder AFTER the files on a verified import', async () => {
+    const h = await makeHarness({
+      sourcePaths: ['/d/Fr/x.ifo', '/d/Fr/x.idx', '/d/Fr/x.dict'],
+      sourceFolder: '/d/Fr',
+    });
+    const res = await runImport(h.ports);
+    expect(res.ok).toBe(true);
+    expect(h.deleteFolder).toHaveBeenCalledWith('/d/Fr');
+    // Folder delete comes strictly after every file delete.
+    expect(h.deleteOrder).toEqual([
+      'file:/d/Fr/x.ifo',
+      'file:/d/Fr/x.idx',
+      'file:/d/Fr/x.dict',
+      'folder:/d/Fr',
+    ]);
+  });
+
+  it('does NOT call deleteFolder when no sourceFolder is set (loose CSV)', async () => {
+    const h = await makeHarness(); // CSV: no sourceFolder
+    const res = await runImport(h.ports);
+    expect(res.ok).toBe(true);
+    expect(h.deleteFolder).not.toHaveBeenCalled();
+  });
+
+  it('a deleteFolder throw is isolated: import still succeeds, DB not discarded', async () => {
+    const h = await makeHarness({
+      sourceFolder: '/d/Fr',
+      deleteFolderThrows: new Error('directory not empty'),
+    });
+    const res = await runImport(h.ports, {warn: jest.fn()});
+    // The verified+audited import is unaffected by the folder-cleanup fail.
+    expect(res).toMatchObject({ok: true, filename: 'my-dict.en.db'});
+    expect(h.discard).not.toHaveBeenCalled();
+    expect(await findImportByNameLang(h.audit, 'My Dict', 'en')).toMatchObject({
+      filename: 'my-dict.en.db',
+    });
+  });
+
+  it('never removes the folder on a FAILED import (verify mismatch)', async () => {
+    const h = await makeHarness({reports: 99, sourceFolder: '/d/Fr'});
+    const res = await runImport(h.ports);
+    expect(res.ok).toBe(false);
+    expect(h.deleteFolder).not.toHaveBeenCalled();
+    expect(h.deleteFile).not.toHaveBeenCalled();
   });
 });

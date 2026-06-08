@@ -14,6 +14,8 @@ import type {RunNativeImport} from './nativeImport';
 type FileUtils = {
   deleteFile: (path: string) => Promise<boolean>;
   getStorageAvailableSpace: () => Promise<number>;
+  // Remove a directory (best-effort empty-folder cleanup, M17-FR3).
+  deleteDir: (path: string) => Promise<boolean>;
 };
 
 export type RnImportConfig = {
@@ -23,6 +25,9 @@ export type RnImportConfig = {
   idxPath: string;
   dictPath: string;
   synPath?: string;
+  // The StarDict subfolder (descriptor.setPath) — removed best-effort
+  // after the files are deleted, so an empty dir isn't left behind.
+  setPath: string;
   // Absent when the folder ships no meta.json — then no sidecar file is
   // deleted (sidecarText is the discovery default, synthesized below).
   sidecarPath?: string;
@@ -85,6 +90,11 @@ export const createRnImportPorts = (config: RnImportConfig): ImportPorts => {
       await config.fileUtils.deleteFile(path);
     },
     sourcePaths,
+    // The now-empty StarDict subfolder is removed best-effort after the
+    // files; runImport isolates any failure (FR3).
+    sourceFolder: config.setPath,
+    deleteFolder: (path: string): Promise<boolean> =>
+      config.fileUtils.deleteDir(path),
     async getAvailableSpace(): Promise<number> {
       return config.fileUtils.getStorageAvailableSpace();
     },

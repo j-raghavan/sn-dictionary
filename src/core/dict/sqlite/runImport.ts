@@ -49,6 +49,14 @@ export interface RunImportPorts {
   deleteFile(path: string): Promise<void>;
   // The source files to delete on success (data files + sidecar).
   sourcePaths: string[];
+  // Optional containing folder to remove once the sources are deleted
+  // (StarDict lives in its own subfolder; CSV is a loose root file and
+  // sets none). Best-effort: a non-empty/failed rmdir is logged + ignored
+  // and NEVER fails the import.
+  sourceFolder?: string;
+  // Remove the (now-empty) source folder. Only called when sourceFolder
+  // is set. Resolving false / throwing is tolerated.
+  deleteFolder?(path: string): Promise<boolean>;
   slugDb: SlugDbLifecycle;
   // The WRITABLE user.db handle the audit row is written to.
   audit: SqliteDb;
@@ -165,6 +173,20 @@ export const runImport = async (
 
     for (const path of ports.sourcePaths) {
       await ports.deleteFile(path);
+    }
+
+    // Best-effort: remove the now-empty source folder (StarDict's
+    // subfolder; CSV sets none). ISOLATED so a non-empty/failed rmdir
+    // NEVER flips the verified+audited import to a failure or discards
+    // the DB — the worst case is an empty folder left on disk.
+    if (ports.sourceFolder !== undefined && ports.deleteFolder !== undefined) {
+      try {
+        await ports.deleteFolder(ports.sourceFolder);
+      } catch (e) {
+        logger?.warn(
+          `[import] could not remove source folder "${ports.sourceFolder}": ${(e as Error).message} — left in place`,
+        );
+      }
     }
 
     logger?.log?.(
