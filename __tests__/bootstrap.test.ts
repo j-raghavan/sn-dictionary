@@ -138,14 +138,9 @@ const makeHarness = async (opts: {
 
   const ports: BootstrapPorts = {
     provision: {
-      exists: async () => false,
-      open: async () => baseDb,
-      copyFromAssetAndOpen: async () => {
-        if (opts.provisionRejects) {
-          throw new Error('createFromLocation failed');
-        }
-        return baseDb;
-      },
+      // base.db is .snplg-bundled + host-extracted; provision opens it
+      // in place. provisionRejects models a missing base.db (open null).
+      open: async () => (opts.provisionRejects ? null : baseDb),
     },
     db: {
       openUserDb: async () => {
@@ -222,7 +217,7 @@ describe('bootstrap', () => {
 
   it('REJECTS and does NOT enable buttons when provision fails (Flag 4)', async () => {
     const h = await makeHarness({provisionRejects: true});
-    await expect(bootstrap(h.ports)).rejects.toThrow('createFromLocation failed');
+    await expect(bootstrap(h.ports)).rejects.toThrow('[provision] base.db missing');
     expect(h.enableButtons).not.toHaveBeenCalled();
   });
 
