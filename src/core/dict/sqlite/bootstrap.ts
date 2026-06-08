@@ -18,6 +18,7 @@ import {provisionBaseDb} from './provision';
 import {
   CREATE_USER_ENTRIES_TABLE,
   CREATE_USER_ENTRIES_INDEX,
+  ALTER_USER_ENTRIES_ADD_PHONETIC,
   SELECT_IMPORT_ALL,
   type ImportRow,
 } from './schema';
@@ -167,10 +168,23 @@ export const bootstrap = async (
     userDb = await ports.db.openUserDb();
     // Additive migration: user.db carries the entries table (for
     // user-added words, TF7) + the imports audit table. user.db uses
-    // the 6-col superset 'entries' (lang + created_at); base.db/imports
-    // keep the 4-col CREATE_ENTRIES_TABLE.
+    // the 7-col superset 'entries' (lang + created_at + phonetic);
+    // base.db/imports keep the 4-col CREATE_ENTRIES_TABLE.
     await userDb.run(CREATE_USER_ENTRIES_TABLE);
     await userDb.run(CREATE_USER_ENTRIES_INDEX);
+    // v3 additive migration (M17-FR2): CREATE ... IF NOT EXISTS does NOT
+    // alter an EXISTING (pre-v3) user.db, so an old 6-col table would
+    // still lack `phonetic` and the v3 SELECT would throw "no such
+    // column" on every lookup. ALTER it in; on a fresh 7-col table SQLite
+    // raises "duplicate column name" which we swallow (idempotent).
+    try {
+      await userDb.run(ALTER_USER_ENTRIES_ADD_PHONETIC);
+    } catch (e) {
+      const msg = (e as Error).message;
+      if (!/duplicate column name/i.test(msg)) {
+        throw e;
+      }
+    }
     await ensureImportsTable(userDb);
   } catch (e) {
     logger?.warn(

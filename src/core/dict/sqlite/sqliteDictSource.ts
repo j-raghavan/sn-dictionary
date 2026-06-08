@@ -37,24 +37,48 @@ export const coerceFormat = (raw: string): DefinitionFormat =>
     ? (raw as DefinitionFormat)
     : 'plain';
 
-// Run the one indexed query for an already-folded key. First row wins
-// (the SELECT carries LIMIT 1); no row -> null. When `formatOverride`
-// is set it wins over the stored column (the bundled WordNet base
-// pins 'wordnet').
-// Read the row for a folded key. Projects the v3 `phonetic` column, but
-// DEFENSIVELY falls back to the 4-col SELECT for an old `entries` table
-// that has no phonetic column (user.db's 6-col table, pre-v3 slugs) —
-// a missing column must be treated as "no phonetic", never a crash.
+// Schema-aware SELECT, NOT try/catch (M17-FR2). The old approach ran the
+// v3 SELECT and caught the failure for a pre-v3 table — but every miss
+// LOGGED a native `SQLiteException: no such column: phonetic` (red log
+// noise on every user.db / old-slug lookup) AND wasted a round-trip on
+// the retry. Instead probe `entries` ONCE per DB handle (PRAGMA
+// table_info), cache the boolean, and ALWAYS run the correct SELECT — so
+// we never issue a query that throws.
+//
+// Cache is keyed by the DB handle (a WeakMap, GC'd with the handle) and
+// stores the in-flight PROMISE so concurrent first-lookups share the one
+// probe instead of racing N PRAGMAs.
+const phoneticSupport = new WeakMap<SqliteDb, Promise<boolean>>();
+
+const probeHasPhonetic = async (db: SqliteDb): Promise<boolean> => {
+  const cols = await db.query<{name: string}>('PRAGMA table_info(entries)');
+  return cols.some(c => c.name === 'phonetic');
+};
+
+const hasPhonetic = (db: SqliteDb): Promise<boolean> => {
+  let probe = phoneticSupport.get(db);
+  if (probe === undefined) {
+    // Probe failures (e.g. no `entries` table yet) resolve false rather
+    // than rejecting — the phonetic-less SELECT is the safe default and
+    // surfaces the real "no such table" error itself if it persists.
+    probe = probeHasPhonetic(db).catch(() => false);
+    phoneticSupport.set(db, probe);
+  }
+  return probe;
+};
+
+// Read the row for a folded key. First row wins (the SELECT carries
+// LIMIT 1); no row -> null. Picks the v3 (phonetic) or 4-col SELECT from
+// the cached schema probe so a pre-v3 `entries` (user.db / old slug)
+// never throws "no such column".
 const queryEntryRow = async (
   db: SqliteDb,
   foldedKey: string,
 ): Promise<EntryRow[]> => {
-  try {
-    return await db.query<EntryRow>(SELECT_ENTRY_BY_KEY, [foldedKey]);
-  } catch {
-    // Most likely "no such column: phonetic" — retry phonetic-less.
-    return db.query<EntryRow>(SELECT_ENTRY_BY_KEY_NO_PHONETIC, [foldedKey]);
-  }
+  const sql = (await hasPhonetic(db))
+    ? SELECT_ENTRY_BY_KEY
+    : SELECT_ENTRY_BY_KEY_NO_PHONETIC;
+  return db.query<EntryRow>(sql, [foldedKey]);
 };
 
 export const selectByKey = async (

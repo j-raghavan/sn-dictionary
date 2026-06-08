@@ -44,8 +44,12 @@ export const CREATE_ENTRIES_INDEX =
 // SELECT_ENTRY_BY_KEY verbatim — but as a column SUPERSET: lang +
 // created_at for user-added words. The extra columns default so the
 // shared 4-col SELECT (word, definition, format) keeps working. This
-// 6-col CREATE runs ONLY against user.db (base.db/imports keep the
-// 4-col CREATE_ENTRIES_TABLE).
+// 7-col CREATE runs ONLY against user.db (base.db/imports keep the
+// 4-col CREATE_ENTRIES_TABLE). The v3 `phonetic` column is a NULLABLE
+// last column so the shared v3 SELECT_ENTRY_BY_KEY (which projects
+// phonetic) runs against user.db WITHOUT throwing "no such column"
+// (M17-FR2). An EXISTING on-device user.db gets the column via the
+// additive ALTER migration in bootstrap (IF NOT EXISTS won't alter it).
 export const CREATE_USER_ENTRIES_TABLE =
   'CREATE TABLE IF NOT EXISTS entries (' +
   'key TEXT NOT NULL, ' +
@@ -53,7 +57,14 @@ export const CREATE_USER_ENTRIES_TABLE =
   'definition TEXT NOT NULL, ' +
   'format TEXT NOT NULL, ' +
   "lang TEXT NOT NULL DEFAULT 'und', " +
-  'created_at TEXT NOT NULL)';
+  'created_at TEXT NOT NULL, ' +
+  'phonetic TEXT)';
+
+// Additive migration to bring an EXISTING (pre-v3) user.db's entries
+// table up to the 7-col shape. Idempotent: on a fresh 7-col table SQLite
+// raises "duplicate column name: phonetic", which the caller swallows.
+export const ALTER_USER_ENTRIES_ADD_PHONETIC =
+  'ALTER TABLE entries ADD COLUMN phonetic TEXT';
 
 export const CREATE_USER_ENTRIES_INDEX =
   'CREATE INDEX IF NOT EXISTS idx_user_key ON entries(key)';

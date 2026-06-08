@@ -103,6 +103,7 @@ type Harness = {
   openImportedDb: jest.Mock;
   importResults: Map<string, {ok: boolean; filename: string}>;
   baseDb: SqliteDb;
+  userDb: SqliteDb;
 };
 
 const makeBaseDb = (): Promise<SqliteDb> =>
@@ -119,6 +120,12 @@ const makeBaseDb = (): Promise<SqliteDb> =>
 const makeHarness = async (opts: {
   descriptors?: ImportJobDescriptor[];
   auditSeed?: (db: SqliteDb) => Promise<void>;
+  // Pre-seed the user.db BEFORE bootstrap opens it (e.g. an existing
+  // pre-v3 6-col entries table to exercise the FR2 ALTER migration).
+  userDbSeed?: (db: SqliteDb) => Promise<void>;
+  // Make the FR2 ALTER migration throw this error (to exercise the
+  // non-"duplicate column" re-throw branch).
+  userDbAlterError?: Error;
   provisionRejects?: boolean;
   userDbThrows?: boolean;
   enableButtonsThrows?: boolean;
@@ -130,7 +137,7 @@ const makeHarness = async (opts: {
   };
 }): Promise<Harness> => {
   const baseDb = await makeBaseDb();
-  const userDb = await createSeededDb(async () => undefined);
+  const userDb = await createSeededDb(opts.userDbSeed ?? (async () => undefined));
   const enableButtons = jest.fn(async () => {
     if (opts.enableButtonsThrows) {
       throw new Error('button bridge down');
@@ -165,6 +172,16 @@ const makeHarness = async (opts: {
           await ensureImportsTable(userDb);
           await opts.auditSeed(userDb);
         }
+        if (opts.userDbAlterError) {
+          // Intercept the ALTER ... ADD COLUMN phonetic call so it throws
+          // a NON-"duplicate column" error (the re-throw branch in the
+          // migration); all other run() calls pass through.
+          const realRun = userDb.run.bind(userDb);
+          userDb.run = ((sql: string, params?: unknown[]) =>
+            /ALTER TABLE entries ADD COLUMN phonetic/i.test(sql)
+              ? Promise.reject(opts.userDbAlterError)
+              : realRun(sql, params as never)) as typeof userDb.run;
+        }
         return userDb;
       },
       openImportedDb,
@@ -188,7 +205,7 @@ const makeHarness = async (opts: {
     },
     enableButtons,
   };
-  return {ports, enableButtons, openImportedDb, importResults, baseDb};
+  return {ports, enableButtons, openImportedDb, importResults, baseDb, userDb};
 };
 
 // runImport is mocked so bootstrap's (format-agnostic) dispatch is tested
@@ -482,5 +499,49 @@ describe('bootstrap — CSV import dispatch (FR6)', () => {
     expect(names[names.length - 1]).toBe('WordNet');
     expect(new Set(names)).toEqual(new Set(['User', 'Wiki', 'Dune', 'WordNet']));
     expect(handle.sourceLang).toMatchObject({Wiki: 'de', Dune: 'en'});
+  });
+});
+
+describe('bootstrap — user.db phonetic migration (FR2)', () => {
+  const cols = async (db: SqliteDb): Promise<string[]> => {
+    const rows = await db.query<{name: string}>('PRAGMA table_info(entries)');
+    return rows.map(r => r.name);
+  };
+
+  it('adds the phonetic column to an EXISTING pre-v3 6-col user.db', async () => {
+    const h = await makeHarness({
+      userDbSeed: async d => {
+        // The old on-device shape: 6-col entries, NO phonetic.
+        await d.run(
+          'CREATE TABLE entries (key TEXT NOT NULL, word TEXT NOT NULL, definition TEXT NOT NULL, ' +
+            "format TEXT NOT NULL, lang TEXT NOT NULL DEFAULT 'und', created_at TEXT NOT NULL)",
+        );
+      },
+    });
+    expect(await cols(h.userDb)).not.toContain('phonetic');
+    await bootstrap(h.ports);
+    expect(await cols(h.userDb)).toContain('phonetic');
+  });
+
+  it('re-throws a NON-duplicate ALTER error -> user.db degrades (base still works)', async () => {
+    const h = await makeHarness({
+      userDbAlterError: new Error('disk I/O error'),
+    });
+    // A real ALTER failure isn't swallowed: it propagates to the outer
+    // user.db try/catch, degrading to base-only (userDb null).
+    const handle = await bootstrap(h.ports, {warn: jest.fn()});
+    expect(handle.userDb).toBeNull();
+    expect(handle.sources.map(s => s.name)).toEqual(['WordNet']);
+  });
+
+  it('is idempotent: a fresh 7-col user.db (with phonetic) is a no-op, no throw', async () => {
+    // Fresh DB: CREATE_USER_ENTRIES_TABLE makes the 7-col table, then the
+    // ALTER raises "duplicate column name" which bootstrap swallows.
+    const h = await makeHarness({});
+    await expect(bootstrap(h.ports)).resolves.toBeDefined();
+    expect(await cols(h.userDb)).toContain('phonetic');
+    // Re-running bootstrap against the same DB still tolerates the dup.
+    await expect(bootstrap(h.ports)).resolves.toBeDefined();
+    expect((await cols(h.userDb)).filter(c => c === 'phonetic')).toHaveLength(1);
   });
 });
