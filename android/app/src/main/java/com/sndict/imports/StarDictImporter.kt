@@ -33,7 +33,7 @@ import java.util.zip.GZIPInputStream
 // The output DB is byte-identical to the prior all-in-heap version —
 // only HOW we read the body and WHEN we insert changed.
 
-private const val SCHEMA_VERSION = 2 // MUST match buildBaseDb.ts SCHEMA_VERSION
+private const val SCHEMA_VERSION = 3 // MUST match buildBaseDb.ts SCHEMA_VERSION (v3: + phonetic col, ADR-0008)
 
 private data class IdxEntry(val word: String, val offset: Long, val length: Int)
 
