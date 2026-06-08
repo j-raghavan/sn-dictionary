@@ -43,7 +43,6 @@ type RnSqliteStorage = {
   openDatabase: (config: {
     name: string;
     location?: string;
-    createFromLocation?: number | string;
   }) => Promise<RnDatabase>;
 };
 
@@ -113,22 +112,27 @@ const loadStorage = (): RnSqliteStorage => {
   return (mod?.default ?? mod) as RnSqliteStorage;
 };
 
-// Open a DB shipped/copied into the plugin sandbox. `createFromAsset`
-// triggers the one-time createFromLocation copy of a bundled asset
-// (base.db) on first run; omit it for the writable user.db and for
-// already-provisioned DBs.
+// Open a DB by {name, location} — the proven sticker-demo pattern
+// (src/db/index.js: openDatabase({name, location: 'plugins/<id>/'})).
+// The native side resolves the file as getFilesDir() + location + name
+// (SQLitePlugin.java:392-395), i.e. the plugin host's extracted
+// plugins/<pluginID>/ directory. There is deliberately NO
+// createFromLocation / createFromAsset: the .snplg ships base.db and
+// the host extracts it into place, so no asset copy is needed (the
+// spike proved createFromLocation can't read app.npk assets in a
+// dynamically-loaded plugin). openDatabase REJECTS via the promise on
+// the native error callback — we do NOT swallow it into an empty DB
+// (that empty-DB fall-through is exactly what masked the failure).
 export const openRnSqliteDb = (config: {
   name: string;
-  location?: string;
-  createFromAsset?: number | string;
+  location: string;
 }): OpenSqliteDb => {
   return async (): Promise<SqliteDb | null> => {
     const storage = loadStorage();
     storage.enablePromise(true);
     const db = await storage.openDatabase({
       name: config.name,
-      location: config.location ?? 'default',
-      createFromLocation: config.createFromAsset,
+      location: config.location,
     });
     return wrap(db);
   };

@@ -34,25 +34,23 @@ export type RnImportConfig = {
   dictPath: string;
   synPath?: string;
   sidecarPath: string;
-  // Where slug DBs live inside the plugin sandbox; filename is appended.
-  slugDbDir: string;
   fileUtils: FileUtils;
   readers: SourceReaders;
-  // Opens (creates) a slug DB at an absolute path.
-  openSlugDb: (absPath: string) => Promise<SqliteDb>;
-  // Reopens an EXISTING slug DB at an absolute path to read its
-  // COMMITTED state for verify. MUST resolve the SAME absolute path
-  // openSlugDb was given for a filename — verify reopens the actual DB
-  // just written, not a fixed placeholder (the M5 device-wiring bug).
-  reopenSlugDb: (absPath: string) => Promise<SqliteDb | null>;
+  // Slug-DB lifecycle keyed by FILENAME (e.g. 'wikdict-de.de.db'). The
+  // runtime resolves these to openRnSqliteDb({name: filename, location:
+  // 'plugins/<id>/'}) — the native side places the file under the host's
+  // extracted plugin dir (getFilesDir()+location+name). No absolute
+  // paths in JS.
+  openSlugByName: (filename: string) => Promise<SqliteDb | null>;
+  reopenSlugByName: (filename: string) => Promise<SqliteDb | null>;
+  // Best-effort delete of a half-built slug DB (the runtime resolves the
+  // filename to its on-disk location and deletes it).
+  discardSlugByName: (filename: string) => Promise<void>;
   // The writable user.db handle the audit row goes into.
   audit: SqliteDb;
   // Timestamp source (default: ISO now).
   now?: () => string;
 };
-
-const joinPath = (dir: string, name: string): string =>
-  dir.endsWith('/') ? `${dir}${name}` : `${dir}/${name}`;
 
 export const createRnImportPorts = (config: RnImportConfig): ImportPorts => {
   const sourcePaths = [
@@ -65,21 +63,23 @@ export const createRnImportPorts = (config: RnImportConfig): ImportPorts => {
 
   const slugDb: SlugDbLifecycle = {
     async open(filename: string): Promise<SqliteDb> {
-      return config.openSlugDb(joinPath(config.slugDbDir, filename));
+      const db = await config.openSlugByName(filename);
+      if (db === null) {
+        throw new Error(`[import] open slug db returned null: ${filename}`);
+      }
+      return db;
     },
     async reopenForVerify(filename: string): Promise<SqliteDb> {
-      // Resolve the SAME absolute path as open(filename) so verify
-      // reopens the actual slug DB just written.
-      const db = await config.reopenSlugDb(
-        joinPath(config.slugDbDir, filename),
-      );
+      // Reopens the SAME {name, location} slug DB to read committed
+      // state — verify reopens the actual DB just written.
+      const db = await config.reopenSlugByName(filename);
       if (db === null) {
         throw new Error(`[import] reopen for verify returned null: ${filename}`);
       }
       return db;
     },
     async discard(filename: string): Promise<void> {
-      await config.fileUtils.deleteFile(joinPath(config.slugDbDir, filename));
+      await config.discardSlugByName(filename);
     },
   };
 
