@@ -343,24 +343,38 @@ bootstrap(bootstrapPorts, logger)
       // F3 dictionary manager: the heavy logic (merge with the live
       // allSources + recompute the live `sources`) lives in the host-
       // tested handle; index.js just forwards.
-      // [settings] diagnostics: confirm on-device whether the save fires +
-      // commits and what the next load reads back (the SQLite plugin only
-      // logs DB opens, not statements, so this is the only window into it).
+      // [settings] diagnostics. Logs the actual prefKEYS (not just names) so a
+      // write/read key mismatch is visible, and an IMMEDIATE read-back on the
+      // SAME connection right after the save — if that read-back doesn't show
+      // the just-saved state, the write isn't being applied at all (a broken
+      // transaction), as opposed to a reload-durability issue.
       listDictPrefs: () =>
         handle.listDictPrefs().then(p => {
           logger.log(
             `[settings] load <- ${p.length}: ` +
-              p.map(x => `${x.name}=${x.enabled ? 'on' : 'off'}`).join(', '),
+              p
+                .map(x => `${x.prefKey}=${x.enabled ? 'on' : 'off'}#${x.sortOrder}`)
+                .join(' | '),
           );
           return p;
         }),
       setDictPrefs: prefs => {
         logger.log(
           `[settings] save -> ${prefs.length}: ` +
-            prefs.map(x => `${x.name}=${x.enabled ? 'on' : 'off'}`).join(', '),
+            prefs
+              .map(x => `${x.prefKey}=${x.enabled ? 'on' : 'off'}#${x.sortOrder}`)
+              .join(' | '),
         );
         return handle.setDictPrefs(prefs).then(
-          () => logger.log('[settings] save committed'),
+          () =>
+            handle.listDictPrefs().then(rb =>
+              logger.log(
+                `[settings] readback <- ` +
+                  rb
+                    .map(x => `${x.prefKey}=${x.enabled ? 'on' : 'off'}`)
+                    .join(' | '),
+              ),
+            ),
           e => {
             logger.log(`[settings] save FAILED: ${e?.message ?? e}`);
             throw e;
