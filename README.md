@@ -12,7 +12,7 @@ A Supernote plugin that adds offline English-word lookup to handwritten notes an
 ## Features
 
 - **Two entry gestures, one popup.** Lasso handwritten or already-recognised text on a note page → tap **Lookup** in the lasso toolbar; or select text in the PDF reader → tap **Lookup** in the selection toolbar. Both flows feed the same on-device dictionary and render in the same structured popup.
-- **Real WordNet content + thesaurus.** 149,535 Princeton WordNet 2.x definitions (BSD-style license) plus an English synonym/antonym thesaurus from Open English WordNet 2023 (CC BY 4.0), built into a single prebuilt SQLite `base.db` that ships inside the `.snplg` and is opened on-device by the native SQLite engine. No network at runtime; lookup is one indexed `SELECT` (no per-reload parse).
+- **Real WordNet content + thesaurus.** 149,535 Princeton WordNet 2.x definitions (BSD-style license) plus an English synonym/antonym thesaurus from Open English WordNet 2023 (CC BY 4.0) and the Moby Thesaurus (public domain), built into a single prebuilt SQLite `base.db` that ships inside the `.snplg` and is opened on-device by the native SQLite engine. No network at runtime; lookup is one indexed `SELECT` (no per-reload parse).
 - **OCR-aware.** When you lasso handwriting, the plugin runs the firmware's stroke recogniser (`recognizeElements`) before the lookup, so the popup shows what was *recognised* alongside the matching definition. Saved-and-reloaded handwriting (`trailLink`) and recognised titles (`title`) are covered by the same path — not just freshly-drawn strokes.
 - **Structured popup.** Each WordNet sense renders as its own block: a part-of-speech badge (*noun* / *verb* / *adjective* / *adverb*), a numbered sense, the definition, italicised example sentences in curly quotes, and a `Synonyms:` line. Senses are visually separated so multi-sense entries (e.g. "AI" — Army Intelligence vs. artificial intelligence vs. three-toed sloth vs. artificial insemination) are scannable at a glance.
 - **Bilingual UI chrome.** The plugin name on the plugin manager card, the **Lookup** toolbar label, and every popup label (`Synonyms:`, `OCR:`, `No definition found for…`, `Close`) localise into Simplified Chinese, Traditional Chinese, Japanese, Thai, and Dutch based on the device's system locale. The dictionary content stays English; the surrounding chrome doesn't.
@@ -239,7 +239,7 @@ To regenerate the sample after editing entries in `scripts/buildSampleDicts.mjs`
 - **English only** for the bundled dictionary content. Other languages are out of scope for the base; see *Adding your own dictionary* above for sideloading user dicts in StarDict or CSV format.
 - **Tap-on-existing-word** (no lasso, just tap a written word) is **not currently supported by the SDK** — there is no spatial-query API to ask "what stroke is under this point?". A pen/touch event API is on Dunn-sn's roadmap; tap-to-define is tracked for v1.x.
 - **`PEN_UP` auto-define** — explicitly *not* a feature. The "OCR every stroke as you write" UX is intrusive without a clean word-boundary signal; lookups are user-initiated only.
-- **Bundle size:** the `.snplg` ships the prebuilt `base.db` (WordNet + EN OMW thesaurus) plus the native `app.npk` and the JS bundle. There is no base64 blob and no first-run parse — the native SQLite engine opens `base.db` directly, so Lookup is ready in well under a second (no per-reload cost).
+- **Bundle size:** the `.snplg` ships the prebuilt `base.db` (WordNet + EN OMW + Moby thesaurus) plus the native `app.npk` and the JS bundle. There is no base64 blob and no first-run parse — the native SQLite engine opens `base.db` directly, so Lookup is ready in well under a second (no per-reload cost).
 
 ## Building
 
@@ -254,8 +254,9 @@ npm install
 
 1. `npm run prepare:dict` — fetches the WordNet StarDict source to `dict/wordnet/` (read directly by the generator; no base64 blob).
 2. `npm run prepare:omw` — fetches Open English WordNet 2023 and builds the EN thesaurus TSV.
-3. `npm run build:base-db` — folds the WordNet entries + OMW thesaurus into a prebuilt `build/base.db`, staged at the **`.snplg` root** (the host extracts it to `plugins/<id>/base.db`).
-4. Metro bundle → `gradlew buildCustomApkDebug` → `app.npk` → zips everything into `SnDict.snplg`.
+3. `npm run prepare:moby` — stages the public-domain Moby Thesaurus StarDict to `dict/moby/` (optional; the build warn-skips it if absent).
+4. `npm run build:base-db` — folds the WordNet entries + OMW + Moby thesaurus into a prebuilt `build/base.db`, staged at the **`.snplg` root** (the host extracts it to `plugins/<id>/base.db`).
+5. Metro bundle → `gradlew buildCustomApkDebug` → `app.npk` → zips everything into `SnDict.snplg`.
 
 `dict/wordnet/`, `dict/omw/`, and `build/` are git-ignored (regenerable). **`buildPlugin.ps1` does NOT support native builds** — it errors and points you to `buildPlugin.sh`.
 
@@ -343,7 +344,8 @@ src/
 scripts/
   fetchBaseDict.mjs              idempotent WordNet download from dict.org mirror
   fetchOmw.mjs / buildOmw.mjs    fetch + build the EN OMW thesaurus TSV
-  buildBaseDb.mjs                fold WordNet + OMW into the prebuilt base.db
+  fetchMoby.mjs                  stage the public-domain Moby thesaurus StarDict
+  buildBaseDb.mjs                fold WordNet + OMW + Moby into the prebuilt base.db
 .github/workflows/
   ci.yml                         lint + test + build .snplg artifact per push
   release.yml                    manual workflow_dispatch; lint+test, version
@@ -398,7 +400,15 @@ The thesaurus (synonyms / antonyms) is **English-only** and built from **Open En
 - **License.** [Creative Commons Attribution 4.0 International (CC BY 4.0)](https://creativecommons.org/licenses/by/4.0/) — free to use, share, and adapt (including commercially) provided appropriate credit is given. **Attribution:** *Open English WordNet 2023, https://en-word.net/, licensed under CC BY 4.0.* Any redistribution of `base.db` must preserve this attribution.
 - **Scope used.** English (`lang='en'`) only; just the `synonym` and `antonym` relations are extracted (`scripts/buildOmw.mjs`). Synonyms are capped at 10 per headword to bound the bundle size; antonyms are uncapped. No other WordNet relations are bundled.
 
-> **RO-7 (coverage note).** `scripts/fetchOmw.mjs` and `scripts/buildOmw.mjs` perform network I/O and filesystem extraction and are therefore **not** measured by the jest coverage gate (same posture as `scripts/fetchBaseDict.mjs` / `scripts/buildBaseDb.mjs`). The data-shaping logic they feed *is* covered: the TSV parser (`parseOmwTsv`) and the DB population (`populateThesaurus`) live in `src/` and are unit-tested to the 97% gate against synthetic fixtures.
+### Bundled thesaurus content (Moby Thesaurus)
+
+In addition to OMW, the English synonyms from the **Moby Thesaurus** are folded into the same `base.db` `thesaurus` table (`lang='en'`, `rel='synonym'`), so a headword's synonym set is the union of OMW + Moby (de-duplicated against the WordNet senses at query time by `assembleThesaurus`). It is staged via `npm run prepare:moby` (a StarDict triple → `dict/moby/thesaurus-ee.{ifo,idx,dict}`) and folded into `base.db` by `npm run build:base-db`.
+
+- **Source.** Moby Thesaurus II by **Grady Ward**, packaged as the "English Thesaurus" StarDict (tabo / Hu Zheng, huzheng.org mirror). `scripts/fetchMoby.mjs` stages it (pinned URL when available, else the local StarDict zip).
+- **License.** **Public domain.** Grady Ward placed the Moby lexical project (including the Moby Thesaurus) in the public domain; no attribution is legally required, but it is credited here in good faith.
+- **Scope used.** English synonyms only. Each Moby `.dict` block is parsed (`src/core/dict/sqlite/buildMobyThesaurus.ts`) into cleaned synonyms — `[POS]` tags, `(Category):` prefixes, `{marker}` / `<annotation>` editorial markup and `*` slang flags are stripped, the headword is excluded, and the list is capped at 10 per headword to match the OMW cap. Antonyms are not extracted from Moby.
+
+> **Coverage note.** `scripts/fetchOmw.mjs`, `scripts/buildOmw.mjs`, and `scripts/fetchMoby.mjs` perform network I/O and filesystem extraction and are therefore **not** measured by the jest coverage gate (same posture as `scripts/fetchBaseDict.mjs` / `scripts/buildBaseDb.mjs`). The data-shaping logic they feed *is* covered: the OMW TSV parser (`parseOmwTsv`), the Moby block parser (`buildMobyThesaurus.ts`), and the DB population (`populateThesaurus`) live in `src/` and are unit-tested to the 97% gate against synthetic fixtures.
 
 ---
 

@@ -21,13 +21,56 @@ import {
   SCHEMA_VERSION,
 } from '../src/core/dict/sqlite/buildBaseDb.ts';
 import {parseOmwTsv} from '../src/core/dict/sqlite/buildThesaurus.ts';
+import {buildMobyRows} from '../src/core/dict/sqlite/buildMobyThesaurus.ts';
+import {parseIfo} from '../src/core/dict/stardict/parseIfo.ts';
+import {parseIdx} from '../src/core/dict/stardict/parseIdx.ts';
+import {createDictReader} from '../src/core/dict/stardict/dictReader.ts';
+import {decodeUtf8} from '../src/sdk/utf8.ts';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = join(__dirname, '..');
 const DICT_DIR = join(PROJECT_ROOT, 'dict', 'wordnet');
 const OMW_FILE = join(PROJECT_ROOT, 'dict', 'omw', 'omw.tsv');
+const MOBY_DIR = join(PROJECT_ROOT, 'dict', 'moby');
 const OUT_DIR = join(PROJECT_ROOT, 'build');
 const OUT_FILE = join(OUT_DIR, 'base.db');
+
+// Load the staged Moby StarDict triple (dict/moby/thesaurus-ee.*) and
+// shape it into OmwRow[] via the reused parsers + buildMobyRows. Moby
+// is OPTIONAL (like OMW): a missing dict/moby/ returns [] so an
+// OMW-only / entries-only build still works. The .dict is plain
+// (uncompressed) — createDictReader handles it directly.
+const loadMobyRows = async () => {
+  const ifoPath = join(MOBY_DIR, 'thesaurus-ee.ifo');
+  const idxPath = join(MOBY_DIR, 'thesaurus-ee.idx');
+  const dictPath = join(MOBY_DIR, 'thesaurus-ee.dict');
+  let ifoBytes;
+  let idxBytes;
+  let dictBytes;
+  try {
+    [ifoBytes, idxBytes, dictBytes] = await Promise.all([
+      readFile(ifoPath),
+      readFile(idxPath),
+      readFile(dictPath),
+    ]);
+  } catch {
+    log(`[build:base-db] Moby thesaurus absent (${MOBY_DIR}) — skipping`);
+    return [];
+  }
+  const meta = parseIfo(ifoBytes);
+  const idx = await parseIdx(idxBytes, meta.idxoffsetbits);
+  const reader = createDictReader(dictBytes);
+  const entries = idx.map(({word, offset, length}) => ({
+    word,
+    block: decodeUtf8(reader.slice(offset, length)),
+  }));
+  const rows = buildMobyRows(entries);
+  log(
+    `[build:base-db] Moby thesaurus: ${rows.length} relations ` +
+      `(${entries.length} headwords)`,
+  );
+  return rows;
+};
 
 const log = (...args) => console.log(...args);
 
@@ -84,7 +127,7 @@ const main = async () => {
   // OMW thesaurus is optional: warn-skip if dict/omw/omw.tsv is absent
   // so an entries-only build still works (run `npm run prepare:omw`
   // to stage it).
-  let omwRows;
+  let omwRows = [];
   try {
     const omwText = await readFile(OMW_FILE, 'utf-8');
     omwRows = parseOmwTsv(omwText);
@@ -92,6 +135,14 @@ const main = async () => {
   } catch {
     log(`[build:base-db] OMW thesaurus absent (${OMW_FILE}) — building entries only`);
   }
+
+  // Moby English Thesaurus (issue #26): public-domain synonyms staged
+  // by `npm run fetch:moby` into dict/moby/. Optional like OMW; the
+  // rows share OMW's {key, lang:'en', rel:'synonym', target} shape and
+  // are CONCATENATED so they merge into the same thesaurus table and
+  // dedup against OMW via the existing assembleThesaurus at query time.
+  const mobyRows = await loadMobyRows();
+  const thesaurusRows = omwRows.concat(mobyRows);
 
   await mkdir(OUT_DIR, {recursive: true});
   // Fresh build: start from an empty file so reruns are deterministic.
@@ -108,7 +159,7 @@ const main = async () => {
     idxBytes,
     dictBytes,
     SCHEMA_VERSION,
-    omwRows,
+    thesaurusRows,
   );
 
   if (insertedCount !== expectedCount) {
@@ -122,7 +173,10 @@ const main = async () => {
   raw.close();
 
   log(
-    `[build:base-db] wrote ${OUT_FILE} (${insertedCount} entries, ${omwRows?.length ?? 0} thesaurus relations, schema v${SCHEMA_VERSION})`,
+    `[build:base-db] wrote ${OUT_FILE} (${insertedCount} entries, ` +
+      `${thesaurusRows.length} thesaurus relations ` +
+      `[OMW ${omwRows.length} + Moby ${mobyRows.length}], ` +
+      `schema v${SCHEMA_VERSION})`,
   );
 };
 

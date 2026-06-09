@@ -4,7 +4,10 @@
 // format === 'wordnet' discriminator (html/plain = OMW-only), and that
 // antonyms come from OMW only (WordNetSense has no antonyms field).
 
-import {assembleThesaurus} from '../src/core/dict/sqlite/thesaurusLookup';
+import {
+  assembleThesaurus,
+  SYNONYM_DISPLAY_CAP,
+} from '../src/core/dict/sqlite/thesaurusLookup';
 import type {WordNetSense} from '../src/ui/wordnetFormatter';
 
 const sense = (synonyms: string[]): WordNetSense => ({
@@ -15,6 +18,22 @@ const sense = (synonyms: string[]): WordNetSense => ({
 });
 
 describe('assembleThesaurus', () => {
+  it('caps the displayed synonym list at SYNONYM_DISPLAY_CAP (antonyms uncapped)', () => {
+    // 20 distinct OMW synonyms + 3 antonyms — synonyms must truncate to
+    // the cap (first-seen order preserved); antonyms pass through.
+    const manySyn = Array.from({length: 20}, (_, i) => `s${i}`);
+    const res = assembleThesaurus('w', 'wordnet', [], {
+      synonyms: manySyn,
+      antonyms: ['a0', 'a1', 'a2'],
+    });
+    expect(res.synonyms).toHaveLength(SYNONYM_DISPLAY_CAP);
+    expect(res.synonyms[0]).toBe('s0');
+    expect(res.synonyms[SYNONYM_DISPLAY_CAP - 1]).toBe(
+      `s${SYNONYM_DISPLAY_CAP - 1}`,
+    );
+    expect(res.antonyms).toEqual(['a0', 'a1', 'a2']);
+  });
+
   it("EN ('wordnet'): unions sense synonyms THEN OMW, deduped", () => {
     const res = assembleThesaurus(
       'happy',

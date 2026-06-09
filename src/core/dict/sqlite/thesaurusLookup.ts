@@ -115,6 +115,12 @@ const dedupExcludingHeadword = (
 //
 // Both lists exclude the headword and dedup via the one normalizeKey
 // comparator.
+// Cap the displayed synonym list. The thesaurus table can hold up to
+// ~10 OMW + ~5 Moby synonyms per key, plus WordNet's inline [syn:] sense
+// lists — the union can run long. Cap the on-screen list (synonyms only;
+// antonyms are OMW-only and few) so it stays scannable on e-ink.
+export const SYNONYM_DISPLAY_CAP = 12;
+
 export const assembleThesaurus = (
   headword: string,
   format: DefinitionFormat,
@@ -129,7 +135,10 @@ export const assembleThesaurus = (
       : [...omw.synonyms];
 
   return {
-    synonyms: dedupExcludingHeadword(synonymCandidates, headwordKey),
+    synonyms: dedupExcludingHeadword(synonymCandidates, headwordKey).slice(
+      0,
+      SYNONYM_DISPLAY_CAP,
+    ),
     antonyms: dedupExcludingHeadword(omw.antonyms, headwordKey),
   };
 };
