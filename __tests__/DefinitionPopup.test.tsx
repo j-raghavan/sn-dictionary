@@ -39,6 +39,7 @@ import {
 } from '../src/ui/popupController';
 import type {DefinitionFormat, LookupResult} from '../src/core/lookup';
 import type {ThesaurusResult} from '../src/core/dict/sqlite/thesaurusLookup';
+import type {DictPref} from '../src/core/dict/sqlite/settings';
 
 import {copyToClipboard} from '../src/native/clipboard';
 import {htmlToPlainText} from '../src/ui/htmlToPlainText';
@@ -852,6 +853,8 @@ const fakeActions = (
   lookupThesaurus,
   addUserEntry: async () => undefined,
   relookup: async () => undefined,
+  listDictPrefs: async () => [],
+  setDictPrefs: async () => undefined,
 });
 
 describe('DefinitionPopup — Definition/Thesaurus toggle', () => {
@@ -1088,6 +1091,8 @@ const relookupActions = (
   lookupThesaurus: async () => ({lang: 'en', omw: {synonyms: [], antonyms: []}}),
   addUserEntry: async () => undefined,
   relookup,
+  listDictPrefs: async () => [],
+  setDictPrefs: async () => undefined,
 });
 
 const findByLabel = (tree: ReactTestRenderer, label: string) =>
@@ -1216,6 +1221,8 @@ const addActions = (
   lookupThesaurus: async () => ({lang: 'en', omw: {synonyms: [], antonyms: []}}),
   addUserEntry,
   relookup,
+  listDictPrefs: async () => [],
+  setDictPrefs: async () => undefined,
 });
 
 describe('DefinitionPopup — add-word form', () => {
@@ -1581,5 +1588,221 @@ describe('DefinitionPopup — settings panel', () => {
     await act(async () => pressLabel(tree, 'Back'));
     expect(currentKind()).toBe('result');
     expect(findByLabel(tree, 'Edit recognized text')).toHaveLength(1);
+  });
+});
+
+// --- Dictionary manager (F3) ---------------------------------------
+
+const dictPref = (
+  name: string,
+  enabled: boolean,
+  sortOrder: number,
+  removable = false,
+): DictPref => ({prefKey: name, name, enabled, sortOrder, removable});
+
+// PopupActions whose listDictPrefs returns a fixed set and whose
+// setDictPrefs is a spy (captures the persisted payload the manager sends).
+const dictManagerActions = (
+  prefs: DictPref[],
+  setDictPrefs: PopupActions['setDictPrefs'] = async () => undefined,
+): PopupActions => ({
+  lookupThesaurus: async () => ({lang: 'en', omw: {synonyms: [], antonyms: []}}),
+  addUserEntry: async () => undefined,
+  relookup: async () => undefined,
+  listDictPrefs: async () => prefs,
+  setDictPrefs,
+});
+
+// Open settings from a result, then let the mount-time listDictPrefs fetch
+// + its setState settle so the list is rendered.
+const openSettings = async (tree: ReactTestRenderer): Promise<void> => {
+  act(() => showDefinition(found('WordNet', 'hello', 'a greeting')));
+  act(() => pressLabel(tree, 'Settings'));
+  await flush();
+};
+
+describe('DefinitionPopup — dictionary manager (F3)', () => {
+  test('renders one row per pref with the section title (F3-FR2)', async () => {
+    setPopupActions(
+      dictManagerActions([
+        dictPref('User', true, 0),
+        dictPref('Dune', true, 1, true),
+        dictPref('WordNet', true, 2),
+      ]),
+    );
+    const tree = renderPopup();
+    await openSettings(tree);
+    const text = collectText(tree);
+    expect(text).toContain('Dictionaries');
+    expect(text).toContain('User');
+    expect(text).toContain('Dune');
+    expect(text).toContain('WordNet');
+  });
+
+  test('an enabled row shows Disable; toggling persists enabled=false (F3-FR3)', async () => {
+    const spy = jest.fn(async (_prefs: DictPref[]) => undefined);
+    setPopupActions(
+      dictManagerActions(
+        [dictPref('User', true, 0), dictPref('WordNet', true, 1)],
+        spy,
+      ),
+    );
+    const tree = renderPopup();
+    await openSettings(tree);
+    // Toggle User off.
+    await act(async () => findByLabel(tree, 'Disable: User')[0].props.onPress());
+    expect(spy).toHaveBeenCalledTimes(1);
+    const payload = spy.mock.calls[0][0] as DictPref[];
+    expect(payload.find(p => p.name === 'User')?.enabled).toBe(false);
+    // sortOrder is renumbered to the array index.
+    expect(payload.map(p => p.sortOrder)).toEqual([0, 1]);
+    // The row now offers Enable (off-state shown, not hidden).
+    expect(findByLabel(tree, 'Enable: User')).toHaveLength(1);
+  });
+
+  test('Move-down on the top row reorders and persists the new order (F3-AC1)', async () => {
+    const spy = jest.fn(async (_prefs: DictPref[]) => undefined);
+    setPopupActions(
+      dictManagerActions(
+        [
+          dictPref('User', true, 0),
+          dictPref('Dune', true, 1, true),
+          dictPref('WordNet', true, 2),
+        ],
+        spy,
+      ),
+    );
+    const tree = renderPopup();
+    await openSettings(tree);
+    await act(async () => findByLabel(tree, 'Move down: User')[0].props.onPress());
+    const payload = spy.mock.calls[0][0] as DictPref[];
+    expect(payload.map(p => p.name)).toEqual(['Dune', 'User', 'WordNet']);
+    expect(payload.map(p => p.sortOrder)).toEqual([0, 1, 2]);
+  });
+
+  test('Move-up on a lower row promotes it (F3-AC1) and persists the order', async () => {
+    const spy = jest.fn(async (_prefs: DictPref[]) => undefined);
+    setPopupActions(
+      dictManagerActions(
+        [
+          dictPref('User', true, 0),
+          dictPref('Dune', true, 1, true),
+          dictPref('WordNet', true, 2),
+        ],
+        spy,
+      ),
+    );
+    const tree = renderPopup();
+    await openSettings(tree);
+    // Move WordNet up twice -> [WordNet, User, Dune].
+    await act(async () => findByLabel(tree, 'Move up: WordNet')[0].props.onPress());
+    expect((spy.mock.calls[0][0] as DictPref[]).map(p => p.name)).toEqual([
+      'User',
+      'WordNet',
+      'Dune',
+    ]);
+  });
+
+  test('the top row hides Move-up and the bottom row hides Move-down (hide-don\'t-grey)', async () => {
+    setPopupActions(
+      dictManagerActions([
+        dictPref('User', true, 0),
+        dictPref('WordNet', true, 1),
+      ]),
+    );
+    const tree = renderPopup();
+    await openSettings(tree);
+    // Top row (User) has no Move-up; bottom row (WordNet) has no Move-down.
+    expect(findByLabel(tree, 'Move up: User')).toHaveLength(0);
+    expect(findByLabel(tree, 'Move down: User')).toHaveLength(1);
+    expect(findByLabel(tree, 'Move up: WordNet')).toHaveLength(1);
+    expect(findByLabel(tree, 'Move down: WordNet')).toHaveLength(0);
+  });
+
+  test('disabling all sources shows the all-disabled warning (F3-FR5 / AC5)', async () => {
+    setPopupActions(
+      dictManagerActions([
+        dictPref('User', false, 0),
+        dictPref('WordNet', false, 1),
+      ]),
+    );
+    const tree = renderPopup();
+    await openSettings(tree);
+    expect(collectText(tree)).toContain(
+      'All dictionaries are off — lookups return nothing.',
+    );
+  });
+
+  test('with at least one enabled dict, no warning is shown', async () => {
+    setPopupActions(
+      dictManagerActions([
+        dictPref('User', false, 0),
+        dictPref('WordNet', true, 1),
+      ]),
+    );
+    const tree = renderPopup();
+    await openSettings(tree);
+    expect(collectText(tree)).not.toContain('All dictionaries are off');
+  });
+
+  test('re-fetches the list on every mount (EC6)', async () => {
+    const listSpy = jest.fn(async () => [dictPref('WordNet', true, 0)]);
+    setPopupActions({
+      lookupThesaurus: async () => ({lang: 'en', omw: {synonyms: [], antonyms: []}}),
+      addUserEntry: async () => undefined,
+      relookup: async () => undefined,
+      listDictPrefs: listSpy,
+      setDictPrefs: async () => undefined,
+    });
+    const tree = renderPopup();
+    await openSettings(tree);
+    expect(listSpy).toHaveBeenCalledTimes(1);
+    // Back to the result, then re-open settings -> the panel re-mounts and
+    // re-fetches (a fresh detached import could have changed the set).
+    await act(async () => pressLabel(tree, 'Back'));
+    act(() => pressLabel(tree, 'Settings'));
+    await flush();
+    expect(listSpy).toHaveBeenCalledTimes(2);
+  });
+
+  test('renders without crashing when no actions are registered (null guard)', async () => {
+    // No setPopupActions — getPopupActions() is null; the panel opens with
+    // an empty list and no warning, no crash.
+    const tree = renderPopup();
+    await openSettings(tree);
+    expect(collectText(tree)).toContain('Dictionaries');
+    expect(collectText(tree)).not.toContain('All dictionaries are off');
+  });
+
+  test('a setDictPrefs rejection is swallowed (optimistic UI stays)', async () => {
+    const spy = jest.fn(async () => {
+      throw new Error('persist failed');
+    });
+    setPopupActions(
+      dictManagerActions([dictPref('WordNet', true, 0)], spy),
+    );
+    const tree = renderPopup();
+    await openSettings(tree);
+    await act(async () => {
+      findByLabel(tree, 'Disable: WordNet')[0].props.onPress();
+      await Promise.resolve();
+    });
+    // The optimistic toggle still applied (row now shows Enable).
+    expect(findByLabel(tree, 'Enable: WordNet')).toHaveLength(1);
+  });
+
+  test('a listDictPrefs rejection leaves an empty list (no crash)', async () => {
+    setPopupActions({
+      lookupThesaurus: async () => ({lang: 'en', omw: {synonyms: [], antonyms: []}}),
+      addUserEntry: async () => undefined,
+      relookup: async () => undefined,
+      listDictPrefs: async () => {
+        throw new Error('read failed');
+      },
+      setDictPrefs: async () => undefined,
+    });
+    const tree = renderPopup();
+    await openSettings(tree);
+    expect(collectText(tree)).toContain('Dictionaries');
   });
 });

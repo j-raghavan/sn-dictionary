@@ -264,6 +264,11 @@ bootstrap(bootstrapPorts, logger)
         const res = await runtime.lookup.lookup(text);
         showDefinition(res, undefined, true);
       },
+      // F3 dictionary manager: the heavy logic (merge with the live
+      // allSources + recompute the live `sources`) lives in the host-
+      // tested handle; index.js just forwards.
+      listDictPrefs: () => handle.listDictPrefs(),
+      setDictPrefs: prefs => handle.setDictPrefs(prefs),
     });
 
     logger.log(

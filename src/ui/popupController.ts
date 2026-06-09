@@ -1,5 +1,6 @@
 import type {LookupResult} from '../core/lookup';
 import type {ThesaurusResult} from '../core/dict/sqlite/thesaurusLookup';
+import type {DictPref} from '../core/dict/sqlite/settings';
 
 // Bridge between async handlers (which don't render React) and the
 // popup component (which does). A handler calls one of the show*()
@@ -68,6 +69,12 @@ export type PopupActions = {
   ): Promise<{lang: string; omw: ThesaurusResult}>;
   addUserEntry(word: string, definition: string): Promise<void>;
   relookup(text: string): Promise<void>;
+  // F3 — the dictionary manager reads the current order+enablement and
+  // writes a whole reordered/toggled set. The engine (index.js) wires
+  // these to the RuntimeHandle's listDictPrefs/setDictPrefs, keeping the
+  // panel engine-agnostic (Designer ruling 1).
+  listDictPrefs(): Promise<DictPref[]>;
+  setDictPrefs(prefs: DictPref[]): Promise<void>;
 };
 
 let popupActions: PopupActions | null = null;

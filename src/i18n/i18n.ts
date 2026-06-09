@@ -48,7 +48,13 @@ export type StringId =
   | 'popup.copyFailed'
   | 'settings.open'
   | 'settings.title'
-  | 'settings.back';
+  | 'settings.back'
+  | 'settings.dictionaries'
+  | 'settings.moveUp'
+  | 'settings.moveDown'
+  | 'settings.enableDict'
+  | 'settings.disableDict'
+  | 'settings.allDisabled';
 
 // Locale codes use the firmware's convention: en, zh_CN, zh_TW, ja,
 // th, nl. Underscore (not hyphen) matches PluginButton.nameMap shape
@@ -83,6 +89,12 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'settings.open': 'Settings',
     'settings.title': 'Settings',
     'settings.back': 'Back',
+    'settings.dictionaries': 'Dictionaries',
+    'settings.moveUp': 'Move up',
+    'settings.moveDown': 'Move down',
+    'settings.enableDict': 'Enable',
+    'settings.disableDict': 'Disable',
+    'settings.allDisabled': 'All dictionaries are off — lookups return nothing.',
   },
   zh_CN: {
     'popup.synonyms': '同义词',
@@ -113,6 +125,12 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'settings.open': '设置',
     'settings.title': '设置',
     'settings.back': '返回',
+    'settings.dictionaries': '词典',
+    'settings.moveUp': '上移',
+    'settings.moveDown': '下移',
+    'settings.enableDict': '启用',
+    'settings.disableDict': '停用',
+    'settings.allDisabled': '所有词典均已关闭——查询将无结果。',
   },
   zh_TW: {
     'popup.synonyms': '同義詞',
@@ -143,6 +161,12 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'settings.open': '設定',
     'settings.title': '設定',
     'settings.back': '返回',
+    'settings.dictionaries': '詞典',
+    'settings.moveUp': '上移',
+    'settings.moveDown': '下移',
+    'settings.enableDict': '啟用',
+    'settings.disableDict': '停用',
+    'settings.allDisabled': '所有詞典均已關閉——查詢將無結果。',
   },
   ja: {
     'popup.synonyms': '類義語',
@@ -173,6 +197,12 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'settings.open': '設定',
     'settings.title': '設定',
     'settings.back': '戻る',
+    'settings.dictionaries': '辞書',
+    'settings.moveUp': '上へ',
+    'settings.moveDown': '下へ',
+    'settings.enableDict': '有効',
+    'settings.disableDict': '無効',
+    'settings.allDisabled': 'すべての辞書がオフです — 検索結果は表示されません。',
   },
   th: {
     'popup.synonyms': 'คำพ้องความหมาย',
@@ -203,6 +233,12 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'settings.open': 'การตั้งค่า',
     'settings.title': 'การตั้งค่า',
     'settings.back': 'ย้อนกลับ',
+    'settings.dictionaries': 'พจนานุกรม',
+    'settings.moveUp': 'เลื่อนขึ้น',
+    'settings.moveDown': 'เลื่อนลง',
+    'settings.enableDict': 'เปิด',
+    'settings.disableDict': 'ปิด',
+    'settings.allDisabled': 'ปิดพจนานุกรมทั้งหมดแล้ว — การค้นหาจะไม่มีผลลัพธ์',
   },
   nl: {
     'popup.synonyms': 'Synoniemen',
@@ -233,6 +269,13 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'settings.open': 'Instellingen',
     'settings.title': 'Instellingen',
     'settings.back': 'Terug',
+    'settings.dictionaries': 'Woordenboeken',
+    'settings.moveUp': 'Omhoog',
+    'settings.moveDown': 'Omlaag',
+    'settings.enableDict': 'Inschakelen',
+    'settings.disableDict': 'Uitschakelen',
+    'settings.allDisabled':
+      'Alle woordenboeken zijn uit — zoekopdrachten geven niets terug.',
   },
   de: {
     'popup.synonyms': 'Synonyme',
@@ -263,6 +306,13 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'settings.open': 'Einstellungen',
     'settings.title': 'Einstellungen',
     'settings.back': 'Zurück',
+    'settings.dictionaries': 'Wörterbücher',
+    'settings.moveUp': 'Nach oben',
+    'settings.moveDown': 'Nach unten',
+    'settings.enableDict': 'Aktivieren',
+    'settings.disableDict': 'Deaktivieren',
+    'settings.allDisabled':
+      'Alle Wörterbücher sind aus — Suchen liefern nichts.',
   },
 };
 

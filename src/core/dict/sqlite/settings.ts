@@ -91,6 +91,89 @@ export const upsertDictPref = async (
   });
 };
 
+// Persist a WHOLE pref set atomically (F3): every row is DELETE+INSERTed
+// inside ONE transaction, so a write that reorders/toggles the entire
+// list can never leave dict_prefs in a partially-updated state. null db
+// -> warn + no-op (degraded). Mirrors upsertDictPref's DELETE-then-INSERT
+// per key, batched.
+export const setDictPrefs = async (
+  db: SqliteDb | null,
+  prefs: DictPref[],
+  logger?: Logger,
+): Promise<void> => {
+  if (db === null) {
+    logger?.warn('[settings] user.db unavailable — dict prefs not persisted');
+    return;
+  }
+  await db.transaction(async tx => {
+    for (const pref of prefs) {
+      await tx.run(DELETE_DICT_PREF, [pref.prefKey]);
+      await tx.run(INSERT_DICT_PREF, [
+        pref.prefKey,
+        pref.name,
+        pref.enabled ? 1 : 0,
+        pref.sortOrder,
+      ]);
+    }
+  });
+};
+
+// --- F3: merge persisted prefs with the live registry ---------------
+//
+// The identity of one opened source for the merge. `prefKey` is the
+// dict_prefs primary key (bare name for base/User, identityKey(name,lang)
+// for imports — derived by the caller, who knows base/user/imported);
+// `removable` is popup chrome (true only for imported dicts — F7 owns
+// the Remove action; F3 just surfaces the flag).
+export type DictSourceIdentity = {
+  name: string;
+  prefKey: string;
+  removable: boolean;
+};
+
+// PURE (F3-FR1). Produce one DictPref per source in the LIVE registry
+// (`sources`, in natural [user?,…imported,base] order), merged with the
+// persisted rows by prefKey: a persisted row's enabled/sortOrder WIN;
+// a source with no persisted row defaults to enabled at its natural
+// registry position. The result is sorted by sortOrder so the panel and
+// the live-array recompute agree on precedence. Sources are the source
+// of truth for existence — a persisted row with no matching source
+// (a since-removed dict) is dropped, never surfaced.
+//
+// Tie-break: when two sources resolve to the same sortOrder (a persisted
+// row colliding with a default-positioned new source) the natural
+// registry index breaks the tie, so a freshly-imported dict slots in
+// deterministically rather than reordering the persisted set.
+export const mergeDictPrefs = (
+  sources: DictSourceIdentity[],
+  persisted: DictPref[],
+): DictPref[] => {
+  const byKey = new Map<string, DictPref>();
+  for (const row of persisted) {
+    byKey.set(row.prefKey, row);
+  }
+  return sources
+    .map((source, index) => {
+      const row = byKey.get(source.prefKey);
+      return {
+        pref: {
+          prefKey: source.prefKey,
+          name: source.name,
+          enabled: row ? row.enabled : true,
+          sortOrder: row ? row.sortOrder : index,
+          removable: source.removable,
+        },
+        index,
+      };
+    })
+    .sort((a, b) =>
+      a.pref.sortOrder !== b.pref.sortOrder
+        ? a.pref.sortOrder - b.pref.sortOrder
+        : a.index - b.index,
+    )
+    .map(entry => entry.pref);
+};
+
 // A single app setting value, or null when absent. null db -> null.
 export const getAppSetting = async (
   db: SqliteDb | null,

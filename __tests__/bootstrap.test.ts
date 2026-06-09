@@ -9,6 +9,11 @@ import {
   type ReconcileItem,
 } from '../src/core/dict/sqlite/bootstrap';
 import {ensureImportsTable, upsertImport} from '../src/core/dict/sqlite/importAudit';
+import {
+  ensureSettingsTables,
+  setDictPrefs,
+  type DictPref,
+} from '../src/core/dict/sqlite/settings';
 import {CREATE_ENTRIES_TABLE} from '../src/core/dict/sqlite/schema';
 import type {ImportRow} from '../src/core/dict/sqlite/schema';
 import type {SqliteDb} from '../src/core/dict/sqlite/db';
@@ -120,6 +125,9 @@ const makeBaseDb = (): Promise<SqliteDb> =>
 const makeHarness = async (opts: {
   descriptors?: ImportJobDescriptor[];
   auditSeed?: (db: SqliteDb) => Promise<void>;
+  // Pre-seed dict_prefs rows BEFORE bootstrap derives the live `sources`
+  // (F3). Runs ensureSettingsTables first so the table exists.
+  prefsSeed?: (db: SqliteDb) => Promise<void>;
   // Pre-seed the user.db BEFORE bootstrap opens it (e.g. an existing
   // pre-v3 6-col entries table to exercise the FR2 ALTER migration).
   userDbSeed?: (db: SqliteDb) => Promise<void>;
@@ -171,6 +179,10 @@ const makeHarness = async (opts: {
         if (opts.auditSeed) {
           await ensureImportsTable(userDb);
           await opts.auditSeed(userDb);
+        }
+        if (opts.prefsSeed) {
+          await ensureSettingsTables(userDb);
+          await opts.prefsSeed(userDb);
         }
         if (opts.userDbAlterError) {
           // Intercept the ALTER ... ADD COLUMN phonetic call so it throws
@@ -560,5 +572,223 @@ describe('bootstrap — settings tables (F1, ADR-0009)', () => {
     expect(await tableNames(h.userDb)).toEqual(
       expect.arrayContaining(['dict_prefs', 'app_settings', 'user_meta']),
     );
+  });
+});
+
+// --- F3: allSources + derived live `sources` + dict-manager seam -----
+
+describe('bootstrap — F3 dictionary manager (allSources + prefs)', () => {
+  const prefRow = (
+    prefKey: string,
+    name: string,
+    enabled: boolean,
+    sortOrder: number,
+  ): DictPref => ({prefKey, name, enabled, sortOrder, removable: false});
+
+  it('exposes the FULL registry as allSources [user, ...imported, base]', async () => {
+    const h = await makeHarness({
+      auditSeed: async db => {
+        await upsertImport(db, auditRow('Imported', 'de', 'imported.de.db'));
+      },
+    });
+    const handle = await bootstrap(h.ports);
+    expect(handle.allSources.map(s => s.name)).toEqual([
+      'User',
+      'Imported',
+      'WordNet',
+    ]);
+  });
+
+  it('with no prefs, sources === allSources order (all enabled)', async () => {
+    const h = await makeHarness({
+      auditSeed: async db => {
+        await upsertImport(db, auditRow('Dune', 'en', 'dune.en.db'));
+      },
+    });
+    const handle = await bootstrap(h.ports);
+    expect(handle.sources.map(s => s.name)).toEqual(['User', 'Dune', 'WordNet']);
+    expect(handle.allSources.map(s => s.name)).toEqual([
+      'User',
+      'Dune',
+      'WordNet',
+    ]);
+  });
+
+  it('a DISABLED pref excludes the dict from sources but keeps it in allSources (AC2)', async () => {
+    const h = await makeHarness({
+      auditSeed: async db => {
+        await upsertImport(db, auditRow('Dune', 'en', 'dune.en.db'));
+      },
+      prefsSeed: async db => {
+        // Dune (imported) keys on identityKey(name,lang); disable it.
+        await setDictPrefs(db, [
+          prefRow('User', 'User', true, 0),
+          {
+            prefKey: 'Dune\u0000en',
+            name: 'Dune',
+            enabled: false,
+            sortOrder: 1,
+            removable: true,
+          },
+          prefRow('WordNet', 'WordNet', true, 2),
+        ]);
+      },
+    });
+    const handle = await bootstrap(h.ports);
+    // Excluded from the live (snapshotted) sources...
+    expect(handle.sources.map(s => s.name)).toEqual(['User', 'WordNet']);
+    // ...but still present in the full registry (so it can be re-enabled).
+    expect(handle.allSources.map(s => s.name)).toContain('Dune');
+    // And a lookup over a Dune-only word returns no Dune hit.
+    const res = await handle.lookup.lookup('hello');
+    expect(res.hits.some((hit: {source: string}) => hit.source === 'Dune')).toBe(
+      false,
+    );
+  });
+
+  it('respects persisted sort_order in the derived sources (AC1)', async () => {
+    const h = await makeHarness({
+      auditSeed: async db => {
+        await upsertImport(db, auditRow('Dune', 'en', 'dune.en.db'));
+      },
+      prefsSeed: async db => {
+        // Promote WordNet to the top.
+        await setDictPrefs(db, [
+          prefRow('WordNet', 'WordNet', true, 0),
+          prefRow('User', 'User', true, 1),
+          {
+            prefKey: 'Dune\u0000en',
+            name: 'Dune',
+            enabled: true,
+            sortOrder: 2,
+            removable: true,
+          },
+        ]);
+      },
+    });
+    const handle = await bootstrap(h.ports);
+    expect(handle.sources.map(s => s.name)).toEqual([
+      'WordNet',
+      'User',
+      'Dune',
+    ]);
+  });
+
+  it('a detached import lands in allSources and recomputes sources (AC4)', async () => {
+    const h = await makeHarness({descriptors: [descriptor('Fresh', 'en')]});
+    const handle = await bootstrap(h.ports);
+    await handle.importsSettled;
+    // Pushed into the full registry just-before base...
+    expect(handle.allSources.map(s => s.name)).toEqual([
+      'User',
+      'Fresh',
+      'WordNet',
+    ]);
+    // ...and the live sources recomputed (enabled by default, before base).
+    expect(handle.sources.map(s => s.name)).toEqual(['User', 'Fresh', 'WordNet']);
+  });
+
+  it('a detached import honours an existing reorder pref (recompute, not append)', async () => {
+    const h = await makeHarness({
+      descriptors: [descriptor('Fresh', 'en')],
+      prefsSeed: async db => {
+        // WordNet promoted above User before the import lands.
+        await setDictPrefs(db, [
+          prefRow('WordNet', 'WordNet', true, 0),
+          prefRow('User', 'User', true, 1),
+        ]);
+      },
+    });
+    const handle = await bootstrap(h.ports);
+    await handle.importsSettled;
+    // Fresh (no pref) defaults to its natural slot (just-before base);
+    // the persisted WordNet-over-User order is preserved.
+    expect(handle.sources.map(s => s.name)).toEqual([
+      'WordNet',
+      'User',
+      'Fresh',
+    ]);
+  });
+
+  it('listDictPrefs merges allSources with persisted prefs (one row per source)', async () => {
+    const h = await makeHarness({
+      auditSeed: async db => {
+        await upsertImport(db, auditRow('Dune', 'en', 'dune.en.db'));
+      },
+      prefsSeed: async db => {
+        await setDictPrefs(db, [
+          {
+            prefKey: 'Dune\u0000en',
+            name: 'Dune',
+            enabled: false,
+            sortOrder: 0,
+            removable: true,
+          },
+        ]);
+      },
+    });
+    const handle = await bootstrap(h.ports);
+    const prefs = await handle.listDictPrefs();
+    // One row per source; Dune persisted-disabled wins, imported=removable.
+    const dune = prefs.find(p => p.name === 'Dune');
+    expect(dune).toMatchObject({enabled: false, removable: true});
+    expect(prefs.find(p => p.name === 'WordNet')?.removable).toBe(false);
+    expect(prefs.map(p => p.name).sort()).toEqual(['Dune', 'User', 'WordNet']);
+  });
+
+  it('setDictPrefs persists AND recomputes the SAME live sources array (AC3)', async () => {
+    const h = await makeHarness({
+      auditSeed: async db => {
+        await upsertImport(db, auditRow('Dune', 'en', 'dune.en.db'));
+      },
+    });
+    const handle = await bootstrap(h.ports);
+    const liveRef = handle.sources; // capture the reference
+    expect(handle.sources.map(s => s.name)).toEqual(['User', 'Dune', 'WordNet']);
+    // Disable Dune.
+    await handle.setDictPrefs([
+      prefRow('User', 'User', true, 0),
+      {
+        prefKey: 'Dune\u0000en',
+        name: 'Dune',
+        enabled: false,
+        sortOrder: 1,
+        removable: true,
+      },
+      prefRow('WordNet', 'WordNet', true, 2),
+    ]);
+    // SAME array reference, mutated in place (no reassignment).
+    expect(handle.sources).toBe(liveRef);
+    expect(handle.sources.map(s => s.name)).toEqual(['User', 'WordNet']);
+    // Persisted: a fresh listDictPrefs reflects the disable.
+    expect((await handle.listDictPrefs()).find(p => p.name === 'Dune')?.enabled).toBe(
+      false,
+    );
+    // Re-enable with NO reopen — Dune comes back (it stayed in allSources).
+    await handle.setDictPrefs([
+      prefRow('User', 'User', true, 0),
+      {
+        prefKey: 'Dune\u0000en',
+        name: 'Dune',
+        enabled: true,
+        sortOrder: 1,
+        removable: true,
+      },
+      prefRow('WordNet', 'WordNet', true, 2),
+    ]);
+    expect(handle.sources.map(s => s.name)).toEqual(['User', 'Dune', 'WordNet']);
+  });
+
+  it('degraded user.db: listDictPrefs returns natural defaults, setDictPrefs still recomputes', async () => {
+    const h = await makeHarness({userDbThrows: true});
+    const handle = await bootstrap(h.ports, {warn: jest.fn()});
+    // Only base survives; no User, no imports.
+    expect(handle.allSources.map(s => s.name)).toEqual(['WordNet']);
+    const prefs = await handle.listDictPrefs();
+    expect(prefs.map(p => p.name)).toEqual(['WordNet']);
+    expect(prefs[0].enabled).toBe(true);
+    // setDictPrefs no-ops the persist (null db) but still recomputes live.
+    await handle.setDictPrefs([prefRow('WordNet', 'WordNet', false, 0)]);
+    expect(handle.sources.map(s => s.name)).toEqual([]);
   });
 });

@@ -193,6 +193,8 @@ describe('popupController — actions registry', () => {
     lookupThesaurus: async () => ({lang: 'en', omw: {synonyms: [], antonyms: []}}),
     addUserEntry: async () => undefined,
     relookup: async () => undefined,
+    listDictPrefs: async () => [],
+    setDictPrefs: async () => undefined,
   };
 
   test('getPopupActions is null before registration', () => {

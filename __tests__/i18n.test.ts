@@ -132,9 +132,15 @@ describe('t (popup string lookup)', () => {
     const settingsIds = Object.keys(STRINGS.en).filter(k =>
       k.startsWith('settings.'),
     );
-    // Sanity: F1 added exactly these three.
+    // Sanity: F1's three + F3's dictionary-manager keys.
     expect(settingsIds.sort()).toEqual([
+      'settings.allDisabled',
       'settings.back',
+      'settings.dictionaries',
+      'settings.disableDict',
+      'settings.enableDict',
+      'settings.moveDown',
+      'settings.moveUp',
       'settings.open',
       'settings.title',
     ]);

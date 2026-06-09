@@ -256,11 +256,77 @@ export const popupStyles = StyleSheet.create({
     fontSize: 16,
     color: '#000000',
   },
-  // Placeholder body copy until F3/F4/F5/F7 fill the panel in.
+  // Placeholder body copy until F4/F5/F7 fill the rest of the panel in.
   settingsPlaceholder: {
     marginTop: 16,
     fontSize: 16,
     color: '#555555',
+  },
+  // --- F3 dictionary manager -----------------------------------------
+  // Section heading above the dictionary list.
+  settingsSectionTitle: {
+    marginTop: 16,
+    marginBottom: 4,
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#000000',
+  },
+  // One dictionary row: name on the left, controls on the right.
+  dictRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#DDDDDD',
+  },
+  // Name + language badge column (takes the remaining width).
+  dictRowLabel: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  // Disabled dicts render dimmed (the toggle still flips them back) — the
+  // text itself, NOT a hidden row (hide-don't-grey applies to the move
+  // arrows, not to enablement which needs a visible off-state).
+  dictName: {
+    fontSize: 16,
+    color: '#000000',
+  },
+  dictNameDisabled: {
+    color: '#999999',
+  },
+  // The control cluster on the right (toggle + the two move arrows).
+  dictRowControls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  // A bordered tappable control (toggle + move arrows share the look).
+  dictControl: {
+    marginLeft: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: '#000000',
+    borderRadius: 4,
+  },
+  dictControlLabel: {
+    fontSize: 14,
+    color: '#000000',
+  },
+  // Fixed-width spacer that reserves the move-arrow slot on the top/bottom
+  // rows where one direction is hidden, so rows don't reflow (hide-don't-
+  // grey without a layout jump).
+  dictControlSpacer: {
+    marginLeft: 6,
+    width: 44,
+  },
+  // The all-disabled warning banner (F3-FR5).
+  settingsWarning: {
+    marginTop: 12,
+    fontSize: 14,
+    color: '#000000',
+    fontWeight: '700',
   },
   // Body-text size selector: three circular elements in a row,
   // ( − )( A )( + ). The outer two are Pressables; the middle is a

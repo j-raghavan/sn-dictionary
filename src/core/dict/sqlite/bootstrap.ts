@@ -23,7 +23,14 @@ import {
   type ImportRow,
 } from './schema';
 import {ensureImportsTable} from './importAudit';
-import {ensureSettingsTables} from './settings';
+import {
+  ensureSettingsTables,
+  mergeDictPrefs,
+  readDictPrefs,
+  setDictPrefs,
+  type DictPref,
+  type DictSourceIdentity,
+} from './settings';
 import {runImport, type RunImportPorts} from './runImport';
 import type {ImportJobDescriptor} from '../userDictDiscovery';
 
@@ -47,7 +54,19 @@ export type ReconcileItem =
   | {bucket: 'open'; row: ImportRow}
   | {bucket: 'skip'; reason: string; descriptor?: ImportJobDescriptor};
 
-const identityKey = (name: string, lang: string): string => `${name}\u0000${lang}`;
+export const identityKey = (name: string, lang: string): string =>
+  `${name}\u0000${lang}`;
+
+// dict_prefs primary key for a source (resolution #6 / F3): an IMPORTED
+// dict keys on its audit identity (identityKey(name,lang)) so two dicts
+// sharing a display name in different languages get distinct prefs; the
+// built-in base (WordNet) and User sources have no language ambiguity, so
+// their bare name is the key (matching how sourceLang special-cases them).
+export const dictPrefKey = (
+  name: string,
+  lang: string,
+  removable: boolean,
+): string => (removable ? identityKey(name, lang) : name);
 
 export const reconcileImports = (
   descriptors: ImportJobDescriptor[],
@@ -95,6 +114,49 @@ export const reconcileImports = (
   return items;
 };
 
+// --- live `sources` derivation (F3) ---------------------------------
+//
+// The live `sources` array (the one multiDictLookup snapshots per
+// lookup) is DERIVED from `allSources` (the full opened registry) by
+// applying dict_prefs: keep only enabled sources, ordered by sort_order.
+// `identities` resolves each source's prefKey/removable (base/User vs
+// imported). Recomputed IN PLACE (clear + push) so the array reference
+// the lookup closed over stays valid — a disabled source leaves
+// `sources` but stays in `allSources`, so re-enabling needs no reopen.
+//
+// PURE save for the in-place mutation of `live`: given the same inputs it
+// always produces the same ordered enabled set. Sources absent from
+// `identities` (defensive) are treated as enabled at their natural index.
+export const deriveLiveSources = (
+  live: DictSource[],
+  allSources: DictSource[],
+  identities: Map<DictSource, DictSourceIdentity>,
+  persisted: DictPref[],
+): void => {
+  const identityList: DictSourceIdentity[] = allSources.map(
+    source =>
+      identities.get(source) ?? {
+        name: source.name,
+        prefKey: source.name,
+        removable: false,
+      },
+  );
+  const merged = mergeDictPrefs(identityList, persisted);
+  const sourceByKey = new Map<string, DictSource>();
+  allSources.forEach((source, index) => {
+    sourceByKey.set(identityList[index].prefKey, source);
+  });
+  const next: DictSource[] = [];
+  for (const pref of merged) {
+    const source = sourceByKey.get(pref.prefKey);
+    if (source && pref.enabled) {
+      next.push(source);
+    }
+  }
+  live.length = 0;
+  live.push(...next);
+};
+
 // --- bootstrap ------------------------------------------------------
 
 export interface BootstrapDbPorts {
@@ -115,7 +177,16 @@ export interface BootstrapPorts {
 
 export interface RuntimeHandle {
   lookup: DictLookup;
+  // The DERIVED enabled+ordered view handed to multiDictLookup. Mutated
+  // IN PLACE (never reassigned) by detached imports + setDictPrefs, and
+  // snapshotted per lookup — so a reorder/toggle takes effect on the next
+  // lookup with no reload (F3).
   sources: DictSource[];
+  // The COMPLETE opened registry (base + User + every imported source),
+  // UNFILTERED (F3 blocker 3). `sources` is derived from this by applying
+  // dict_prefs; a disabled dict stays here so it can be re-enabled with no
+  // DB reopen / re-bootstrap.
+  allSources: DictSource[];
   baseDb: SqliteDb;
   userDb: SqliteDb | null;
   // Resolves when the DETACHED sideload imports finish (the un-awaited
@@ -132,6 +203,16 @@ export interface RuntimeHandle {
   // with NO reload (the bug: index.js's old one-off snapshot missed
   // detached imports -> they fell back to 'und' until reload).
   sourceLang: Record<string, string>;
+  // F3 — the dictionary-manager seam (wired to the popup via index.js's
+  // PopupActions). `listDictPrefs` merges `allSources` with the persisted
+  // dict_prefs into one ordered row per source (incl. disabled ones, since
+  // they live in `allSources`). `setDictPrefs` persists the whole set
+  // atomically AND recomputes the live `sources` in place from
+  // `allSources` — so a toggle/reorder takes effect on the next lookup
+  // with no reload. Both degrade with a null user.db (read -> natural
+  // defaults; write -> no persist, but the live array still recomputes).
+  listDictPrefs(): Promise<DictPref[]>;
+  setDictPrefs(prefs: DictPref[]): Promise<void>;
 }
 
 const readAuditRows = async (userDb: SqliteDb): Promise<ImportRow[]> =>
@@ -223,25 +304,57 @@ export const bootstrap = async (
   }
 
   // 5. Open already-imported sources ('open' bucket).
-  const alreadyImported: DictSource[] = [];
+  const alreadyImported: {source: DictSource; lang: string}[] = [];
   for (const item of reconciled) {
     if (item.bucket === 'open') {
-      alreadyImported.push(
-        createSqliteDictSource({
+      alreadyImported.push({
+        source: createSqliteDictSource({
           name: item.row.name,
           openDb: ports.db.openImportedDb(item.row.filename),
         }),
-      );
+        lang: item.row.lang,
+      });
     }
   }
 
-  // 6. Registry in precedence order [user?, ...imported, base] (IV-3).
-  const sources: DictSource[] = [];
+  // 6. FULL registry `allSources` in natural precedence order
+  //    [user?, ...imported, base] (IV-3) — the COMPLETE opened set, never
+  //    filtered (F3 blocker 3). The live `sources` array (what the lookup
+  //    snapshots) is DERIVED from it by applying dict_prefs below; a
+  //    disabled dict stays in `allSources` so re-enabling needs no reopen.
+  //    `identities` maps each source to its dict_prefs key (bare name for
+  //    base/User, identityKey(name,lang) for imports — resolution #6) and
+  //    its removable flag (imported only — F7 chrome).
+  const allSources: DictSource[] = [];
+  const identities = new Map<DictSource, DictSourceIdentity>();
+  const register = (
+    source: DictSource,
+    lang: string,
+    removable: boolean,
+  ): void => {
+    allSources.push(source);
+    identities.set(source, {
+      name: source.name,
+      prefKey: dictPrefKey(source.name, lang, removable),
+      removable,
+    });
+  };
   if (userSource !== null) {
-    sources.push(userSource);
+    register(userSource, 'und', false);
   }
-  sources.push(...alreadyImported);
-  sources.push(baseSource);
+  for (const {source, lang} of alreadyImported) {
+    register(source, lang, true);
+  }
+  register(baseSource, 'en', false);
+
+  // Read persisted prefs (degraded user.db -> []) and DERIVE the live
+  // `sources` from `allSources` before the lookup is built (F3-FR4):
+  // keep enabled, order by sort_order. `sources` is the SAME array
+  // reference the lookup closes over and detached imports / setDictPrefs
+  // recompute in place.
+  let persistedPrefs: DictPref[] = await readDictPrefs(userDb);
+  const sources: DictSource[] = [];
+  deriveLiveSources(sources, allSources, identities, persistedPrefs);
   const lookup = createMultiDictLookup(sources, logger);
 
   // LIVE source -> language map (see RuntimeHandle.sourceLang). Seed the
@@ -252,10 +365,8 @@ export const bootstrap = async (
   if (userSource !== null) {
     sourceLang[userSource.name] = 'und';
   }
-  for (const item of reconciled) {
-    if (item.bucket === 'open') {
-      sourceLang[item.row.name] = item.row.lang;
-    }
+  for (const {source, lang} of alreadyImported) {
+    sourceLang[source.name] = lang;
   }
 
   // 7. Dispatch pending sideload imports — DETACHED (fire-and-forget).
@@ -285,17 +396,29 @@ export const bootstrap = async (
             logger,
           );
           if (result.ok) {
+            const lang = item.descriptor.sidecar.language;
             const src = createSqliteDictSource({
               name: result.name,
               openDb: ports.db.openImportedDb(result.filename),
             });
-            // Splice just-before base: base is always last, so length-1
-            // keeps [user, ...imported, base] even as concurrent results
-            // land into the live array.
-            sources.splice(sources.length - 1, 0, src);
+            // Push the new source into the FULL registry just-before base
+            // (base is always last, so splice at length-1 keeps
+            // [user, ...imported, base] even as concurrent results land),
+            // then register its identity (imported -> removable).
+            allSources.splice(allSources.length - 1, 0, src);
+            identities.set(src, {
+              name: src.name,
+              prefKey: dictPrefKey(src.name, lang, true),
+              removable: true,
+            });
+            // Recompute the LIVE `sources` in place honoring prefs: a new
+            // (unknown-key) source defaults enabled + default-ordered just-
+            // before base (its natural allSources position). multiDictLookup
+            // snapshots per lookup, so an in-flight lookup is unaffected.
+            deriveLiveSources(sources, allSources, identities, persistedPrefs);
             // Register the new source's language LIVE so its thesaurus
             // resolves this session (no reload). Same object index.js reads.
-            sourceLang[result.name] = item.descriptor.sidecar.language;
+            sourceLang[result.name] = lang;
           } else {
             logger?.warn(
               `[bootstrap] import "${item.descriptor.sidecar.name}" failed: ${result.reason}`,
@@ -310,5 +433,40 @@ export const bootstrap = async (
     ).then(() => undefined);
   }
 
-  return {lookup, sources, baseDb, userDb, importsSettled, sourceLang};
+  // F3 dictionary-manager seam. Closes over the live `allSources` +
+  // `identities` + `sources`, so `listDictPrefs` reflects detached imports
+  // that landed since bootstrap, and `setDictPrefs` recomputes the SAME
+  // live `sources` array reference the lookup snapshots.
+  const listDictPrefs = async (): Promise<DictPref[]> => {
+    const persisted = await readDictPrefs(userDb);
+    const identityList = allSources.map(
+      source =>
+        identities.get(source) ?? {
+          name: source.name,
+          prefKey: source.name,
+          removable: false,
+        },
+    );
+    return mergeDictPrefs(identityList, persisted);
+  };
+  const applyDictPrefs = async (prefs: DictPref[]): Promise<void> => {
+    await setDictPrefs(userDb, prefs, logger);
+    // Keep the bootstrap-captured snapshot in sync so a LATER detached
+    // import recomputes against the user's current ordering, not the
+    // stale start-of-session set.
+    persistedPrefs = prefs;
+    deriveLiveSources(sources, allSources, identities, persistedPrefs);
+  };
+
+  return {
+    lookup,
+    sources,
+    allSources,
+    baseDb,
+    userDb,
+    importsSettled,
+    sourceLang,
+    listDictPrefs,
+    setDictPrefs: applyDictPrefs,
+  };
 };
