@@ -67,6 +67,8 @@ describe('rnSqliteDb wrap.transaction — multi-statement async body (device reg
     expect(f.nativeTxCount()).toBe(1);
     expect(f.direct).not.toContain('BEGIN');
     expect(f.direct).not.toContain('COMMIT');
+    // The commit is checkpointed to disk so a plugin reload can't drop the WAL.
+    expect(f.direct).toContain('PRAGMA wal_checkpoint(TRUNCATE)');
   });
 
   test('a body error aborts BEFORE the native transaction — nothing replayed', async () => {

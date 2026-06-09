@@ -64,6 +64,25 @@ const withTimeout = <T>(p: Promise<T>, label: string): Promise<T> => {
   return Promise.race([p, timeout]).finally(() => clearTimeout(timer));
 };
 
+// Force a commit to be DURABLE on disk immediately. The plugin's user.db is
+// WAL-mode, and a plugin reload (onHostResume recreates the JS context) opens
+// a FRESH user.db BEFORE the un-checkpointed WAL is merged into the main file —
+// so "committed" settings/audit writes vanished on reopen (verified on-device:
+// `save committed` then a reload read all defaults back). TRUNCATE merges the
+// WAL into the main DB file (and zeroes the WAL) so the next open sees them.
+// Best-effort: a checkpoint failure must NOT fail the write (and it's a no-op
+// when the DB isn't in WAL mode).
+const checkpoint = async (db: RnDatabase): Promise<void> => {
+  try {
+    await withTimeout(
+      db.executeSql('PRAGMA wal_checkpoint(TRUNCATE)', []),
+      'checkpoint',
+    );
+  } catch {
+    // Durability hardening only — never surface a checkpoint error.
+  }
+};
+
 // Exported for the transaction-sequencing regression test (the native
 // module is lazy-required in loadStorage, so wrap itself is jest-safe).
 export const wrap = (db: RnDatabase): SqliteDb => ({
@@ -76,6 +95,9 @@ export const wrap = (db: RnDatabase): SqliteDb => ({
   },
   async run(sql: string, params: SqlParam[] = []): Promise<{changes: number}> {
     const [result] = await withTimeout(db.executeSql(sql, params), 'run');
+    // Single-statement writes (addUserEntry, removeImport, …) must survive a
+    // plugin reload too — checkpoint the WAL to the main file.
+    await checkpoint(db);
     return {changes: result.rowsAffected};
   },
   async transaction(fn: (tx: SqliteDb) => Promise<void>): Promise<void> {
@@ -123,6 +145,8 @@ export const wrap = (db: RnDatabase): SqliteDb => ({
         tx.executeSql(sql, params);
       }
     });
+    // Make the committed batch durable before a reload can drop the WAL.
+    await checkpoint(db);
   },
   async close(): Promise<void> {
     await db.close();
