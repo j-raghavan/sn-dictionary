@@ -122,6 +122,10 @@ export type PopupActions = {
   // wired engine) still satisfy PopupActions; the panel guards on presence.
   confirmRestore?(): Promise<boolean>;
   restoreDbs?(backupDir: string): Promise<RestoreSummary>;
+  // Show a result/notification to the user as a modal dialog (the native
+  // RattaDialog). Used by export/restore to surface their outcome — an inline
+  // summary line at the bottom of a scrolled panel is too easy to miss.
+  notify?(message: string): Promise<void>;
 };
 
 let popupActions: PopupActions | null = null;

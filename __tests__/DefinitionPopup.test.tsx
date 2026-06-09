@@ -2131,6 +2131,7 @@ const exportActions = (
       {label: 'WordNet', filename: 'base.db'},
       {label: 'User', filename: 'user.db'},
     ] as DbFile[],
+  notify: PopupActions['notify'] = async () => undefined,
 ): PopupActions => ({
   lookupThesaurus: async () => ({lang: 'en', omw: {synonyms: [], antonyms: []}}),
   addUserEntry: async () => undefined,
@@ -2143,6 +2144,7 @@ const exportActions = (
   listFolders,
   createFolder,
   exportDbs,
+  notify,
 });
 
 describe('DefinitionPopup — DB export (F5)', () => {
@@ -2195,6 +2197,24 @@ describe('DefinitionPopup — DB export (F5)', () => {
     const text = collectText(tree);
     expect(text).toContain('Export complete');
     expect(text).toContain(MYSTYLE);
+  });
+
+  test('the export result is ALSO surfaced via notify (a modal the user cannot miss)', async () => {
+    const notifySpy = jest.fn(async () => undefined);
+    setPopupActions(
+      exportActions(undefined, undefined, undefined, undefined, notifySpy),
+    );
+    const tree = renderPopup();
+    await openSettings(tree);
+    await act(async () => {
+      findByLabel(tree, 'Export dictionaries')[0].props.onPress();
+      await flush();
+    });
+    // The same result string handed to the inline summary is also pushed to
+    // the dialog — so a successful export can't look like nothing happened.
+    expect(notifySpy).toHaveBeenCalledWith(
+      expect.stringContaining('Export complete'),
+    );
   });
 
   test('a partial-failure summary lists the failed file (F5-AC4)', async () => {

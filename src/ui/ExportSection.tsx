@@ -130,6 +130,15 @@ export default function ExportSection(props: {
       });
   };
 
+  // Show a result BOTH inline (persistent) AND as a modal dialog (notify) so
+  // the user can't miss it — an inline summary at the bottom of a scrolled
+  // panel was easy to overlook (the export looked dead though it had run). The
+  // dialog is best-effort (a missing notify port just leaves the inline text).
+  const report = (msg: string): void => {
+    setSummary(msg);
+    actions?.notify?.(msg).catch(() => {});
+  };
+
   // Export every DB into the current folder. exportDbs orchestrates the
   // guard + space check + checkpoint + copy; it REJECTS (with a localised
   // reason) on the plugin-dir guard / no-space abort — show that verbatim
@@ -151,13 +160,13 @@ export default function ExportSection(props: {
               .join(', ')})`,
           );
         }
-        setSummary(`${parts.join(' · ')} → ${result.targetDir}`);
+        report(`${parts.join(' · ')} → ${result.targetDir}`);
       })
       .catch((e: unknown) => {
         if (!cancelledRef.current) {
           // The orchestration throws the localised reason (no-space /
           // plugin-dir guard) — surface it directly.
-          setSummary((e as Error).message);
+          report((e as Error).message);
         }
       });
   };
@@ -188,7 +197,7 @@ export default function ExportSection(props: {
           // surface the orchestration's reason (the localised "no backups
           // found") verbatim, with no reopen prompt (no files changed).
           if (result.restored.length === 0 && result.failed.length > 0) {
-            setSummary(result.failed[0].reason);
+            report(result.failed[0].reason);
             return;
           }
           const parts = [`${t('settings.restoreDone')}: ${result.restored.length}`];
@@ -199,12 +208,12 @@ export default function ExportSection(props: {
                 .join(', ')})`,
             );
           }
-          setSummary(`${parts.join(' · ')} — ${t('settings.restoreReopen')}`);
+          report(`${parts.join(' · ')} — ${t('settings.restoreReopen')}`);
         });
       })
       .catch((e: unknown) => {
         if (!cancelledRef.current) {
-          setSummary((e as Error).message);
+          report((e as Error).message);
         }
       });
   };
