@@ -1,102 +1,90 @@
 // Regression guard for the on-device SqliteDb transaction wrapper
-// (rnSqliteDb.ts). react-native-sqlite-storage's native transaction(fn)
-// only captures executeSql calls issued SYNCHRONOUSLY in fn and commits
-// when the (sync) callback returns — so an ASYNC body (awaited loop) had
-// every statement after the first `await` silently dropped. That persisted
-// only the DELETE of each settings DELETE+INSERT pair (the disabled-dict /
-// keep-sources revert the user hit on-device) and dropped audit/CSV rows
-// past the first. The fix RUNS the async body first against a recorder that
-// collects every statement, then replays them SYNCHRONOUSLY inside the
-// native transaction (which is proven to commit) — NOT raw BEGIN/COMMIT,
-// which Android's pooled SQLiteDatabase can mishandle. These tests lock that
-// against a fake RnDatabase (the real native module is lazy-required only in
-// openRnSqliteDb, so importing `wrap` is jest-safe).
+// (rnSqliteDb.ts). On the Supernote's react-native-sqlite-storage build the
+// native db.transaction(fn) RESOLVES WITHOUT PERSISTING — verified on-device:
+// a "committed" dict_prefs transaction was invisible to a later read on the
+// SAME connection, while single autocommit writes (addUserEntry's db.run) DO
+// survive a reload. So the wrapper runs the async body one statement at a time
+// against real AWAITED executeSql (the autocommit path that works), NOT a
+// native transaction. These tests lock that against a fake RnDatabase (the
+// real native module is lazy-required only in openRnSqliteDb, so importing
+// `wrap` is jest-safe).
 
 import {wrap} from '../src/core/dict/sqlite/rnSqliteDb';
 
-// A fake react-native-sqlite-storage database. `replayed` records statements
-// run inside the native transaction (the whole point — order + completeness);
-// `direct` records standalone executeSql (reads / NOT transaction control).
-const fakeDb = () => {
-  const replayed: string[] = [];
-  const direct: string[] = [];
-  let nativeTxCount = 0;
-  const tx = {
-    executeSql: (sql: string) => {
-      replayed.push(sql);
-    },
-  };
+// A fake react-native-sqlite-storage database. `executed` records every
+// executeSql in order (the autocommit path — the whole point). The native
+// db.transaction must NEVER be used (it doesn't persist on-device), so it
+// throws loudly if the wrapper ever calls it again.
+const fakeDb = (rows: Record<string, unknown>[] = []) => {
+  const executed: string[] = [];
   return {
-    replayed,
-    direct,
-    nativeTxCount: () => nativeTxCount,
+    executed,
     db: {
       executeSql: async (sql: string) => {
-        direct.push(sql);
-        return [{rows: {length: 0, raw: () => []}, rowsAffected: 1}];
+        executed.push(sql);
+        return [{rows: {length: rows.length, raw: () => rows}, rowsAffected: 1}];
       },
-      transaction: async (fn: (t: typeof tx) => void) => {
-        nativeTxCount += 1;
-        fn(tx); // synchronous body — exactly what the lib commits on return
+      transaction: () => {
+        throw new Error('native transaction() must not be used (it does not persist on-device)');
       },
       close: async () => undefined,
     },
   };
 };
 
-describe('rnSqliteDb wrap.transaction — multi-statement async body (device regression)', () => {
-  test('replays EVERY statement of an awaited loop, in order, in ONE native transaction', async () => {
+describe('rnSqliteDb wrap.transaction — sequential autocommit (device persistence)', () => {
+  test('executes EVERY statement of an awaited loop, in order, via autocommit (no native tx)', async () => {
     const f = fakeDb();
     await wrap(f.db).transaction(async tx => {
-      // The exact shape setDictPrefs / the import audit use: a DELETE+INSERT
-      // per item, each awaited. The old wrapper dropped everything after the
-      // first await — here all four must land.
+      // The exact shape setDictPrefs / the import audit use — a DELETE+INSERT
+      // per item. The native-transaction version committed without persisting;
+      // here every statement is a real autocommit write.
       for (const key of ['k1', 'k2']) {
         await tx.run('DELETE FROM dict_prefs WHERE pref_key = ?', [key]);
         await tx.run('INSERT INTO dict_prefs VALUES (?)', [key]);
       }
     });
-    expect(f.replayed).toEqual([
+    expect(f.executed).toEqual([
       'DELETE FROM dict_prefs WHERE pref_key = ?',
       'INSERT INTO dict_prefs VALUES (?)',
       'DELETE FROM dict_prefs WHERE pref_key = ?',
       'INSERT INTO dict_prefs VALUES (?)',
     ]);
-    // Exactly one native transaction; no raw BEGIN/COMMIT/ROLLBACK (Android
-    // pooled-connection hazard) leaked to a standalone executeSql.
-    expect(f.nativeTxCount()).toBe(1);
-    expect(f.direct).not.toContain('BEGIN');
-    expect(f.direct).not.toContain('COMMIT');
-    // The commit is checkpointed to disk so a plugin reload can't drop the WAL.
-    expect(f.direct).toContain('PRAGMA wal_checkpoint(TRUNCATE)');
   });
 
-  test('a body error aborts BEFORE the native transaction — nothing replayed', async () => {
+  test('a tx run reports the real rowsAffected from the autocommit write', async () => {
     const f = fakeDb();
-    const boom = new Error('build failed');
+    let changes = -1;
+    await wrap(f.db).transaction(async tx => {
+      ({changes} = await tx.run('INSERT INTO t VALUES (1)'));
+    });
+    expect(changes).toBe(1);
+  });
+
+  test('a read inside the transaction works (committed-state autocommit path)', async () => {
+    const f = fakeDb([{pref_key: 'k1', enabled: 0}]);
+    let got: unknown;
+    await wrap(f.db).transaction(async tx => {
+      got = await tx.query('SELECT * FROM dict_prefs');
+    });
+    expect(got).toEqual([{pref_key: 'k1', enabled: 0}]);
+  });
+
+  test('a body error propagates; writes before it already committed (autocommit, not atomic)', async () => {
+    const f = fakeDb();
+    const boom = new Error('insert failed');
     await expect(
       wrap(f.db).transaction(async tx => {
         await tx.run('INSERT INTO t VALUES (1)');
-        throw boom; // e.g. a populate-step validation failure
+        throw boom;
       }),
     ).rejects.toBe(boom);
-    // The native transaction was never entered, so nothing committed.
-    expect(f.nativeTxCount()).toBe(0);
-    expect(f.replayed).toEqual([]);
+    // The first write already executed (autocommit) — atomicity is the
+    // deliberate trade for durability on this device.
+    expect(f.executed).toEqual(['INSERT INTO t VALUES (1)']);
   });
 
-  test('a READ inside a transaction throws (write-only invariant, not a silent stale read)', async () => {
-    const f = fakeDb();
-    await expect(
-      wrap(f.db).transaction(async tx => {
-        await tx.query('SELECT 1');
-      }),
-    ).rejects.toThrow('reads inside a transaction are not supported');
-    // The body threw before collection finished → native tx never entered.
-    expect(f.nativeTxCount()).toBe(0);
-  });
-
-  test('a nested transaction collects into the SAME single native transaction', async () => {
+  test('a nested transaction runs against the same connection', async () => {
     const f = fakeDb();
     await wrap(f.db).transaction(async tx => {
       await tx.run('A');
@@ -104,7 +92,6 @@ describe('rnSqliteDb wrap.transaction — multi-statement async body (device reg
         await inner.run('B');
       });
     });
-    expect(f.replayed).toEqual(['A', 'B']);
-    expect(f.nativeTxCount()).toBe(1);
+    expect(f.executed).toEqual(['A', 'B']);
   });
 });
