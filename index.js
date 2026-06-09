@@ -37,7 +37,12 @@ import {createRnProvisionPorts} from './src/core/dict/sqlite/provisionRnPorts';
 import {createRnImportPorts} from './src/core/dict/sqlite/importRnPorts';
 import {createRnCsvImportPorts} from './src/core/dict/sqlite/importCsvRnPorts';
 import {stardictRunPorts} from './src/core/dict/sqlite/importStardict';
-import {runNativeImport, getFileSize} from './src/core/dict/sqlite/nativeImport';
+import {
+  runNativeImport,
+  getFileSize,
+  copyPluginFile,
+  deletePluginFile,
+} from './src/core/dict/sqlite/nativeImport';
 import {openRnSqliteDb} from './src/core/dict/sqlite/rnSqliteDb';
 import {discoverUserDicts} from './src/core/dict/userDictDiscovery';
 import {lookupThesaurus} from './src/core/dict/sqlite/thesaurusLookup';
@@ -188,10 +193,12 @@ const bootstrapPorts = {
     },
     openImportedDb: filename => openDbByName(filename),
     // F4-FR3: slug-DB health probe (existence is enough for v1). The slug
-    // lives at PLUGIN_LOCATION/<filename> (same path resolveSlugDbPath
-    // builds); a probe failure -> treated as unhealthy upstream (RE-ADD).
+    // lives at PLUGIN_LOCATION/<filename> (relative); RTNFileUtils.exists
+    // can't resolve that, so probe via the resolving native stat — a
+    // healthy slug DB is non-empty. A probe failure / 0 bytes -> treated as
+    // unhealthy upstream (RE-ADD).
     slugDbExists: filename =>
-      FileUtils.exists(`${PLUGIN_LOCATION}${filename}`),
+      getFileSize(resolveSlugDbPath(filename)).then(size => size > 0),
   },
   discover: () => discoverUserDicts({fileUtils: FileUtils, logger}),
   // F7: the file-deletion seam deleteImportedDict drives — unlink the slug
@@ -200,7 +207,10 @@ const bootstrapPorts = {
   // bootstrap reflects per-step success in the DeleteResult it returns.
   delete: {
     resolveSlugPath: resolveSlugDbPath,
-    deleteFile: path => FileUtils.deleteFile(path).then(() => undefined),
+    // deletePluginFile resolves a RELATIVE plugin path (the slug DB) under
+    // filesDir AND passes an ABSOLUTE path (a kept source file) through —
+    // RTNFileUtils.deleteFile can't reach the relative slug path.
+    deleteFile: path => deletePluginFile(path).then(() => undefined),
     deleteFolder: path => FileUtils.deleteDir(path),
   },
   // F4-FR5: the one-time first-run keep/delete dialog. Device-only (the
@@ -247,7 +257,7 @@ const bootstrapPorts = {
           openWritableSlug: filename => openDbByName(filename)(),
           reopenSlugByName: filename => openDbByName(filename)(),
           discardSlugByName: filename =>
-            FileUtils.deleteFile(`${PLUGIN_LOCATION}${filename}`).catch(() => {}),
+            deletePluginFile(`${PLUGIN_LOCATION}${filename}`).catch(() => {}),
           audit,
         })
       : stardictRunPorts(
@@ -277,7 +287,7 @@ const bootstrapPorts = {
             // half-built file (best-effort).
             reopenSlugByName: filename => openDbByName(filename)(),
             discardSlugByName: filename =>
-              FileUtils.deleteFile(`${PLUGIN_LOCATION}${filename}`).catch(() => {}),
+              deletePluginFile(`${PLUGIN_LOCATION}${filename}`).catch(() => {}),
             audit,
           }),
         );
@@ -393,7 +403,7 @@ bootstrap(bootstrapPorts, logger)
             availableSpace: () => FileUtils.getStorageAvailableSpace(),
             sizeOf: srcPath => getFileSize(srcPath),
             copyFile: (srcPath, destPath) =>
-              FileUtils.copyFile(srcPath, destPath),
+              copyPluginFile(srcPath, destPath),
             ensureDir: dir => FileUtils.makeDir(dir),
             // Checkpoint the OPEN user.db so its on-disk file is
             // WAL-consistent before the raw copy (resolution #9).

@@ -49,3 +49,29 @@ export const getFileSize = async (path: string): Promise<number> => {
   }
   return mod.fileSize(path);
 };
+
+// Copy a plugin DB (relative path resolved under filesDir) to an absolute
+// destination — the DB export. Uses our native byte-copy, NOT
+// FileUtils.copyFile (which is a rename and can't cross filesDir->external).
+export const copyPluginFile = async (
+  srcPath: string,
+  destPath: string,
+): Promise<boolean> => {
+  const {NativeModules} = require('react-native');
+  const mod = NativeModules.SnDictImport;
+  if (mod === undefined || typeof mod.copyToExternal !== 'function') {
+    throw new Error('[export] native SnDictImport.copyToExternal is unavailable');
+  }
+  return mod.copyToExternal(srcPath, destPath);
+};
+
+// Delete a plugin file (relative path resolved under filesDir, e.g. a slug
+// DB) — F7 delete. FileUtils.deleteFile can't reach the relative path.
+export const deletePluginFile = async (path: string): Promise<boolean> => {
+  const {NativeModules} = require('react-native');
+  const mod = NativeModules.SnDictImport;
+  if (mod === undefined || typeof mod.deleteResolved !== 'function') {
+    throw new Error('[delete] native SnDictImport.deleteResolved is unavailable');
+  }
+  return mod.deleteResolved(path);
+};
