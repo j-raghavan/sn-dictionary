@@ -202,6 +202,15 @@ describe('importStardict — happy path', () => {
     );
   });
 
+  it('passes NO format override when the sidecar omits it — the native importer derives it from the .ifo sametypesequence (h -> html), NOT a hardcoded plain', async () => {
+    // SIDECAR sets only name + language (no `format`). Forcing 'plain' here
+    // would shadow an HTML StarDict's own sametypesequence=h and render its
+    // <i>/<ol>/<li> markup as literal text (the fr-en-strdict bug).
+    const h = await makeHarness();
+    await importStardict(h.ports);
+    expect(h.runNativeImport.mock.calls[0][0].format).toBeUndefined();
+  });
+
   it('forwards the optional .syn path to the native import', async () => {
     const h = await makeHarness();
     h.ports.synPath = 'dict.syn';
