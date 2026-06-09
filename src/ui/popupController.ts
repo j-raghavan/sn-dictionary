@@ -23,22 +23,30 @@ import type {ThesaurusResult} from '../core/dict/sqlite/thesaurusLookup';
 //                    with streaming, fires synchronously inside
 //                    multiDictLookup before any source resolves).
 
+// The closeable-and-restorable payload of a result-kind popup. Factored
+// out so the Settings panel can stash the exact result it opened over and
+// the Back button restores it verbatim (F1). It is NOT a LookupResult
+// field — editability + the active tab are popup chrome (IV-1).
+export type ResultSnapshot = {
+  ocrLabel?: string;
+  result: LookupResult;
+  // OPTIONAL: when true the popup shows the OCR-correction editable
+  // field (lasso flow). Absent/false -> read-only view (doc-select).
+  // The component guards on `=== true`, never on ocrLabel presence
+  // (Designer ruling 4 / flag 5). The LookupResult shape itself is
+  // unchanged (IV-1) — editability is popup chrome, not a result field.
+  editable?: boolean;
+  // The tab the user was on when they opened Settings, so Back restores
+  // it instead of resetting to Definition (F1-AC2). Absent on a normal
+  // lookup -> the component defaults to 'definition'.
+  activeTab?: 'definition' | 'thesaurus';
+};
+
 export type PopupState =
   | {visible: false}
   | {visible: true; kind: 'recognizing'; ocrLabel?: string}
-  | {
-      visible: true;
-      kind: 'result';
-      ocrLabel?: string;
-      result: LookupResult;
-      // OPTIONAL: when true the popup shows the OCR-correction editable
-      // field (lasso flow). Absent/false -> read-only view (doc-select).
-      // The component guards on `=== true`, never on ocrLabel presence
-      // (Designer ruling 4 / flag 5). The LookupResult shape itself is
-      // unchanged (IV-1) — editability is popup chrome, not a result
-      // field.
-      editable?: boolean;
-    };
+  | ({visible: true; kind: 'result'} & ResultSnapshot)
+  | {visible: true; kind: 'settings'; resume?: ResultSnapshot};
 
 type Listener = (state: PopupState) => void;
 
@@ -92,6 +100,24 @@ export const showDefinition = (
 
 export const hideDefinition = (): void => {
   emit({visible: false});
+};
+
+// Open the Settings panel, stashing the result the user was viewing so
+// Back can restore it verbatim (F1). `snapshot` is undefined when opened
+// from a non-result state (e.g. nothing to return to).
+export const showSettings = (snapshot?: ResultSnapshot): void => {
+  emit({visible: true, kind: 'settings', resume: snapshot});
+};
+
+// Leave the Settings panel: re-emit the stashed result (restoring its
+// OCR label, editability, and active tab) when there is one, else close.
+export const closeSettings = (): void => {
+  const s = currentState;
+  if (s.visible && s.kind === 'settings' && s.resume) {
+    emit({visible: true, kind: 'result', ...s.resume});
+  } else {
+    emit({visible: false});
+  }
 };
 
 export const getCurrentState = (): PopupState => currentState;

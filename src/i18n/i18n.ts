@@ -45,7 +45,10 @@ export type StringId =
   | 'popup.copyWord'
   | 'popup.copyText'
   | 'popup.copied'
-  | 'popup.copyFailed';
+  | 'popup.copyFailed'
+  | 'settings.open'
+  | 'settings.title'
+  | 'settings.back';
 
 // Locale codes use the firmware's convention: en, zh_CN, zh_TW, ja,
 // th, nl. Underscore (not hyphen) matches PluginButton.nameMap shape
@@ -77,6 +80,9 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.copyText': 'Copy',
     'popup.copied': 'Copied',
     'popup.copyFailed': "Couldn't copy",
+    'settings.open': 'Settings',
+    'settings.title': 'Settings',
+    'settings.back': 'Back',
   },
   zh_CN: {
     'popup.synonyms': '同义词',
@@ -104,6 +110,9 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.copyText': '复制',
     'popup.copied': '已复制',
     'popup.copyFailed': '复制失败',
+    'settings.open': '设置',
+    'settings.title': '设置',
+    'settings.back': '返回',
   },
   zh_TW: {
     'popup.synonyms': '同義詞',
@@ -131,6 +140,9 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.copyText': '複製',
     'popup.copied': '已複製',
     'popup.copyFailed': '複製失敗',
+    'settings.open': '設定',
+    'settings.title': '設定',
+    'settings.back': '返回',
   },
   ja: {
     'popup.synonyms': '類義語',
@@ -158,6 +170,9 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.copyText': 'コピー',
     'popup.copied': 'コピーしました',
     'popup.copyFailed': 'コピーできませんでした',
+    'settings.open': '設定',
+    'settings.title': '設定',
+    'settings.back': '戻る',
   },
   th: {
     'popup.synonyms': 'คำพ้องความหมาย',
@@ -185,6 +200,9 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.copyText': 'คัดลอก',
     'popup.copied': 'คัดลอกแล้ว',
     'popup.copyFailed': 'คัดลอกไม่ได้',
+    'settings.open': 'การตั้งค่า',
+    'settings.title': 'การตั้งค่า',
+    'settings.back': 'ย้อนกลับ',
   },
   nl: {
     'popup.synonyms': 'Synoniemen',
@@ -212,6 +230,9 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.copyText': 'Kopiëren',
     'popup.copied': 'Gekopieerd',
     'popup.copyFailed': 'Kopiëren mislukt',
+    'settings.open': 'Instellingen',
+    'settings.title': 'Instellingen',
+    'settings.back': 'Terug',
   },
   de: {
     'popup.synonyms': 'Synonyme',
@@ -239,6 +260,9 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.copyText': 'Kopieren',
     'popup.copied': 'Kopiert',
     'popup.copyFailed': 'Kopieren fehlgeschlagen',
+    'settings.open': 'Einstellungen',
+    'settings.title': 'Einstellungen',
+    'settings.back': 'Zurück',
   },
 };
 

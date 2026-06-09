@@ -2,11 +2,14 @@ import {
   showDefinition,
   showRecognizing,
   hideDefinition,
+  showSettings,
+  closeSettings,
   subscribe,
   getCurrentState,
   setPopupActions,
   getPopupActions,
   type PopupActions,
+  type ResultSnapshot,
   __testing__,
 } from '../src/ui/popupController';
 
@@ -114,6 +117,74 @@ describe('popupController', () => {
     subscribe(s => seen.push(s as {editable?: boolean}));
     showDefinition({queriedFor: 'x', hits: [], loading: []});
     expect(seen[0].editable).toBeUndefined();
+  });
+});
+
+describe('popupController — settings panel (F1)', () => {
+  const snapshot: ResultSnapshot = {
+    ocrLabel: 'OCR: happy',
+    result: {
+      queriedFor: 'happy',
+      hits: [
+        {
+          source: 'WordNet',
+          entry: {word: 'happy', definition: 'joy', format: 'plain'},
+        },
+      ],
+      loading: [],
+    },
+    editable: true,
+    activeTab: 'thesaurus',
+  };
+
+  test('showSettings(snapshot) emits the settings kind carrying the resume', () => {
+    const seen: unknown[] = [];
+    subscribe(s => seen.push(s));
+    showSettings(snapshot);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toEqual({
+      visible: true,
+      kind: 'settings',
+      resume: snapshot,
+    });
+    expect(getCurrentState()).toEqual(seen[0]);
+  });
+
+  test('showSettings() with no snapshot leaves resume undefined', () => {
+    const seen: unknown[] = [];
+    subscribe(s => seen.push(s));
+    showSettings();
+    expect(seen[0]).toEqual({visible: true, kind: 'settings', resume: undefined});
+  });
+
+  test('closeSettings re-emits the stashed result incl. its activeTab', () => {
+    showSettings(snapshot);
+    const seen: unknown[] = [];
+    subscribe(s => seen.push(s));
+    closeSettings();
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toEqual({
+      visible: true,
+      kind: 'result',
+      ocrLabel: 'OCR: happy',
+      result: snapshot.result,
+      editable: true,
+      activeTab: 'thesaurus',
+    });
+  });
+
+  test('closeSettings with no resume hides the popup', () => {
+    showSettings(); // no snapshot
+    const seen: unknown[] = [];
+    subscribe(s => seen.push(s));
+    closeSettings();
+    expect(seen[0]).toEqual({visible: false});
+  });
+
+  test('closeSettings when not in the settings state hides the popup', () => {
+    showDefinition({queriedFor: 'x', hits: [], loading: []});
+    closeSettings();
+    expect(getCurrentState()).toEqual({visible: false});
   });
 });
 

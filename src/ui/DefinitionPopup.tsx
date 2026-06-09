@@ -5,9 +5,11 @@ import {
   getCurrentState,
   getPopupActions,
   hideDefinition,
+  showSettings,
   subscribe,
   type PopupState,
 } from './popupController';
+import SettingsPanel from './SettingsPanel';
 import {SourceSection} from './SourceSection';
 import {popupStyles as styles} from './popupStyles';
 import {t} from '../i18n/i18n';
@@ -114,12 +116,18 @@ export default function DefinitionPopup(): React.JSX.Element {
   const fetchedHeadwordRef = useRef<string | null>(null);
 
   // A new headword resets to the Definition tab and drops any cached
-  // thesaurus (single-fetch is per-headword).
+  // thesaurus (single-fetch is per-headword). EXCEPT when the result was
+  // restored from Settings (Back) carrying an activeTab — then honour it
+  // so Back doesn't clobber the tab the user left from (F1-AC2). On a
+  // normal lookup activeTab is undefined and we default to 'definition'.
   useEffect(() => {
-    setTab('definition');
+    const resumedTab =
+      state.visible && state.kind === 'result' ? state.activeTab : undefined;
+    setTab(resumedTab ?? 'definition');
     setThesaurus(null);
     setCopyStatus('idle');
     fetchedHeadwordRef.current = null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [headword]);
 
   // EN WordNet senses for the primary hit, memoised by the definition
@@ -304,6 +312,17 @@ export default function DefinitionPopup(): React.JSX.Element {
     );
   }
 
+  if (state.kind === 'settings') {
+    // The Settings panel renders inside the same backdrop + card chrome;
+    // SettingsPanel owns the card and the Back button (which restores the
+    // stashed result via closeSettings).
+    return (
+      <View style={styles.backdrop}>
+        <SettingsPanel resume={state.resume} />
+      </View>
+    );
+  }
+
   // state.kind === 'result'
   const hits = state.result.hits;
   const loading = state.result.loading ?? [];
@@ -366,6 +385,23 @@ export default function DefinitionPopup(): React.JSX.Element {
           <Text style={[styles.word, styles.headerWordWrap]} numberOfLines={1}>
             {headerWord}
           </Text>
+          {/* Settings gear — shown in every result state (incl. not-found
+              / loading), sitting left of the font-size stepper. Captures
+              the active tab so Back restores it (F1-AC2). */}
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={t('settings.open')}
+            onPress={() =>
+              showSettings({
+                ocrLabel: state.ocrLabel,
+                result: state.result,
+                editable: state.editable,
+                activeTab: tab,
+              })
+            }
+            style={styles.gearButton}>
+            <Text style={styles.gearLabel}>⚙</Text>
+          </Pressable>
           <View style={styles.fontSizeRow}>
             <Pressable
               accessibilityRole="button"

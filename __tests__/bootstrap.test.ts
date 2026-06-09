@@ -545,3 +545,20 @@ describe('bootstrap — user.db phonetic migration (FR2)', () => {
     expect((await cols(h.userDb)).filter(c => c === 'phonetic')).toHaveLength(1);
   });
 });
+
+describe('bootstrap — settings tables (F1, ADR-0009)', () => {
+  const tableNames = async (db: SqliteDb): Promise<string[]> => {
+    const rows = await db.query<{name: string}>(
+      "SELECT name FROM sqlite_master WHERE type = 'table'",
+    );
+    return rows.map(r => r.name);
+  };
+
+  it('creates dict_prefs, app_settings, and user_meta on a healthy user.db', async () => {
+    const h = await makeHarness({});
+    await bootstrap(h.ports);
+    expect(await tableNames(h.userDb)).toEqual(
+      expect.arrayContaining(['dict_prefs', 'app_settings', 'user_meta']),
+    );
+  });
+});

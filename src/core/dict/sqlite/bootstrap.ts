@@ -23,6 +23,7 @@ import {
   type ImportRow,
 } from './schema';
 import {ensureImportsTable} from './importAudit';
+import {ensureSettingsTables} from './settings';
 import {runImport, type RunImportPorts} from './runImport';
 import type {ImportJobDescriptor} from '../userDictDiscovery';
 
@@ -187,6 +188,10 @@ export const bootstrap = async (
       }
     }
     await ensureImportsTable(userDb);
+    // Settings-Panel preference tables (F1, ADR-0009). Additive +
+    // idempotent like the imports table; a throw here degrades user.db
+    // to null below (F1-AC4) — base.db still works.
+    await ensureSettingsTables(userDb);
   } catch (e) {
     logger?.warn(
       `[bootstrap] user.db unavailable (${(e as Error).message}) — degrading: imports + user words disabled, base works`,

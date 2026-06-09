@@ -33,6 +33,7 @@ import {
   showRecognizing,
   hideDefinition,
   setPopupActions,
+  getCurrentState,
   type PopupActions,
   __testing__,
 } from '../src/ui/popupController';
@@ -1092,6 +1093,14 @@ const relookupActions = (
 const findByLabel = (tree: ReactTestRenderer, label: string) =>
   tree.root.findAll(n => n.props.accessibilityLabel === label);
 
+// Narrowed read of the current popup kind: getCurrentState() is a union
+// and `.kind` only exists on the visible variants, so narrow on .visible
+// first (mirrors the guard popupController.closeSettings uses).
+const currentKind = (): string | undefined => {
+  const s = getCurrentState();
+  return s.visible ? s.kind : undefined;
+};
+
 // Tap the pencil to enter edit mode.
 const enterEdit = (tree: ReactTestRenderer) =>
   act(() => findByLabel(tree, 'Edit recognized text')[0].props.onPress());
@@ -1480,5 +1489,97 @@ describe('DefinitionPopup — copy wiring (tab / multi-source / format)', () => 
     const copied = copyMock.mock.calls[copyMock.mock.calls.length - 1][0];
     expect(copied).not.toMatch(/[<>]/);
     expect(copied).toBe(htmlToPlainText(html));
+  });
+});
+
+// --- Settings panel shell (F1) -------------------------------------
+
+const pressLabel = (tree: ReactTestRenderer, label: string) =>
+  findByLabel(tree, label)[0].props.onPress();
+
+describe('DefinitionPopup — settings panel', () => {
+  test('the gear renders in a result state (found)', () => {
+    const tree = renderPopup();
+    act(() => showDefinition(found('WordNet', 'hello', 'a greeting')));
+    expect(findByLabel(tree, 'Settings')).toHaveLength(1);
+  });
+
+  test('the gear renders even in the not-found result state', () => {
+    const tree = renderPopup();
+    act(() => showDefinition(notFound('xenoglossy')));
+    expect(findByLabel(tree, 'Settings')).toHaveLength(1);
+  });
+
+  test('the gear is absent during the recognizing kind', () => {
+    const tree = renderPopup();
+    act(() => showRecognizing());
+    expect(findByLabel(tree, 'Settings')).toHaveLength(0);
+  });
+
+  test('tapping the gear opens the settings panel (title shown, kind=settings)', () => {
+    const tree = renderPopup();
+    act(() => showDefinition(found('WordNet', 'hello', 'a greeting')));
+    act(() => pressLabel(tree, 'Settings'));
+    const text = collectText(tree);
+    expect(text).toContain('Settings');
+    // The result definition is gone (panel replaced it).
+    expect(text).not.toContain('a greeting');
+    expect(currentKind()).toBe('settings');
+    // The panel has a Back button.
+    expect(findByLabel(tree, 'Back')).toHaveLength(1);
+  });
+
+  test('Back restores the prior result AND the Thesaurus tab (F1-AC2)', async () => {
+    setPopupActions(
+      fakeActions(async () => ({
+        lang: 'en',
+        omw: {synonyms: ['glad'], antonyms: ['sad']},
+      })),
+    );
+    const tree = renderPopup();
+    act(() => showDefinition(wordnetHit('happy', 'feeling joy')));
+    // Flip to the Thesaurus tab and let the fetch settle.
+    await act(async () =>
+      tree.root
+        .findAll(n => n.props.accessibilityLabel === 'Thesaurus' && n.props.onPress)[0]
+        .props.onPress(),
+    );
+    await flush();
+    expect(collectText(tree)).toContain('glad');
+    // Open settings, then Back.
+    act(() => pressLabel(tree, 'Settings'));
+    expect(currentKind()).toBe('settings');
+    await act(async () => pressLabel(tree, 'Back'));
+    await flush();
+    // The result is back AND we're on the Thesaurus tab (synonyms still
+    // render) — Back did not clobber the restored tab.
+    const text = collectText(tree);
+    expect(text).toContain('glad');
+    expect(text).toContain('sad');
+    expect(currentKind()).toBe('result');
+  });
+
+  test('the gear renders in the loading result state', () => {
+    // Lead decision 4: the gear shows in every result state — incl. the
+    // streaming "loading" snapshot, not just found/not-found.
+    const tree = renderPopup();
+    act(() => showDefinition(loading('apple', ['WordNet'])));
+    expect(findByLabel(tree, 'Settings')).toHaveLength(1);
+  });
+
+  test('Back restores the editable lasso OCR row (the pencil returns)', async () => {
+    // The other state-carry dimension besides activeTab: an editable
+    // (lasso) result must come back editable after Settings → Back, so the
+    // OCR-correction pencil reappears.
+    const tree = renderPopup();
+    act(() =>
+      showDefinition(found('WordNet', 'rain', 'water'), 'OCR: rain', true),
+    );
+    expect(findByLabel(tree, 'Edit recognized text')).toHaveLength(1);
+    act(() => pressLabel(tree, 'Settings'));
+    expect(currentKind()).toBe('settings');
+    await act(async () => pressLabel(tree, 'Back'));
+    expect(currentKind()).toBe('result');
+    expect(findByLabel(tree, 'Edit recognized text')).toHaveLength(1);
   });
 });

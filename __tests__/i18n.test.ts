@@ -124,6 +124,28 @@ describe('t (popup string lookup)', () => {
     expect(enPopupKeys).toEqual(guarded);
   });
 
+  test('every locale DEFINES every settings.* string (no en-fallback gaps)', () => {
+    // The popup.* guard above filters on 'popup.', so the settings.* keys
+    // (F1) are otherwise unguarded. Mirror the same parity assertion: take
+    // en's settings.* key set as the source of truth and require every
+    // locale to define each one non-empty.
+    const settingsIds = Object.keys(STRINGS.en).filter(k =>
+      k.startsWith('settings.'),
+    );
+    // Sanity: F1 added exactly these three.
+    expect(settingsIds.sort()).toEqual([
+      'settings.back',
+      'settings.open',
+      'settings.title',
+    ]);
+    for (const locale of Object.keys(STRINGS)) {
+      for (const id of settingsIds) {
+        const value = STRINGS[locale][id as keyof (typeof STRINGS)[string]];
+        expect(typeof value === 'string' && value.length > 0).toBe(true);
+      }
+    }
+  });
+
   test('every locale defines a non-empty popup.pronunciation', () => {
     // Catches a missing translation when a future locale is added —
     // the a11y label would silently fall back to en otherwise.

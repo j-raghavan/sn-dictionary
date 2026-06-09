@@ -210,6 +210,58 @@ export const popupStyles = StyleSheet.create({
     flexShrink: 1,
     marginRight: 12,
   },
+  // Settings gear button — same 32×32 circular bordered touch target as
+  // the font-size −/+ glyph buttons (crisp on e-ink; no emoji, no PNG).
+  // marginRight nudges it left of the stepper so the header reads
+  // [headword] … [⚙][−][A][+].
+  gearButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#000000',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 6,
+  },
+  gearLabel: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#000000',
+    lineHeight: 20,
+  },
+  // Settings-Panel header: the title on the left, a Back button on the
+  // right — same space-between layout as the result header row.
+  settingsHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  // The panel title — like the headword `word` but a step smaller, since
+  // it's chrome rather than the looked-up term.
+  settingsTitle: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: '#000000',
+  },
+  // Back button mirrors the bordered Close button.
+  settingsBackButton: {
+    paddingVertical: 8,
+    paddingHorizontal: 20,
+    borderWidth: 1,
+    borderColor: '#000000',
+    borderRadius: 4,
+  },
+  settingsBackLabel: {
+    fontSize: 16,
+    color: '#000000',
+  },
+  // Placeholder body copy until F3/F4/F5/F7 fill the panel in.
+  settingsPlaceholder: {
+    marginTop: 16,
+    fontSize: 16,
+    color: '#555555',
+  },
   // Body-text size selector: three circular elements in a row,
   // ( − )( A )( + ). The outer two are Pressables; the middle is a
   // static "A" indicator that anchors the meaning to "text size".
