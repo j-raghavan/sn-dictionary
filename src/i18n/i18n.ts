@@ -70,6 +70,7 @@ export type StringId =
   | 'settings.restoreDone'
   | 'settings.restoreReopen'
   | 'settings.restoreNoBackup'
+  | 'settings.restoreSnapshotFailed'
   | 'common.keep'
   | 'common.delete'
   | 'common.cancel';
@@ -132,6 +133,8 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'settings.restoreDone': 'Restored',
     'settings.restoreReopen': 'reopen the plugin to finish',
     'settings.restoreNoBackup': 'No dictionary backups found in this folder.',
+    'settings.restoreSnapshotFailed':
+      "Couldn't save a safety backup — nothing was changed.",
     'common.keep': 'Keep',
     'common.delete': 'Delete',
     'common.cancel': 'Cancel',
@@ -187,6 +190,7 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'settings.restoreDone': '已恢复',
     'settings.restoreReopen': '请重新打开插件以完成',
     'settings.restoreNoBackup': '此文件夹中未找到词典备份。',
+    'settings.restoreSnapshotFailed': '无法创建安全备份——未做任何更改。',
     'common.keep': '保留',
     'common.delete': '删除',
     'common.cancel': '取消',
@@ -242,6 +246,7 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'settings.restoreDone': '已還原',
     'settings.restoreReopen': '請重新開啟外掛以完成',
     'settings.restoreNoBackup': '此資料夾中未找到詞典備份。',
+    'settings.restoreSnapshotFailed': '無法建立安全備份——未做任何變更。',
     'common.keep': '保留',
     'common.delete': '刪除',
     'common.cancel': '取消',
@@ -300,6 +305,7 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'settings.restoreDone': '復元しました',
     'settings.restoreReopen': 'プラグインを開き直して完了してください',
     'settings.restoreNoBackup': 'このフォルダに辞書のバックアップが見つかりません。',
+    'settings.restoreSnapshotFailed': '安全バックアップを作成できませんでした。変更はありません。',
     'common.keep': '残す',
     'common.delete': '削除',
     'common.cancel': 'キャンセル',
@@ -358,6 +364,7 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'settings.restoreDone': 'กู้คืนแล้ว',
     'settings.restoreReopen': 'เปิดปลั๊กอินใหม่เพื่อให้เสร็จสมบูรณ์',
     'settings.restoreNoBackup': 'ไม่พบข้อมูลสำรองพจนานุกรมในโฟลเดอร์นี้',
+    'settings.restoreSnapshotFailed': 'สร้างข้อมูลสำรองนิรภัยไม่ได้ — ไม่มีการเปลี่ยนแปลง',
     'common.keep': 'เก็บ',
     'common.delete': 'ลบ',
     'common.cancel': 'ยกเลิก',
@@ -418,6 +425,7 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'settings.restoreDone': 'Hersteld',
     'settings.restoreReopen': 'open de plug-in opnieuw om te voltooien',
     'settings.restoreNoBackup': 'Geen woordenboekback-ups in deze map gevonden.',
+    'settings.restoreSnapshotFailed': 'Kon geen veiligheidsback-up maken — er is niets gewijzigd.',
     'common.keep': 'Behouden',
     'common.delete': 'Verwijderen',
     'common.cancel': 'Annuleren',
@@ -478,6 +486,7 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'settings.restoreDone': 'Wiederhergestellt',
     'settings.restoreReopen': 'Plugin neu öffnen, um abzuschließen',
     'settings.restoreNoBackup': 'Keine Wörterbuch-Sicherungen in diesem Ordner gefunden.',
+    'settings.restoreSnapshotFailed': 'Sicherheitskopie fehlgeschlagen — nichts wurde geändert.',
     'common.keep': 'Behalten',
     'common.delete': 'Löschen',
     'common.cancel': 'Abbrechen',

@@ -9,7 +9,7 @@ import {
 const PLUGIN_DIR = 'plugins/sndictdfltbasev1/';
 const BACKUP_DIR = '/storage/emulated/0/MyStyle/SnDict/backup';
 
-const reasons = {noBackup: 'NO_BACKUP'};
+const reasons = {noBackup: 'NO_BACKUP', snapshotFailed: 'SNAPSHOT_FAILED'};
 
 // A fully-stubbed, happy RestorePorts; tests override individual ports.
 const happyPorts = (over: Partial<RestorePorts> = {}): RestorePorts => ({
@@ -17,6 +17,7 @@ const happyPorts = (over: Partial<RestorePorts> = {}): RestorePorts => ({
   copyInto: async () => true,
   resolveLivePath: (filename: string) => `${PLUGIN_DIR}${filename}`,
   closeWritable: async () => undefined,
+  snapshot: async () => undefined,
   ...over,
 });
 
@@ -208,5 +209,72 @@ describe('restoreDbs — closeWritable best-effort', () => {
     );
     expect(summary.restored).toEqual(['user.db']);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('closeWritable'));
+  });
+});
+
+describe('restoreDbs — pre-restore safety snapshot', () => {
+  test('snapshot runs BEFORE closeWritable and any copy', async () => {
+    const order: string[] = [];
+    await restoreDbs(
+      BACKUP_DIR,
+      happyPorts({
+        listBackup: async () => ['user.db', 'dune-english.en.db'],
+        snapshot: async () => {
+          order.push('snapshot');
+        },
+        closeWritable: async () => {
+          order.push('close');
+        },
+        copyInto: async (_src, dest) => {
+          order.push(`copy:${dest.split('/').pop()}`);
+          return true;
+        },
+      }),
+      reasons,
+    );
+    expect(order).toEqual([
+      'snapshot',
+      'close',
+      'copy:user.db',
+      'copy:dune-english.en.db',
+    ]);
+  });
+
+  test('a failed snapshot ABORTS the restore — nothing closed or copied', async () => {
+    const closeWritable = jest.fn(async () => undefined);
+    const copyInto = jest.fn(async () => true);
+    const warn = jest.fn();
+    const summary = await restoreDbs(
+      BACKUP_DIR,
+      happyPorts({
+        listBackup: async () => ['user.db', 'dune-english.en.db'],
+        snapshot: async () => {
+          throw new Error('snap disk full');
+        },
+        closeWritable,
+        copyInto,
+      }),
+      reasons,
+      {warn},
+    );
+    // The live DBs are untouched — never overwrite without a safety net.
+    expect(summary).toEqual({
+      restored: [],
+      failed: [{file: '(safety backup)', reason: 'SNAPSHOT_FAILED'}],
+      backupDir: BACKUP_DIR,
+    });
+    expect(closeWritable).not.toHaveBeenCalled();
+    expect(copyInto).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('snapshot'));
+  });
+
+  test('snapshot is NOT called for an empty backup (returns before it)', async () => {
+    const snapshot = jest.fn(async () => undefined);
+    await restoreDbs(
+      BACKUP_DIR,
+      happyPorts({listBackup: async () => [], snapshot}),
+      reasons,
+    );
+    expect(snapshot).not.toHaveBeenCalled();
   });
 });

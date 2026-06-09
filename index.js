@@ -55,6 +55,7 @@ import {
   exportDbs as orchestrateExportDbs,
   buildExportableDbs,
   joinPath,
+  exportRootParent,
   listFolders as listExportFolders,
   toDbFiles,
 } from './src/core/dict/sqlite/exportDbs';
@@ -463,8 +464,32 @@ bootstrap(bootstrapPorts, logger)
             // the copy overwrites their files; base.db stays open (read-only,
             // never restored). The user reopens the plugin to finish.
             closeWritable: () => handle.closeWritable(),
+            // Pre-restore safety snapshot: checkpoint user.db, then copy the
+            // live user.db + every imported slug DB out to MyStyle/
+            // SnDict-pre-restore/ so a bad restore is undoable (restore FROM
+            // that folder to revert). base.db is the .snplg copy — not
+            // snapshotted. A throw ABORTS the restore (orchestration) so the
+            // live DBs are never overwritten without a safety net.
+            snapshot: async () => {
+              const snapDir = joinPath(exportRootParent(), 'SnDict-pre-restore');
+              await FileUtils.makeDir(snapDir);
+              if (handle.userDb !== null) {
+                await handle.userDb.run('PRAGMA wal_checkpoint(TRUNCATE)');
+              }
+              const imports =
+                handle.userDb !== null
+                  ? await handle.userDb.query(SELECT_IMPORT_ALL)
+                  : [];
+              const files = ['user.db', ...imports.map(r => r.filename)];
+              for (const f of files) {
+                await copyPluginFile(resolveSlugDbPath(f), joinPath(snapDir, f));
+              }
+            },
           },
-          {noBackup: t('settings.restoreNoBackup')},
+          {
+            noBackup: t('settings.restoreNoBackup'),
+            snapshotFailed: t('settings.restoreSnapshotFailed'),
+          },
           logger,
         ),
     });

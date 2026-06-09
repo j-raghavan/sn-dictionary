@@ -36,11 +36,20 @@ export type RestorePorts = {
   copyInto(absSrc: string, relDest: string): Promise<boolean>;
   resolveLivePath(filename: string): string;
   closeWritable(): Promise<void>;
+  // Pre-restore safety snapshot: copy the CURRENT live DBs out to a recovery
+  // folder so a bad restore is undoable. Runs while the handles are still
+  // open (reads the live files; the host checkpoints user.db first). A throw
+  // ABORTS the restore (never overwrite without a net) — nothing is closed or
+  // copied and the live DBs are left untouched.
+  snapshot(): Promise<void>;
 };
 
 export type RestoreReasons = {
   // Shown (as the summary) when the chosen folder holds no restorable DBs.
   noBackup: string;
+  // Shown when the pre-restore safety snapshot failed and the restore was
+  // aborted (nothing changed).
+  snapshotFailed: string;
 };
 
 export type RestoreLogger = {warn: (msg: string) => void; log?: (msg: string) => void};
@@ -71,14 +80,16 @@ export const buildRestorableDbs = (
 //   (1) LIST the backup folder's `.db` files, then build the restorable set
 //       (user.db + slugs, NEVER base.db). When EMPTY, return a no-op summary
 //       carrying the no-backup reason — NOTHING is closed or copied.
-//   (2) CLOSE the writable live handles FIRST (user.db + imported slugs) so
-//       the copy isn't overwriting open SQLite files (the whole correctness
-//       point — close-before-copy).
-//   (3) COPY each restorable from <backupDir>/<filename> over its live path;
+//   (2) SNAPSHOT the current live DBs to a recovery folder. If it fails, ABORT
+//       (nothing closed or copied) — never overwrite without a safety net.
+//   (3) CLOSE the writable live handles (user.db + imported slugs) so the copy
+//       isn't overwriting open SQLite files (close-before-copy).
+//   (4) COPY each restorable from <backupDir>/<filename> over its live path;
 //       collect per-file success/failure (partial failures reported, not
 //       dropped). A false/throw is a failure for THAT file only.
 // Returns the summary the UI renders. NEVER copies base.db (the build helper
-// excludes it). closeWritable runs exactly once, BEFORE any copyInto.
+// excludes it). The snapshot + closeWritable each run exactly once, BEFORE
+// any copyInto.
 export const restoreDbs = async (
   backupDir: string,
   ports: RestorePorts,
@@ -103,7 +114,25 @@ export const restoreDbs = async (
     return {restored: [], failed: [{file: backupDir, reason: reasons.noBackup}], backupDir};
   }
 
-  // (2) CLOSE the writable handles BEFORE any copy (overwriting an open
+  // (2) PRE-RESTORE SAFETY SNAPSHOT — copy the CURRENT live DBs out to a
+  //     recovery folder BEFORE overwriting them, so a bad restore is undoable
+  //     (the user can restore FROM that folder to revert). Runs while the
+  //     handles are still open. If it FAILS we ABORT — never overwrite without
+  //     a safety net — leaving the live DBs untouched (nothing closed/copied).
+  try {
+    await ports.snapshot();
+  } catch (e) {
+    logger?.warn(
+      `[restore] pre-restore snapshot failed: ${(e as Error).message} — aborting (nothing changed)`,
+    );
+    return {
+      restored: [],
+      failed: [{file: '(safety backup)', reason: reasons.snapshotFailed}],
+      backupDir,
+    };
+  }
+
+  // (3) CLOSE the writable handles BEFORE any copy (overwriting an open
   //     SQLite file corrupts its in-memory view). Best-effort: a throw here
   //     is logged but the copies still proceed (the user reopens the plugin,
   //     which reopens everything over the restored files).
@@ -115,7 +144,7 @@ export const restoreDbs = async (
     );
   }
 
-  // (3) Copy each restorable over its live path; collect per-file outcome.
+  // (4) Copy each restorable over its live path; collect per-file outcome.
   const restored: string[] = [];
   const failed: {file: string; reason: string}[] = [];
   for (const db of restorable) {
