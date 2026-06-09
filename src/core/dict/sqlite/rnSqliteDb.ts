@@ -64,7 +64,9 @@ const withTimeout = <T>(p: Promise<T>, label: string): Promise<T> => {
   return Promise.race([p, timeout]).finally(() => clearTimeout(timer));
 };
 
-const wrap = (db: RnDatabase): SqliteDb => ({
+// Exported for the transaction-sequencing regression test (the native
+// module is lazy-required in loadStorage, so wrap itself is jest-safe).
+export const wrap = (db: RnDatabase): SqliteDb => ({
   async query<T = Record<string, unknown>>(
     sql: string,
     params: SqlParam[] = [],
@@ -77,44 +79,50 @@ const wrap = (db: RnDatabase): SqliteDb => ({
     return {changes: result.rowsAffected};
   },
   async transaction(fn: (tx: SqliteDb) => Promise<void>): Promise<void> {
-    // react-native-sqlite-storage's transaction body is synchronous —
-    // it queues executeSql calls and commits when the body returns.
-    // We adapt the async port `fn` by running it against a SqliteDb
-    // that delegates each query/run to the queued tx.executeSql, and
-    // awaiting it before the native transaction resolves.
-    // Capture any error thrown by the async body and RETHROW it after
-    // the native transaction settles. Swallowing it (the prior
-    // `.catch(() => undefined)`) would resolve a failed transaction as a
-    // success and hide a rollback — the importer would then proceed as
-    // though the populate committed. The native callback is synchronous,
-    // so the queued body runs concurrently; we surface its failure here.
-    let bodyErr: unknown;
+    // react-native-sqlite-storage's native transaction(fn) only captures
+    // executeSql calls issued SYNCHRONOUSLY inside fn and commits when the
+    // (synchronous) callback returns. Our bodies are ASYNC (awaited loops),
+    // so the OLD code's fn returned a pending promise at the FIRST `await` —
+    // the native transaction committed with only the statement queued before
+    // it, dropping every write after an `await`. That persisted only the
+    // DELETE of each settings DELETE+INSERT pair (dict prefs / keep-sources
+    // reverting on reopen) and dropped every audit/CSV row past the first.
+    //
+    // The native transaction itself DOES commit (the old code's first
+    // statement always landed). So keep using it — but first RUN the async
+    // body against a recorder that just COLLECTS each statement (its run()
+    // resolves immediately, so the awaited loop completes and we capture
+    // EVERY statement, in order), THEN replay them SYNCHRONOUSLY inside the
+    // native transaction so it commits all of them atomically. No raw
+    // BEGIN/COMMIT (Android's pooled SQLiteDatabase can mishandle those).
+    // A body error aborts BEFORE any replay — nothing is committed.
+    const statements: Array<[string, SqlParam[]]> = [];
+    const recorder: SqliteDb = {
+      async query<T = Record<string, unknown>>(): Promise<T[]> {
+        // Transaction bodies are WRITE-ONLY (every caller verified). Because
+        // statements are collected and only replayed AFTER the body returns, a
+        // mid-tx read could not see the pending writes — it would read stale
+        // committed state and silently drive a wrong write. Make that invariant
+        // an assertion: fail loud the instant a future read-then-write body is
+        // added, rather than papering over it.
+        throw new Error(
+          '[sqlite] reads inside a transaction are not supported ' +
+            '(collect-then-replay is write-only)',
+        );
+      },
+      async run(sql: string, params: SqlParam[] = []) {
+        statements.push([sql, params]);
+        return {changes: 0};
+      },
+      transaction: async inner => inner(recorder),
+      close: async () => undefined,
+    };
+    await fn(recorder); // collect every statement (the async body fully resolves)
     await db.transaction(tx => {
-      const txDb: SqliteDb = {
-        async query<T = Record<string, unknown>>(
-          sql: string,
-          params: SqlParam[] = [],
-        ): Promise<T[]> {
-          // Reads inside an RN transaction are rare for the import
-          // pipeline (writes only); delegate to a fresh executeSql so
-          // the port stays complete.
-          const [result] = await db.executeSql(sql, params);
-          return result.rows.raw() as T[];
-        },
-        async run(sql: string, params: SqlParam[] = []) {
-          tx.executeSql(sql, params);
-          return {changes: 0};
-        },
-        transaction: async inner => inner(txDb),
-        close: async () => undefined,
-      };
-      fn(txDb).catch(e => {
-        bodyErr = e;
-      });
+      for (const [sql, params] of statements) {
+        tx.executeSql(sql, params);
+      }
     });
-    if (bodyErr) {
-      throw bodyErr;
-    }
   },
   async close(): Promise<void> {
     await db.close();
