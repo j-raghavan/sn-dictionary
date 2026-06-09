@@ -178,6 +178,15 @@ const bootstrapPorts = {
       FileUtils.exists(`${PLUGIN_LOCATION}${filename}`),
   },
   discover: () => discoverUserDicts({fileUtils: FileUtils, logger}),
+  // F7: the file-deletion seam deleteImportedDict drives — unlink the slug
+  // DB at PLUGIN_LOCATION/<filename> (same mapping resolveSlugDbPath uses on
+  // the import path) and the leftover on-disk source set. All best-effort;
+  // bootstrap reflects per-step success in the DeleteResult it returns.
+  delete: {
+    resolveSlugPath: filename => `${PLUGIN_LOCATION}${filename}`,
+    deleteFile: path => FileUtils.deleteFile(path).then(() => undefined),
+    deleteFolder: path => FileUtils.deleteDir(path),
+  },
   // F4-FR5: the one-time first-run keep/delete dialog. Device-only (the
   // RattaDialog is a native overlay); bootstrap calls it once before the
   // first import dispatch when the flag is unset. true=keep, false=delete.
@@ -312,6 +321,18 @@ bootstrap(bootstrapPorts, logger)
       // app setting on the live user.db (default keep; null-db-safe).
       getKeepSources: () => getKeepSources(handle.userDb),
       setKeepSources: keep => setKeepSources(handle.userDb, keep, logger),
+      // F7 delete an imported dict: the confirm dialog is a native overlay
+      // (device-only), so it lives here as the host-mockable port the panel
+      // calls; only the Delete button (showRattaDialog -> true) proceeds.
+      // The delete itself runs through the host-tested RuntimeHandle.
+      confirmDeleteDict: () =>
+        NativeUIUtils.showRattaDialog(
+          t('settings.deleteDictPrompt'),
+          t('common.cancel'),
+          t('common.delete'),
+          false,
+        ),
+      deleteImportedDict: prefKey => handle.deleteImportedDict(prefKey),
     });
 
     logger.log(

@@ -59,8 +59,11 @@ export type StringId =
   | 'settings.keepSources'
   | 'settings.keepSourcesHint'
   | 'settings.keepPrompt'
+  | 'settings.removeDict'
+  | 'settings.deleteDictPrompt'
   | 'common.keep'
-  | 'common.delete';
+  | 'common.delete'
+  | 'common.cancel';
 
 // Locale codes use the firmware's convention: en, zh_CN, zh_TW, ja,
 // th, nl. Underscore (not hyphen) matches PluginButton.nameMap shape
@@ -107,8 +110,12 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
       'When off, sideloaded files are deleted after a verified import.',
     'settings.keepPrompt':
       'Keep the dropped dictionary files after importing? Choose Delete to remove them once the dictionary is built.',
+    'settings.removeDict': 'Remove',
+    'settings.deleteDictPrompt':
+      'Remove this dictionary? Its database and any leftover source files are deleted; it will not reappear on reload.',
     'common.keep': 'Keep',
     'common.delete': 'Delete',
+    'common.cancel': 'Cancel',
   },
   zh_CN: {
     'popup.synonyms': '同义词',
@@ -149,8 +156,12 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'settings.keepSources': '导入后保留源文件',
     'settings.keepSourcesHint': '关闭时，验证导入后将删除侧载文件。',
     'settings.keepPrompt': '导入后保留拖入的词典文件吗？选择“删除”可在词典构建完成后移除它们。',
+    'settings.removeDict': '移除',
+    'settings.deleteDictPrompt':
+      '要移除此词典吗？将删除其数据库及任何残留的源文件；重新加载后不会再次出现。',
     'common.keep': '保留',
     'common.delete': '删除',
+    'common.cancel': '取消',
   },
   zh_TW: {
     'popup.synonyms': '同義詞',
@@ -191,8 +202,12 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'settings.keepSources': '匯入後保留來源檔案',
     'settings.keepSourcesHint': '關閉時，驗證匯入後將刪除側載檔案。',
     'settings.keepPrompt': '匯入後保留拖入的詞典檔案嗎？選擇「刪除」可在詞典建立完成後移除它們。',
+    'settings.removeDict': '移除',
+    'settings.deleteDictPrompt':
+      '要移除此詞典嗎？將刪除其資料庫及任何殘留的來源檔案；重新載入後不會再次出現。',
     'common.keep': '保留',
     'common.delete': '刪除',
+    'common.cancel': '取消',
   },
   ja: {
     'popup.synonyms': '類義語',
@@ -235,8 +250,12 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
       'オフの場合、検証済みのインポート後にサイドロードファイルを削除します。',
     'settings.keepPrompt':
       'インポート後に追加した辞書ファイルを残しますか？「削除」を選ぶと辞書の構築後に削除します。',
+    'settings.removeDict': '削除',
+    'settings.deleteDictPrompt':
+      'この辞書を削除しますか？データベースと残っている元ファイルが削除され、再読み込みしても再表示されません。',
     'common.keep': '残す',
     'common.delete': '削除',
+    'common.cancel': 'キャンセル',
   },
   th: {
     'popup.synonyms': 'คำพ้องความหมาย',
@@ -279,8 +298,12 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
       'เมื่อปิด ระบบจะลบไฟล์ที่ไซด์โหลดหลังการนำเข้าที่ตรวจสอบแล้ว',
     'settings.keepPrompt':
       'เก็บไฟล์พจนานุกรมที่วางไว้หลังการนำเข้าหรือไม่? เลือกลบเพื่อลบออกเมื่อสร้างพจนานุกรมเสร็จ',
+    'settings.removeDict': 'ลบออก',
+    'settings.deleteDictPrompt':
+      'ลบพจนานุกรมนี้หรือไม่? ฐานข้อมูลและไฟล์ต้นทางที่เหลือจะถูกลบ และจะไม่ปรากฏอีกเมื่อโหลดใหม่',
     'common.keep': 'เก็บ',
     'common.delete': 'ลบ',
+    'common.cancel': 'ยกเลิก',
   },
   nl: {
     'popup.synonyms': 'Synoniemen',
@@ -324,8 +347,12 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
       'Indien uit, worden gesideloade bestanden na een geverifieerde import verwijderd.',
     'settings.keepPrompt':
       'De geplaatste woordenboekbestanden na het importeren behouden? Kies Verwijderen om ze te wissen zodra het woordenboek is gebouwd.',
+    'settings.removeDict': 'Verwijderen',
+    'settings.deleteDictPrompt':
+      'Dit woordenboek verwijderen? De database en eventuele resterende bronbestanden worden gewist; het komt na opnieuw laden niet terug.',
     'common.keep': 'Behouden',
     'common.delete': 'Verwijderen',
+    'common.cancel': 'Annuleren',
   },
   de: {
     'popup.synonyms': 'Synonyme',
@@ -369,8 +396,12 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
       'Wenn aus, werden sideloadete Dateien nach einem verifizierten Import gelöscht.',
     'settings.keepPrompt':
       'Die abgelegten Wörterbuchdateien nach dem Import behalten? Wählen Sie Löschen, um sie nach dem Aufbau zu entfernen.',
+    'settings.removeDict': 'Entfernen',
+    'settings.deleteDictPrompt':
+      'Dieses Wörterbuch entfernen? Seine Datenbank und etwaige übrige Quelldateien werden gelöscht; es erscheint beim Neuladen nicht wieder.',
     'common.keep': 'Behalten',
     'common.delete': 'Löschen',
+    'common.cancel': 'Abbrechen',
   },
 };
 

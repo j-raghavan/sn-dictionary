@@ -4,14 +4,21 @@
 import {createSeededDb} from './_helpers/betterSqliteDb';
 import {
   bootstrap,
+  identityKey,
   reconcileImports,
+  sourcePathsOf,
   type BootstrapPorts,
   type ReconcileItem,
 } from '../src/core/dict/sqlite/bootstrap';
-import {ensureImportsTable, upsertImport} from '../src/core/dict/sqlite/importAudit';
+import {
+  ensureImportsTable,
+  findImportByNameLang,
+  upsertImport,
+} from '../src/core/dict/sqlite/importAudit';
 import {
   ensureSettingsTables,
   getKeepSources,
+  readDictPrefs,
   setDictPrefs,
   setKeepSources,
   type DictPref,
@@ -107,6 +114,57 @@ describe('reconcileImports (pure)', () => {
       NO_KEEP,
     );
     expect(buckets(items)).toEqual(['import', 'open']);
+  });
+});
+
+// --- F7: sourcePathsOf (pure) ---------------------------------------
+describe('sourcePathsOf (F7, pure)', () => {
+  it('StarDict: ifo/idx/dict (+ syn + sidecar) and the set folder', () => {
+    const d: ImportJobDescriptor = {
+      kind: 'stardict',
+      setPath: '/d/Dune',
+      ifoPath: '/d/Dune/x.ifo',
+      idxPath: '/d/Dune/x.idx',
+      dictPath: '/d/Dune/x.dict',
+      synPath: '/d/Dune/x.syn',
+      sidecarPath: '/d/Dune/meta.json',
+      sidecar: {name: 'Dune', language: 'en'},
+    };
+    expect(sourcePathsOf(d)).toEqual({
+      files: ['/d/Dune/x.ifo', '/d/Dune/x.idx', '/d/Dune/x.dict', '/d/Dune/x.syn', '/d/Dune/meta.json'],
+      folder: '/d/Dune',
+    });
+  });
+
+  it('StarDict without a syn or sidecar omits those paths', () => {
+    const d: ImportJobDescriptor = {
+      kind: 'stardict',
+      setPath: '/d/Bare',
+      ifoPath: '/d/Bare/x.ifo',
+      idxPath: '/d/Bare/x.idx',
+      dictPath: '/d/Bare/x.dict',
+      sidecar: {name: 'Bare', language: 'und'},
+    };
+    expect(sourcePathsOf(d)).toEqual({
+      files: ['/d/Bare/x.ifo', '/d/Bare/x.idx', '/d/Bare/x.dict'],
+      folder: '/d/Bare',
+    });
+  });
+
+  it('CSV: the loose .csv (+ per-file sidecar), no folder', () => {
+    expect(sourcePathsOf(csvDescriptor('Dune', 'en'))).toEqual({
+      files: ['/d/Dune.csv', '/d/Dune.meta.json'],
+    });
+  });
+
+  it('CSV without a sidecar is just the .csv', () => {
+    const d: ImportJobDescriptor = {
+      kind: 'csv',
+      csvPath: '/d/Loose.csv',
+      csvConfig: {},
+      sidecar: {name: 'Loose', language: 'und'},
+    };
+    expect(sourcePathsOf(d)).toEqual({files: ['/d/Loose.csv']});
   });
 });
 
@@ -214,6 +272,12 @@ type Harness = {
   // F4: keepSources values passed into importPortsFor (one per dispatched
   // import) so a test can assert the delete gate was threaded through.
   keepSourcesSeen: boolean[];
+  // F7: filenames whose eager-opened slug handle had close() called, and the
+  // paths deleteFile/deleteFolder were invoked with — so a delete test can
+  // assert the close-before-delete ordering and what was unlinked.
+  closedSlugs: string[];
+  deletedFiles: string[];
+  deletedFolders: string[];
 };
 
 const makeBaseDb = (): Promise<SqliteDb> =>
@@ -258,6 +322,16 @@ const makeHarness = async (opts: {
     reason?: string;
     gate?: Promise<void>;
   };
+  // F7: wire the delete seam (deleteFile/deleteFolder/resolveSlugPath) so
+  // deleteImportedDict can unlink the slug + source set. Omit -> no port (a
+  // host that can't delete files; the audit/pref rows still clean).
+  withDeletePorts?: boolean;
+  // F7: make deleteFile reject for paths matching this predicate (model a
+  // locked/shared source file that can't be removed — F7-AC3).
+  deleteFileFails?: (path: string) => boolean;
+  // F7: make the eager-open of an imported slug throw (so the source stays
+  // lazy with a null handle — nothing to close).
+  openImportedThrows?: (filename: string) => boolean;
 }): Promise<Harness> => {
   const baseDb = await makeBaseDb();
   const userDb = await createSeededDb(opts.userDbSeed ?? (async () => undefined));
@@ -266,7 +340,13 @@ const makeHarness = async (opts: {
       throw new Error('button bridge down');
     }
   });
+  const closedSlugs: string[] = [];
+  const deletedFiles: string[] = [];
+  const deletedFolders: string[] = [];
   const openImportedDb = jest.fn((filename: string) => async () => {
+    if (opts.openImportedThrows?.(filename)) {
+      throw new Error(`open ${filename} blew up`);
+    }
     const db = await createSeededDb(async d => {
       await d.run(CREATE_ENTRIES_TABLE);
       await d.run('INSERT INTO entries (key, word, definition, format) VALUES (?, ?, ?, ?)', [
@@ -276,6 +356,13 @@ const makeHarness = async (opts: {
         'plain',
       ]);
     });
+    // F7: record close() so a delete test can assert the handle was closed
+    // (before the file delete).
+    const realClose = db.close.bind(db);
+    db.close = async () => {
+      closedSlugs.push(filename);
+      await realClose();
+    };
     return db;
   });
   const importResults = new Map<string, {ok: boolean; filename: string}>();
@@ -347,6 +434,23 @@ const makeHarness = async (opts: {
     },
     enableButtons,
     ...(opts.promptKeepDelete ? {promptKeepDelete: opts.promptKeepDelete} : {}),
+    ...(opts.withDeletePorts
+      ? {
+          delete: {
+            resolveSlugPath: (filename: string) => `/plugin/${filename}`,
+            deleteFile: async (path: string) => {
+              if (opts.deleteFileFails?.(path)) {
+                throw new Error(`locked: ${path}`);
+              }
+              deletedFiles.push(path);
+            },
+            deleteFolder: async (path: string) => {
+              deletedFolders.push(path);
+              return true;
+            },
+          },
+        }
+      : {}),
   };
   return {
     ports,
@@ -356,6 +460,9 @@ const makeHarness = async (opts: {
     baseDb,
     userDb,
     keepSourcesSeen,
+    closedSlugs,
+    deletedFiles,
+    deletedFolders,
   };
 };
 
@@ -1105,5 +1212,435 @@ describe('bootstrap — F4 legacy host without a slug probe', () => {
     await handle.importsSettled;
     // No probe -> slugHealthy empty -> RE-ADD (an import dispatched).
     expect(h.keepSourcesSeen).toEqual([true]);
+  });
+});
+
+// --- F7: delete an already-imported dictionary ----------------------
+// The Dune prefKey is identityKey('Dune', 'en') (imports key on name+lang).
+const DUNE_KEY = identityKey('Dune', 'en');
+
+describe('bootstrap — F7 deleteImportedDict (full removal, AC1)', () => {
+  // A bootstrap with one kept, already-imported Dune (audit + descriptor on
+  // disk, slug healthy -> reconciles to 'open') and the delete seam wired.
+  const seedDune = () =>
+    makeHarness({
+      keepSeed: true,
+      withDeletePorts: true,
+      descriptors: [descriptor('Dune', 'en')],
+      auditSeed: async db => {
+        await upsertImport(db, auditRow('Dune', 'en', 'dune.en.db'));
+      },
+    });
+
+  it('closes the slug handle, deletes its file, drops audit+pref, removes from sources (AC1)', async () => {
+    const h = await seedDune();
+    const handle = await bootstrap(h.ports);
+    // Dune is opened (eager) and present in both registries.
+    expect(handle.sources.map(s => s.name)).toEqual(['User', 'Dune', 'WordNet']);
+    expect(handle.allSources.map(s => s.name)).toContain('Dune');
+
+    const res = await handle.deleteImportedDict(DUNE_KEY);
+    expect(res).toEqual({
+      ok: true,
+      removed: {slugDb: true, audit: true, pref: false, sources: true},
+    });
+    // Gone from BOTH the live sources and the full registry.
+    expect(handle.sources.map(s => s.name)).toEqual(['User', 'WordNet']);
+    expect(handle.allSources.map(s => s.name)).not.toContain('Dune');
+    // Slug handle closed AND its file deleted; the source set deleted too.
+    expect(h.closedSlugs).toContain('dune.en.db');
+    expect(h.deletedFiles).toContain('/plugin/dune.en.db');
+    // The on-disk StarDict set (ifo/idx/dict + sidecar) + its folder gone.
+    expect(h.deletedFiles).toEqual(
+      expect.arrayContaining([
+        '/d/Dune/x.ifo',
+        '/d/Dune/x.idx',
+        '/d/Dune/x.dict',
+        '/d/Dune/meta.json',
+      ]),
+    );
+    expect(h.deletedFolders).toEqual(['/d/Dune']);
+    // The audit + sourceLang entry are gone.
+    expect(handle.sourceLang.Dune).toBeUndefined();
+    expect(
+      await findImportByNameLang(h.userDb, 'Dune', 'en'),
+    ).toBeNull();
+  });
+
+  it('the next lookup has no Dune section (AC1)', async () => {
+    const h = await seedDune();
+    const handle = await bootstrap(h.ports);
+    await handle.deleteImportedDict(DUNE_KEY);
+    const res = await handle.lookup.lookup('hello');
+    expect(res.hits.some((hit: {source: string}) => hit.source === 'Dune')).toBe(
+      false,
+    );
+  });
+
+  it('drops the dict_prefs row when one was persisted (pref:true)', async () => {
+    const h = await makeHarness({
+      keepSeed: true,
+      withDeletePorts: true,
+      descriptors: [descriptor('Dune', 'en')],
+      auditSeed: async db => {
+        await upsertImport(db, auditRow('Dune', 'en', 'dune.en.db'));
+      },
+      prefsSeed: async db => {
+        await setDictPrefs(db, [
+          {prefKey: 'User', name: 'User', enabled: true, sortOrder: 0, removable: false},
+          {prefKey: DUNE_KEY, name: 'Dune', enabled: true, sortOrder: 1, removable: true},
+          {prefKey: 'WordNet', name: 'WordNet', enabled: true, sortOrder: 2, removable: false},
+        ]);
+      },
+    });
+    const handle = await bootstrap(h.ports);
+    const res = await handle.deleteImportedDict(DUNE_KEY);
+    expect(res.removed.pref).toBe(true);
+    expect((await readDictPrefs(h.userDb)).map(p => p.name)).not.toContain('Dune');
+  });
+});
+
+describe('bootstrap — F7 splice BEFORE close (in-flight lookup safe, AC6/EC9)', () => {
+  it('a lookup snapshotted before delete completes never hits a closed handle', async () => {
+    const h = await makeHarness({
+      keepSeed: true,
+      withDeletePorts: true,
+      descriptors: [descriptor('Dune', 'en')],
+      auditSeed: async db => {
+        await upsertImport(db, auditRow('Dune', 'en', 'dune.en.db'));
+      },
+    });
+    const handle = await bootstrap(h.ports);
+    // Start a lookup (it snapshots `sources` synchronously at call time),
+    // THEN delete concurrently. The snapshot still includes Dune's open
+    // handle; the delete splices it out for the NEXT snapshot only.
+    const inFlight = handle.lookup.lookup('hello');
+    const del = handle.deleteImportedDict(DUNE_KEY);
+    const [res] = await Promise.all([inFlight, del]);
+    // The in-flight lookup resolved cleanly (no closed-handle throw); every
+    // hit has a defined entry (the bug a post-close splice would cause).
+    expect(
+      res.hits.every((hit: {entry: unknown}) => hit.entry !== undefined),
+    ).toBe(true);
+    // And the splice DID precede the close: by the time close ran, Dune was
+    // already out of the live registry.
+    expect(h.closedSlugs).toContain('dune.en.db');
+    expect(handle.sources.map(s => s.name)).toEqual(['User', 'WordNet']);
+  });
+});
+
+describe('bootstrap — F7 no resurrection (AC2/FR4)', () => {
+  it('after delete + a 2nd bootstrap whose discovery is empty, Dune stays gone', async () => {
+    // 1st session: Dune kept+open, delete removes the source set (modelled
+    // by clearing the discover list after the delete) AND the audit row.
+    let discovered: ImportJobDescriptor[] = [descriptor('Dune', 'en')];
+    // One-shot audit seed: the harness re-invokes auditSeed on EVERY
+    // openUserDb, but a real 2nd boot opens the SAME (already-deleted) row,
+    // so only seed on the first open.
+    let seeded = false;
+    const h = await makeHarness({
+      keepSeed: true,
+      withDeletePorts: true,
+      auditSeed: async db => {
+        if (!seeded) {
+          seeded = true;
+          await upsertImport(db, auditRow('Dune', 'en', 'dune.en.db'));
+        }
+      },
+    });
+    // Point discover at the mutable list (so the delete's re-discovery sees
+    // Dune, but the 2nd bootstrap sees the now-removed set).
+    h.ports.discover = async () => discovered;
+    const handle = await bootstrap(h.ports);
+    const res = await handle.deleteImportedDict(DUNE_KEY);
+    expect(res.removed.sources).toBe(true);
+    expect(res.removed.audit).toBe(true);
+    expect(await findImportByNameLang(h.userDb, 'Dune', 'en')).toBeNull();
+    // The source set was deleted on disk -> model that by emptying discovery.
+    discovered = [];
+
+    // 2nd bootstrap against the SAME user.db (audit row gone) + empty disk:
+    // reconcile sees neither an 'open' (no audit) nor an 'import' (no
+    // descriptor) -> Dune does NOT come back.
+    const handle2 = await bootstrap(h.ports);
+    await handle2.importsSettled;
+    expect(handle2.sources.map(s => s.name)).toEqual(['User', 'WordNet']);
+    expect(handle2.allSources.map(s => s.name)).not.toContain('Dune');
+    // No import was dispatched on the 2nd boot (the loop is truly broken).
+    expect(h.keepSourcesSeen).toEqual([]);
+  });
+});
+
+describe('bootstrap — F7 source set not removable (AC3)', () => {
+  it('removed.sources=false + warn when a source file can not be deleted', async () => {
+    const warn = jest.fn();
+    const h = await makeHarness({
+      keepSeed: true,
+      withDeletePorts: true,
+      // The .dict file is locked/shared and refuses to delete.
+      deleteFileFails: path => path === '/d/Dune/x.dict',
+      descriptors: [descriptor('Dune', 'en')],
+      auditSeed: async db => {
+        await upsertImport(db, auditRow('Dune', 'en', 'dune.en.db'));
+      },
+    });
+    const handle = await bootstrap(h.ports, {warn});
+    const res = await handle.deleteImportedDict(DUNE_KEY);
+    // The dict is still fully removed from the runtime + audit/pref...
+    expect(res.ok).toBe(true);
+    expect(handle.sources.map(s => s.name)).toEqual(['User', 'WordNet']);
+    // ...but the leftover source set could not be removed -> warn the user.
+    expect(res.removed.sources).toBe(false);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('may reappear on reload'),
+    );
+  });
+});
+
+describe('bootstrap — F7 reject base/User (AC4/FR6/INV5)', () => {
+  it('deleteImportedDict on the base (WordNet) key returns ok:false, removes nothing', async () => {
+    const h = await makeHarness({withDeletePorts: true});
+    const handle = await bootstrap(h.ports);
+    const res = await handle.deleteImportedDict('WordNet');
+    expect(res.ok).toBe(false);
+    expect(res.reason).toMatch(/cannot be removed/);
+    expect(res.removed).toEqual({
+      slugDb: false,
+      audit: false,
+      pref: false,
+      sources: false,
+    });
+    // WordNet untouched.
+    expect(handle.allSources.map(s => s.name)).toContain('WordNet');
+    expect(h.closedSlugs).toEqual([]);
+    expect(h.deletedFiles).toEqual([]);
+  });
+
+  it('deleteImportedDict on the User key returns ok:false', async () => {
+    const h = await makeHarness({withDeletePorts: true});
+    const handle = await bootstrap(h.ports);
+    const res = await handle.deleteImportedDict('User');
+    expect(res.ok).toBe(false);
+    expect(handle.allSources.map(s => s.name)).toContain('User');
+  });
+});
+
+describe('bootstrap — F7 idempotent / partial delete (AC5/FR5/EC10)', () => {
+  it('slug file missing but audit row present -> audit+pref cleaned, ok:true', async () => {
+    // No descriptor on disk (sources gone) -> Dune reconciles to 'open' from
+    // the audit row. We make the eager-open of the slug THROW (slug file
+    // missing) so the source has a null handle (nothing to close) — the
+    // half-deleted case.
+    const h = await makeHarness({
+      keepSeed: true,
+      withDeletePorts: true,
+      openImportedThrows: filename => filename === 'dune.en.db',
+      auditSeed: async db => {
+        await upsertImport(db, auditRow('Dune', 'en', 'dune.en.db'));
+      },
+    });
+    const handle = await bootstrap(h.ports, {warn: jest.fn()});
+    const res = await handle.deleteImportedDict(DUNE_KEY);
+    expect(res.ok).toBe(true);
+    // No handle to close; the audit row IS cleaned (the durable artifact).
+    expect(h.closedSlugs).toEqual([]);
+    expect(res.removed.audit).toBe(true);
+    expect(await findImportByNameLang(h.userDb, 'Dune', 'en')).toBeNull();
+    // Dune is out of the runtime.
+    expect(handle.allSources.map(s => s.name)).not.toContain('Dune');
+  });
+
+  it('a stranded prefKey (no source, no audit) is an idempotent no-op success', async () => {
+    const h = await makeHarness({withDeletePorts: true});
+    const handle = await bootstrap(h.ports);
+    // A pref persisted for a since-vanished dict, with no source + no audit.
+    await setDictPrefs(h.userDb, [
+      {prefKey: identityKey('Ghost', 'en'), name: 'Ghost', enabled: true, sortOrder: 9, removable: true},
+    ]);
+    const res = await handle.deleteImportedDict(identityKey('Ghost', 'en'));
+    expect(res.ok).toBe(true);
+    // The stranded pref row was still cleaned.
+    expect(res.removed.pref).toBe(true);
+    expect(res.removed.slugDb).toBe(false);
+    expect((await readDictPrefs(h.userDb)).map(p => p.name)).not.toContain('Ghost');
+  });
+
+  it('no delete port: audit+pref still cleaned, slug/sources reported false', async () => {
+    const h = await makeHarness({
+      keepSeed: true,
+      // withDeletePorts omitted -> ports.delete is undefined.
+      descriptors: [descriptor('Dune', 'en')],
+      auditSeed: async db => {
+        await upsertImport(db, auditRow('Dune', 'en', 'dune.en.db'));
+      },
+    });
+    const handle = await bootstrap(h.ports);
+    const res = await handle.deleteImportedDict(DUNE_KEY);
+    expect(res.ok).toBe(true);
+    // The slug handle is still closed (so a later reopen/re-import is clean),
+    // but with no delete port the file + source set aren't unlinked.
+    expect(h.closedSlugs).toContain('dune.en.db');
+    expect(res.removed.slugDb).toBe(false);
+    expect(res.removed.sources).toBe(false);
+    expect(res.removed.audit).toBe(true);
+    // Still removed from the runtime registries.
+    expect(handle.sources.map(s => s.name)).toEqual(['User', 'WordNet']);
+  });
+
+  it('resolves the audit identity from the prefKey when no live source matches', async () => {
+    // An audit row exists in user.db but was NOT opened as a source at boot
+    // (seeded AFTER bootstrap) — so there is no live record; the delete must
+    // resolve name/lang/filename from the audit row by prefKey (F7-FR5).
+    const h = await makeHarness({withDeletePorts: true});
+    const handle = await bootstrap(h.ports);
+    await ensureImportsTable(h.userDb);
+    await upsertImport(h.userDb, auditRow('Orphan', 'en', 'orphan.en.db'));
+    const res = await handle.deleteImportedDict(identityKey('Orphan', 'en'));
+    expect(res.ok).toBe(true);
+    // Resolved from audit -> slug file deleted, audit row dropped.
+    expect(res.removed.audit).toBe(true);
+    expect(h.deletedFiles).toContain('/plugin/orphan.en.db');
+    expect(await findImportByNameLang(h.userDb, 'Orphan', 'en')).toBeNull();
+  });
+
+  it('degraded user.db: deleting still resolves ok:true (no rows to clean)', async () => {
+    const h = await makeHarness({userDbThrows: true, withDeletePorts: true});
+    const handle = await bootstrap(h.ports, {warn: jest.fn()});
+    const res = await handle.deleteImportedDict('Anything en');
+    expect(res.ok).toBe(true);
+    expect(res.removed.audit).toBe(false);
+  });
+});
+
+describe('bootstrap — F7 best-effort error isolation', () => {
+  const seedDuneWith = (
+    extra: Parameters<typeof makeHarness>[0],
+  ): Promise<Harness> =>
+    makeHarness({
+      keepSeed: true,
+      withDeletePorts: true,
+      descriptors: [descriptor('Dune', 'en')],
+      auditSeed: async db => {
+        await upsertImport(db, auditRow('Dune', 'en', 'dune.en.db'));
+      },
+      ...extra,
+    });
+
+  it('a slug-file delete that throws -> removed.slugDb=false + warn, rest cleaned', async () => {
+    const h = await seedDuneWith({
+      deleteFileFails: path => path === '/plugin/dune.en.db',
+    });
+    const warn = jest.fn();
+    const handle = await bootstrap(h.ports, {warn});
+    const res = await handle.deleteImportedDict(DUNE_KEY);
+    expect(res.removed.slugDb).toBe(false);
+    expect(res.removed.audit).toBe(true);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('delete slug file'),
+    );
+    // The handle was still closed first (close precedes the failing unlink).
+    expect(h.closedSlugs).toContain('dune.en.db');
+  });
+
+  it('a close() that throws is isolated; the file delete still proceeds', async () => {
+    const h = await seedDuneWith({});
+    // Poison the eager-opened slug handle's close().
+    const realOpen = h.ports.db.openImportedDb;
+    h.ports.db.openImportedDb = (filename: string) => async () => {
+      const db = await realOpen(filename)();
+      if (db !== null) {
+        db.close = async () => {
+          throw new Error('close failed');
+        };
+      }
+      return db;
+    };
+    const warn = jest.fn();
+    const handle = await bootstrap(h.ports, {warn});
+    const res = await handle.deleteImportedDict(DUNE_KEY);
+    expect(res.ok).toBe(true);
+    // The close threw but was isolated -> the file delete still ran.
+    expect(res.removed.slugDb).toBe(true);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('close slug'));
+  });
+
+  it('a re-discover that throws is isolated (sources stay false, rest cleaned)', async () => {
+    const h = await seedDuneWith({});
+    const realDiscover = h.ports.discover;
+    let calls = 0;
+    h.ports.discover = async () => {
+      calls += 1;
+      // First call is the boot discovery; the delete's re-scan (2nd) throws.
+      if (calls > 1) {
+        throw new Error('listFiles blew up mid-delete');
+      }
+      return realDiscover();
+    };
+    const warn = jest.fn();
+    const handle = await bootstrap(h.ports, {warn});
+    const res = await handle.deleteImportedDict(DUNE_KEY);
+    expect(res.removed.sources).toBe(false);
+    expect(res.removed.audit).toBe(true);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('re-discover for source-set delete'),
+    );
+  });
+
+  it('a folder rmdir that throws is tolerated (sources still true)', async () => {
+    const h = await seedDuneWith({});
+    // Swap in a deleteFolder that rejects (non-empty / locked dir).
+    h.ports.delete = {
+      resolveSlugPath: (filename: string) => `/plugin/${filename}`,
+      deleteFile: async () => undefined,
+      deleteFolder: async () => {
+        throw new Error('dir not empty');
+      },
+    };
+    const warn = jest.fn();
+    const handle = await bootstrap(h.ports, {warn});
+    const res = await handle.deleteImportedDict(DUNE_KEY);
+    // Every data file deleted -> sources true despite the rmdir failure.
+    expect(res.removed.sources).toBe(true);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('rmdir source folder'),
+    );
+  });
+
+  it('an audit-row delete that throws is caught + logged (audit stays false)', async () => {
+    const h = await seedDuneWith({});
+    const warn = jest.fn();
+    const handle = await bootstrap(h.ports, {warn});
+    // Poison removeImport's DELETE on user.db AFTER boot.
+    const realRun = h.userDb.run.bind(h.userDb);
+    h.userDb.run = ((sql: string, params?: unknown[]) =>
+      /DELETE FROM imports/i.test(sql)
+        ? Promise.reject(new Error('audit delete locked'))
+        : realRun(sql, params as never)) as typeof h.userDb.run;
+    const res = await handle.deleteImportedDict(DUNE_KEY);
+    expect(res.ok).toBe(true);
+    expect(res.removed.audit).toBe(false);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('delete audit row'),
+    );
+  });
+});
+
+describe('bootstrap — F7 detached-import eager-open failure (handle stays null)', () => {
+  it('a detached import whose slug eager-open throws stays lazy + logs', async () => {
+    const h = await makeHarness({
+      descriptors: [descriptor('Fresh', 'en')],
+      importOutcome: () => ({ok: true, filename: 'fresh.en.db'}),
+      // The post-import eager-open of fresh.en.db throws -> source stays lazy
+      // (handle null, nothing for F7 to close) but is still registered.
+      openImportedThrows: filename => filename === 'fresh.en.db',
+    });
+    const warn = jest.fn();
+    const handle = await bootstrap(h.ports, {warn});
+    await handle.importsSettled;
+    // The source is still spliced in (it just lacks an eager handle).
+    expect(handle.sources.map(s => s.name)).toEqual(['User', 'Fresh', 'WordNet']);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('open imported "Fresh"'),
+    );
   });
 });

@@ -29,11 +29,14 @@ import {
   hasKeepSourcesSetting,
   mergeDictPrefs,
   readDictPrefs,
+  removeDictPref,
   setDictPrefs,
   setKeepSources,
+  type DeleteResult,
   type DictPref,
   type DictSourceIdentity,
 } from './settings';
+import {removeImport} from './importAudit';
 import {runImport, type RunImportPorts} from './runImport';
 import type {ImportJobDescriptor} from '../userDictDiscovery';
 
@@ -86,6 +89,48 @@ export const dictPrefKey = (
   lang: string,
   removable: boolean,
 ): string => (removable ? identityKey(name, lang) : name);
+
+// F7 — per imported (removable) source, the bookkeeping deleteImportedDict
+// needs beyond the dict_prefs identity: the OPEN slug `SqliteDb` handle (so
+// it can be close()d before the file is unlinked, F7-FR3 step 2) and the
+// slug `filename` + audit `(name, lang)` (so it can unlink the slug file,
+// match the leftover on-disk source set, and drop the audit row). Built in
+// bootstrap for the 'open' bucket AND each detached import as it lands;
+// base/User have no entry here (they are non-removable — INV5). `handle` is
+// null when the slug DB opened absent/failed (nothing to close).
+export type ImportedSourceRecord = {
+  prefKey: string;
+  name: string;
+  lang: string;
+  filename: string;
+  handle: SqliteDb | null;
+};
+
+// F7 — the on-disk source files + optional containing folder for one
+// discovered descriptor, exactly the set runImport would have deleted
+// (StarDict: ifo/idx/dict/syn + sidecar, then rmdir the setPath folder;
+// CSV: the loose .csv + its per-file sidecar, no folder). PURE: maps a
+// descriptor to paths; the caller does the I/O. `forceRefresh`/`refresh`
+// sentinels are NOT included (they self-clean on the next import).
+export const sourcePathsOf = (
+  d: ImportJobDescriptor,
+): {files: string[]; folder?: string} => {
+  if (d.kind === 'csv') {
+    const files = [d.csvPath];
+    if (d.sidecarPath !== undefined) {
+      files.push(d.sidecarPath);
+    }
+    return {files};
+  }
+  const files = [d.ifoPath, d.idxPath, d.dictPath];
+  if (d.synPath !== undefined) {
+    files.push(d.synPath);
+  }
+  if (d.sidecarPath !== undefined) {
+    files.push(d.sidecarPath);
+  }
+  return {files, folder: d.setPath};
+};
 
 export const reconcileImports = (
   descriptors: ImportJobDescriptor[],
@@ -211,6 +256,17 @@ export interface BootstrapDbPorts {
   slugDbExists?(filename: string): Promise<boolean>;
 }
 
+// F7 — the file-system seam deleteImportedDict drives. All best-effort:
+// a throw / false is logged and reflected in DeleteResult.removed, never
+// rethrown (the audit + pref rows are still cleaned so the dict can't
+// re-open). `resolveSlugPath(filename)` -> the absolute slug-DB path;
+// `deleteFile` unlinks a file; `deleteFolder` rmdirs a (now-empty) folder.
+export interface DeletePorts {
+  resolveSlugPath(filename: string): string;
+  deleteFile(path: string): Promise<void>;
+  deleteFolder(path: string): Promise<boolean>;
+}
+
 export interface BootstrapPorts {
   provision: ProvisionPorts;
   db: BootstrapDbPorts;
@@ -225,6 +281,13 @@ export interface BootstrapPorts {
     audit: SqliteDb,
     keepSources: boolean,
   ): RunImportPorts;
+  // F7 — file-deletion seam for deleteImportedDict (drop the slug DB file
+  // + any leftover on-disk source set). Optional: a host that omits it can
+  // still delete the audit + pref rows and splice the live source out, but
+  // the slug file / source set are left on disk (removed.slugDb/sources
+  // report false). `resolveSlugPath` maps an audit filename to the absolute
+  // slug-DB path (same mapping the import path's resolveSlugDbPath uses).
+  delete?: DeletePorts;
   enableButtons(): Promise<void>;
   // F4-FR5: the one-time first-run keep/delete dialog. Called at bootstrap
   // ONLY when the keepSourcesAfterImport flag is unset AND there is ≥1
@@ -271,6 +334,15 @@ export interface RuntimeHandle {
   // defaults; write -> no persist, but the live array still recomputes).
   listDictPrefs(): Promise<DictPref[]>;
   setDictPrefs(prefs: DictPref[]): Promise<void>;
+  // F7 — fully delete ONE imported dict by its dict_prefs key: splice it
+  // out of the LIVE `allSources`/`sources` (+ `sourceLang` + the imported
+  // registry) BEFORE closing its slug handle (so no in-flight lookup races
+  // a closing handle — F7-AC6), close() + deleteFile the slug DB, remove
+  // any leftover on-disk source set (so discovery can't re-import it next
+  // reload — F7-FR4), then drop the audit + dict_prefs rows. Rejects
+  // (ok:false) a key resolving to base/User (INV5, F7-FR6); idempotent /
+  // partial-safe (a missing artifact is a no-op success — F7-FR5).
+  deleteImportedDict(prefKey: string): Promise<DeleteResult>;
 }
 
 const readAuditRows = async (userDb: SqliteDb): Promise<ImportRow[]> =>
@@ -423,16 +495,39 @@ export const bootstrap = async (
     }
   }
 
-  // 5. Open already-imported sources ('open' bucket).
-  const alreadyImported: {source: DictSource; lang: string}[] = [];
+  // 5. Open already-imported sources ('open' bucket). EAGER-open the slug
+  //    DB handle here (rather than lazily on first lookup) so F7's
+  //    deleteImportedDict can close() it before unlinking the file (a lazy,
+  //    never-opened source has no handle to close, but a since-opened one
+  //    would lock the file). The opened handle is passed to the source AND
+  //    retained in the F7 imported registry. An open that resolves null
+  //    (absent) / throws keeps the source lazy (handle null) — there is
+  //    then nothing to close and the file is already gone/unreadable.
+  const alreadyImported: {
+    source: DictSource;
+    lang: string;
+    filename: string;
+    handle: SqliteDb | null;
+  }[] = [];
   for (const item of reconciled) {
     if (item.bucket === 'open') {
+      let handle: SqliteDb | null = null;
+      try {
+        handle = await ports.db.openImportedDb(item.row.filename)();
+      } catch (e) {
+        logger?.warn(
+          `[bootstrap] open imported "${item.row.name}" (${item.row.filename}) threw: ${(e as Error).message} — source stays lazy`,
+        );
+      }
+      const openDb =
+        handle !== null
+          ? async () => handle
+          : ports.db.openImportedDb(item.row.filename);
       alreadyImported.push({
-        source: createSqliteDictSource({
-          name: item.row.name,
-          openDb: ports.db.openImportedDb(item.row.filename),
-        }),
+        source: createSqliteDictSource({name: item.row.name, openDb}),
         lang: item.row.lang,
+        filename: item.row.filename,
+        handle,
       });
     }
   }
@@ -447,6 +542,11 @@ export const bootstrap = async (
   //    its removable flag (imported only — F7 chrome).
   const allSources: DictSource[] = [];
   const identities = new Map<DictSource, DictSourceIdentity>();
+  // F7 — removable imported sources only: their open slug handle + filename
+  // + audit identity, so deleteImportedDict can resolve a prefKey to the
+  // live source object (and close/unlink its slug). base/User are never
+  // added (non-removable — INV5).
+  const imported = new Map<DictSource, ImportedSourceRecord>();
   const register = (
     source: DictSource,
     lang: string,
@@ -462,8 +562,15 @@ export const bootstrap = async (
   if (userSource !== null) {
     register(userSource, 'und', false);
   }
-  for (const {source, lang} of alreadyImported) {
+  for (const {source, lang, filename, handle} of alreadyImported) {
     register(source, lang, true);
+    imported.set(source, {
+      prefKey: dictPrefKey(source.name, lang, true),
+      name: source.name,
+      lang,
+      filename,
+      handle,
+    });
   }
   register(baseSource, 'en', false);
 
@@ -518,19 +625,41 @@ export const bootstrap = async (
           );
           if (result.ok) {
             const lang = item.descriptor.sidecar.language;
-            const src = createSqliteDictSource({
-              name: result.name,
-              openDb: ports.db.openImportedDb(result.filename),
-            });
+            // EAGER-open the slug handle (as the 'open' bucket does) so F7
+            // can close() it before unlinking; an absent/failed open keeps
+            // the source lazy (handle null — nothing to close).
+            let handle: SqliteDb | null = null;
+            try {
+              handle = await ports.db.openImportedDb(result.filename)();
+            } catch (e) {
+              logger?.warn(
+                `[bootstrap] open imported "${result.name}" (${result.filename}) threw: ${(e as Error).message} — source stays lazy`,
+              );
+            }
+            const openDb =
+              handle !== null
+                ? async () => handle
+                : ports.db.openImportedDb(result.filename);
+            const src = createSqliteDictSource({name: result.name, openDb});
             // Push the new source into the FULL registry just-before base
             // (base is always last, so splice at length-1 keeps
             // [user, ...imported, base] even as concurrent results land),
             // then register its identity (imported -> removable).
             allSources.splice(allSources.length - 1, 0, src);
+            const prefKey = dictPrefKey(src.name, lang, true);
             identities.set(src, {
               name: src.name,
-              prefKey: dictPrefKey(src.name, lang, true),
+              prefKey,
               removable: true,
+            });
+            // F7: retain the open handle + slug filename so a delete this
+            // session can close + unlink it.
+            imported.set(src, {
+              prefKey,
+              name: src.name,
+              lang,
+              filename: result.filename,
+              handle,
             });
             // Recompute the LIVE `sources` in place honoring prefs: a new
             // (unknown-key) source defaults enabled + default-ordered just-
@@ -579,6 +708,179 @@ export const bootstrap = async (
     deriveLiveSources(sources, allSources, identities, persistedPrefs);
   };
 
+  // F7 — delete ONE imported dict by its dict_prefs key. The order is the
+  // whole correctness story (F7-FR3 / EC9):
+  //   (1) splice the source out of the LIVE allSources + sources + sourceLang
+  //       + the imported registry FIRST — a multiDictLookup snapshotted at
+  //       lookup start (sources.slice()) before this point still resolves
+  //       against the open handle; one snapshotted AFTER never sees it. So
+  //       the splice MUST precede close() (F7-AC6).
+  //   (2) close() the open slug handle (so the file isn't locked).
+  //   (3) deleteFile the slug DB.
+  //   (4) remove the leftover on-disk source set (else discovery RE-IMPORTS
+  //       it next reload with keep=true — F7-FR4 / EC8).
+  //   (5) drop the imports audit row; (6) drop the dict_prefs row.
+  // Each FS step is best-effort; removed.* reflects what actually happened.
+  // Rejects (ok:false) base/User (INV5, F7-FR6). Idempotent: a missing
+  // source / slug / audit row still cleans the rest (ok:true — F7-FR5).
+  const deleteImportedDict = async (
+    prefKey: string,
+  ): Promise<DeleteResult> => {
+    const removed = {slugDb: false, audit: false, pref: false, sources: false};
+
+    // Resolve the prefKey to a LIVE source (if still present) + its imported
+    // record. A key that matches a registered source whose identity is NOT
+    // removable is base/User -> reject (never droppable).
+    let targetSource: DictSource | null = null;
+    let record: ImportedSourceRecord | null = null;
+    for (const source of allSources) {
+      const identity = identities.get(source);
+      if (identity !== undefined && identity.prefKey === prefKey) {
+        if (!identity.removable) {
+          return {
+            ok: false,
+            removed,
+            reason: `"${source.name}" is the base or user dictionary and cannot be removed`,
+          };
+        }
+        targetSource = source;
+        record = imported.get(source) ?? null;
+        break;
+      }
+    }
+
+    // Resolve the audit identity (name, lang, filename). From the live
+    // record when present; else from the audit rows by prefKey (a
+    // half-deleted dict whose source is already gone — F7-FR5). identityKey
+    // round-trips: prefKey === identityKey(name, lang) for an import.
+    let name: string | null = record?.name ?? null;
+    let lang: string | null = record?.lang ?? null;
+    let filename: string | null = record?.filename ?? null;
+    if (name === null && userDb !== null) {
+      const rows = await readAuditRows(userDb);
+      const hit = rows.find(
+        row => identityKey(row.name, row.lang) === prefKey,
+      );
+      if (hit !== undefined) {
+        name = hit.name;
+        lang = hit.lang;
+        filename = hit.filename;
+      }
+    }
+
+    // No live source AND no audit row AND no dict_prefs row would resolve a
+    // target — nothing to delete. Still attempt the pref delete by raw key
+    // (a stranded pref with no source/audit), then return idempotent success.
+    if (name === null) {
+      const prefDel = await removeDictPref(userDb, prefKey, logger);
+      removed.pref = prefDel.changes > 0;
+      return {ok: true, removed};
+    }
+
+    // (1) SPLICE OUT of the live runtime BEFORE any close/delete (EC9).
+    if (targetSource !== null) {
+      const idx = allSources.indexOf(targetSource);
+      if (idx >= 0) {
+        allSources.splice(idx, 1);
+      }
+      identities.delete(targetSource);
+      imported.delete(targetSource);
+      delete sourceLang[targetSource.name];
+      // Recompute the live `sources` in place (the lookup's next snapshot
+      // excludes the removed source; an in-flight snapshot is unaffected).
+      deriveLiveSources(sources, allSources, identities, persistedPrefs);
+    }
+
+    // (2) close() the open slug handle (best-effort), then (3) unlink the
+    //     slug file. A null handle (never eager-opened / opened absent) just
+    //     skips the close. deleteFile is gated on the delete port.
+    if (record?.handle != null) {
+      try {
+        await record.handle.close();
+      } catch (e) {
+        logger?.warn(
+          `[bootstrap] close slug "${filename}" threw: ${(e as Error).message} — proceeding to delete`,
+        );
+      }
+    }
+    if (ports.delete !== undefined && filename !== null) {
+      try {
+        await ports.delete.deleteFile(ports.delete.resolveSlugPath(filename));
+        removed.slugDb = true;
+      } catch (e) {
+        logger?.warn(
+          `[bootstrap] delete slug file "${filename}" threw: ${(e as Error).message} — left on disk`,
+        );
+      }
+    }
+
+    // (4) Remove the leftover on-disk source set so discovery can't
+    //     re-import the dict next reload (F7-FR4 / EC8). The imports table
+    //     holds no source paths, so re-run discovery and match the
+    //     descriptor whose sidecar (name, lang) equals the audit identity,
+    //     then delete its paths exactly as runImport would. With NO delete
+    //     port, or no matching descriptor on disk (sources already gone /
+    //     kept=false), there is nothing to remove -> removed.sources stays
+    //     false but that is not a failure (no descriptor == no resurrection).
+    if (ports.delete !== undefined) {
+      let descriptors: ImportJobDescriptor[] = [];
+      try {
+        descriptors = await ports.discover();
+      } catch (e) {
+        logger?.warn(
+          `[bootstrap] re-discover for source-set delete threw: ${(e as Error).message}`,
+        );
+      }
+      const match = descriptors.find(
+        d => d.sidecar.name === name && d.sidecar.language === lang,
+      );
+      if (match !== undefined) {
+        const {files, folder} = sourcePathsOf(match);
+        let allOk = true;
+        for (const path of files) {
+          try {
+            await ports.delete.deleteFile(path);
+          } catch (e) {
+            allOk = false;
+            logger?.warn(
+              `[bootstrap] delete source file "${path}" threw: ${(e as Error).message} — left on disk (dict may reappear on reload)`,
+            );
+          }
+        }
+        if (folder !== undefined) {
+          try {
+            await ports.delete.deleteFolder(folder);
+          } catch (e) {
+            // A non-empty / failed rmdir is tolerated (matches runImport):
+            // an empty leftover folder doesn't resurrect the dict.
+            logger?.warn(
+              `[bootstrap] rmdir source folder "${folder}" threw: ${(e as Error).message} — left in place`,
+            );
+          }
+        }
+        // sources removed only if every data/sidecar file went (a leftover
+        // data file would let discovery re-import — F7-AC3 warns the user).
+        removed.sources = allOk;
+      }
+    }
+
+    // (5) Drop the audit row; (6) drop the dict_prefs row. Both idempotent.
+    if (userDb !== null) {
+      try {
+        const auditDel = await removeImport(userDb, name, lang as string);
+        removed.audit = auditDel.changes > 0;
+      } catch (e) {
+        logger?.warn(
+          `[bootstrap] delete audit row for "${name}" threw: ${(e as Error).message}`,
+        );
+      }
+    }
+    const prefDel = await removeDictPref(userDb, prefKey, logger);
+    removed.pref = prefDel.changes > 0;
+
+    return {ok: true, removed};
+  };
+
   return {
     lookup,
     sources,
@@ -589,5 +891,6 @@ export const bootstrap = async (
     sourceLang,
     listDictPrefs,
     setDictPrefs: applyDictPrefs,
+    deleteImportedDict,
   };
 };

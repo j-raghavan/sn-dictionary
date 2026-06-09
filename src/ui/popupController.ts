@@ -1,6 +1,6 @@
 import type {LookupResult} from '../core/lookup';
 import type {ThesaurusResult} from '../core/dict/sqlite/thesaurusLookup';
-import type {DictPref} from '../core/dict/sqlite/settings';
+import type {DeleteResult, DictPref} from '../core/dict/sqlite/settings';
 
 // Bridge between async handlers (which don't render React) and the
 // popup component (which does). A handler calls one of the show*()
@@ -81,6 +81,15 @@ export type PopupActions = {
   // getKeepSources/setKeepSources helpers.
   getKeepSources(): Promise<boolean>;
   setKeepSources(keep: boolean): Promise<void>;
+  // F7 — delete an already-imported dict. `confirmDeleteDict` shows the
+  // device confirm dialog (showRattaDialog) and resolves true ONLY when the
+  // user taps Delete; it is a host-mockable PORT (like F4's promptKeepDelete)
+  // so the panel stays renderer-testable off-device. `deleteImportedDict`
+  // wires to the RuntimeHandle and reports what was removed. Both are
+  // OPTIONAL so the F3/F4 fakeActions (and a not-yet-wired engine) still
+  // satisfy PopupActions; the panel guards on their presence.
+  confirmDeleteDict?(name: string): Promise<boolean>;
+  deleteImportedDict?(prefKey: string): Promise<DeleteResult>;
 };
 
 let popupActions: PopupActions | null = null;

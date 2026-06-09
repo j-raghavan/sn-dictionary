@@ -137,6 +137,7 @@ describe('t (popup string lookup)', () => {
     expect(settingsIds.sort()).toEqual([
       'settings.allDisabled',
       'settings.back',
+      'settings.deleteDictPrompt',
       'settings.dictionaries',
       'settings.disableDict',
       'settings.enableDict',
@@ -146,6 +147,7 @@ describe('t (popup string lookup)', () => {
       'settings.moveDown',
       'settings.moveUp',
       'settings.open',
+      'settings.removeDict',
       'settings.sources',
       'settings.title',
     ]);
@@ -157,11 +159,15 @@ describe('t (popup string lookup)', () => {
     }
   });
 
-  test('every locale DEFINES every common.* string (F4 dialog buttons)', () => {
+  test('every locale DEFINES every common.* string (F4/F7 dialog buttons)', () => {
     const commonIds = Object.keys(STRINGS.en).filter(k =>
       k.startsWith('common.'),
     );
-    expect(commonIds.sort()).toEqual(['common.delete', 'common.keep']);
+    expect(commonIds.sort()).toEqual([
+      'common.cancel',
+      'common.delete',
+      'common.keep',
+    ]);
     for (const locale of Object.keys(STRINGS)) {
       for (const id of commonIds) {
         const value = STRINGS[locale][id as keyof (typeof STRINGS)[string]];

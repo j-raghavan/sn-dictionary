@@ -1949,3 +1949,160 @@ describe('DefinitionPopup — keep-sources toggle (F4)', () => {
     expect(collectText(tree)).toContain('hello');
   });
 });
+
+// --- Remove an imported dict (F7) ----------------------------------
+
+const okDelete = {
+  ok: true as const,
+  removed: {slugDb: true, audit: true, pref: true, sources: true},
+};
+
+// PopupActions with the F3 list + the F7 delete seam: a confirm port (resolves
+// true=Delete / false=Cancel) and a deleteImportedDict spy.
+const deleteActions = (
+  prefs: DictPref[],
+  confirmDeleteDict: PopupActions['confirmDeleteDict'] = async () => true,
+  deleteImportedDict: PopupActions['deleteImportedDict'] = async () => okDelete,
+  listDictPrefs: PopupActions['listDictPrefs'] = async () => prefs,
+): PopupActions => ({
+  lookupThesaurus: async () => ({lang: 'en', omw: {synonyms: [], antonyms: []}}),
+  addUserEntry: async () => undefined,
+  relookup: async () => undefined,
+  listDictPrefs,
+  setDictPrefs: async () => undefined,
+  getKeepSources: async () => true,
+  setKeepSources: async () => undefined,
+  confirmDeleteDict,
+  deleteImportedDict,
+});
+
+describe('DefinitionPopup — remove imported dict (F7)', () => {
+  test('Remove renders ONLY on removable rows (F7-FR1)', async () => {
+    setPopupActions(
+      deleteActions([
+        dictPref('User', true, 0),
+        dictPref('Dune', true, 1, true),
+        dictPref('WordNet', true, 2),
+      ]),
+    );
+    const tree = renderPopup();
+    await openSettings(tree);
+    // Imported (removable) Dune has a Remove control...
+    expect(findByLabel(tree, 'Remove: Dune')).toHaveLength(1);
+    // ...base/User do NOT (hide-don't-grey).
+    expect(findByLabel(tree, 'Remove: User')).toHaveLength(0);
+    expect(findByLabel(tree, 'Remove: WordNet')).toHaveLength(0);
+  });
+
+  test('tapping Remove confirms, then deletes on Delete + re-fetches (F7-FR2/FR3)', async () => {
+    const confirm = jest.fn(async (_name: string) => true);
+    const del = jest.fn(async (_key: string) => okDelete);
+    // The list loses Dune after the delete (re-fetch returns the new set).
+    const lists = [
+      [dictPref('User', true, 0), dictPref('Dune', true, 1, true), dictPref('WordNet', true, 2)],
+      [dictPref('User', true, 0), dictPref('WordNet', true, 1)],
+    ];
+    let call = 0;
+    setPopupActions(
+      deleteActions(lists[0], confirm, del, async () => lists[Math.min(call++, 1)]),
+    );
+    const tree = renderPopup();
+    await openSettings(tree);
+    await act(async () => {
+      findByLabel(tree, 'Remove: Dune')[0].props.onPress();
+      await flush();
+    });
+    // Confirm shown with the dict name; delete called with Dune's prefKey.
+    expect(confirm).toHaveBeenCalledWith('Dune');
+    expect(del).toHaveBeenCalledWith('Dune');
+    // The list re-fetched -> Dune row is gone.
+    expect(findByLabel(tree, 'Remove: Dune')).toHaveLength(0);
+    expect(collectText(tree)).not.toContain('Dune');
+  });
+
+  test('cancelling the confirm does NOT delete (only Delete proceeds)', async () => {
+    const confirm = jest.fn(async () => false); // user taps Cancel
+    const del = jest.fn(async () => okDelete);
+    setPopupActions(deleteActions([dictPref('Dune', true, 0, true)], confirm, del));
+    const tree = renderPopup();
+    await openSettings(tree);
+    await act(async () => {
+      findByLabel(tree, 'Remove: Dune')[0].props.onPress();
+      await flush();
+    });
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(del).not.toHaveBeenCalled();
+    // The row stays.
+    expect(findByLabel(tree, 'Remove: Dune')).toHaveLength(1);
+  });
+
+  test('a deleteImportedDict rejection is swallowed (no crash)', async () => {
+    const del = jest.fn(async () => {
+      throw new Error('delete blew up');
+    });
+    setPopupActions(
+      deleteActions([dictPref('Dune', true, 0, true)], async () => true, del),
+    );
+    const tree = renderPopup();
+    await openSettings(tree);
+    await act(async () => {
+      findByLabel(tree, 'Remove: Dune')[0].props.onPress();
+      await flush();
+    });
+    // No crash; the popup is still on the settings panel.
+    expect(collectText(tree)).toContain('Dictionaries');
+  });
+
+  test('Remove is a no-op when the F7 ports are absent (F3/F4-only actions)', async () => {
+    // dictManagerActions omits confirmDeleteDict/deleteImportedDict — but the
+    // Remove control still renders on a removable row; tapping it is a no-op.
+    setPopupActions(dictManagerActions([dictPref('Dune', true, 0, true)]));
+    const tree = renderPopup();
+    await openSettings(tree);
+    const remove = findByLabel(tree, 'Remove: Dune');
+    expect(remove).toHaveLength(1);
+    await act(async () => {
+      remove[0].props.onPress();
+      await flush();
+    });
+    // No crash; row stays.
+    expect(findByLabel(tree, 'Remove: Dune')).toHaveLength(1);
+  });
+
+  test('unmount before the post-delete re-fetch resolves does not setState (cancel guard)', async () => {
+    // Defer the re-fetch's listDictPrefs so the panel can unmount (Back)
+    // while it is still pending — the cancelled guard must skip its setState.
+    let releaseRefetch!: (p: DictPref[]) => void;
+    let listCalls = 0;
+    const listDictPrefs: PopupActions['listDictPrefs'] = () => {
+      listCalls += 1;
+      // 1st call (mount) resolves immediately; the 2nd (post-delete refresh)
+      // is deferred so we can unmount before it lands.
+      if (listCalls === 1) {
+        return Promise.resolve([dictPref('Dune', true, 0, true)]);
+      }
+      return new Promise<DictPref[]>(res => {
+        releaseRefetch = res;
+      });
+    };
+    setPopupActions(
+      deleteActions([dictPref('Dune', true, 0, true)], async () => true, async () => okDelete, listDictPrefs),
+    );
+    const tree = renderPopup();
+    await openSettings(tree);
+    // Trigger the delete -> its post-delete refreshList fires (the deferred
+    // 2nd listDictPrefs), then Back (unmount) before it resolves.
+    await act(async () => {
+      findByLabel(tree, 'Remove: Dune')[0].props.onPress();
+      await flush();
+    });
+    await act(async () => pressLabel(tree, 'Back'));
+    // Resolve the deferred re-fetch AFTER unmount — the cancelled guard means
+    // no setState-after-unmount (no crash / warning).
+    await act(async () => {
+      releaseRefetch([dictPref('Dune', true, 0, true)]);
+      await Promise.resolve();
+    });
+    expect(collectText(tree)).toContain('hello');
+  });
+});

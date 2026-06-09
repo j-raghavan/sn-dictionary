@@ -7,6 +7,7 @@ import {
   ensureImportsTable,
   findImportByFilename,
   findImportByNameLang,
+  removeImport,
   resolveSlugCollision,
   upsertImport,
 } from '../src/core/dict/sqlite/importAudit';
@@ -132,6 +133,27 @@ describe('resolveSlugCollision', () => {
     expect(await resolveSlugCollision('dune.en.db', 'C', 'en', db)).toBe(
       'dune-2.en.db',
     );
+    await db.close();
+  });
+});
+
+describe('removeImport (F7)', () => {
+  it('deletes the (name, lang) row and reports one change', async () => {
+    const db = await auditDb();
+    await upsertImport(db, row({name: 'Dune', lang: 'en'}));
+    await upsertImport(db, row({name: 'Dune', lang: 'de', filename: 'dune.de.db'}));
+    const res = await removeImport(db, 'Dune', 'en');
+    expect(res.changes).toBe(1);
+    // The en row is gone; the de row (same name, different lang) is untouched.
+    expect(await findImportByNameLang(db, 'Dune', 'en')).toBeNull();
+    expect(await findImportByNameLang(db, 'Dune', 'de')).not.toBeNull();
+    await db.close();
+  });
+
+  it('is idempotent: removing an absent row is a no-op (changes:0)', async () => {
+    const db = await auditDb();
+    const res = await removeImport(db, 'Ghost', 'en');
+    expect(res.changes).toBe(0);
     await db.close();
   });
 });

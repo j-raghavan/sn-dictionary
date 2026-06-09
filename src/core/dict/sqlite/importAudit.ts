@@ -55,6 +55,19 @@ export const upsertImport = async (
   });
 };
 
+// F7 — delete the audit row for one imported dict, keyed by its logical
+// identity (name, lang). Reuses DELETE_IMPORT_BY_NAME_LANG (the same SQL
+// upsertImport's replace uses). Idempotent: deleting an absent row is a
+// no-op (changes:0), so a half-deleted dict (audit already gone) cleans
+// without error (F7-FR5). Resolves the rows-changed count so the caller
+// can report whether a row was actually removed.
+export const removeImport = async (
+  db: SqliteDb,
+  name: string,
+  lang: string,
+): Promise<{changes: number}> =>
+  db.run(DELETE_IMPORT_BY_NAME_LANG, [name, lang]);
+
 // Resolve a slug-DB filename collision. `baseFilename` is
 // `<slug>.<lang>.db`. It is usable as-is when free, OR when the file it
 // names is already owned by the SAME (name, lang) (a re-import

@@ -21,11 +21,31 @@ export default function SettingsPanel(_props: {
   // initial render never shows a misleading "delete" state.
   const [keepSources, setKeepSources] = React.useState<boolean>(true);
 
+  // Re-fetch the current order+enablement (shared by the mount effect and
+  // the post-delete refresh — F7). Null actions / a rejection leave the
+  // current list untouched (no crash). `cancelledRef` guards a stale async
+  // resolving after unmount.
+  const cancelledRef = React.useRef(false);
+  const refreshList = React.useCallback((): void => {
+    getPopupActions()
+      ?.listDictPrefs()
+      .then(loaded => {
+        if (!cancelledRef.current) {
+          setPrefs(loaded);
+        }
+      })
+      .catch(() => {
+        // The engine surfaces its own errors; the panel keeps the last
+        // list rather than crashing the popup.
+      });
+  }, []);
+
   // Re-fetch the current order+enablement on every mount (EC6): a detached
   // import may have landed since the panel last opened, so the list must
   // reflect the live registry, not a stale snapshot. Null actions (engine
   // not yet wired) -> empty list, no crash.
   React.useEffect(() => {
+    cancelledRef.current = false;
     let cancelled = false;
     const actions = getPopupActions();
     if (!actions) {
@@ -56,8 +76,35 @@ export default function SettingsPanel(_props: {
       });
     return () => {
       cancelled = true;
+      cancelledRef.current = true;
     };
   }, []);
+
+  // F7: Remove an imported dict. Confirm via the device dialog port (only
+  // the Delete button proceeds), then drop it through the engine and
+  // re-fetch the list so the removed row disappears. Both ports are
+  // optional (F3/F4 fakeActions omit them) — a missing one is a no-op. Any
+  // rejection is swallowed (the engine logs it); the list just isn't
+  // refreshed. Confirm runs FIRST so a stray tap never deletes silently.
+  const removeDict = (pref: DictPref): void => {
+    const actions = getPopupActions();
+    if (!actions || !actions.confirmDeleteDict || !actions.deleteImportedDict) {
+      return;
+    }
+    const {confirmDeleteDict, deleteImportedDict} = actions;
+    confirmDeleteDict(pref.name)
+      .then(confirmed => {
+        if (!confirmed) {
+          return;
+        }
+        return deleteImportedDict(pref.prefKey).then(() => {
+          refreshList();
+        });
+      })
+      .catch(() => {
+        // Swallow — the engine logs its own failure; the panel stays put.
+      });
+  };
 
   // Persist a whole reordered/toggled set (renumbering sortOrder to the
   // array index so it round-trips deterministically) and optimistically
@@ -173,6 +220,17 @@ export default function SettingsPanel(_props: {
               ) : (
                 <View style={styles.dictControlSpacer} />
               )}
+              {pref.removable ? (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`${t('settings.removeDict')}: ${pref.name}`}
+                  onPress={() => removeDict(pref)}
+                  style={styles.dictControl}>
+                  <Text style={styles.dictControlLabel}>
+                    {t('settings.removeDict')}
+                  </Text>
+                </Pressable>
+              ) : null}
             </View>
           </View>
         ))}

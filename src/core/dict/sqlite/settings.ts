@@ -42,6 +42,20 @@ export type DictPref = {
   removable: boolean;
 };
 
+// F7 — the outcome of deleteImportedDict. `ok` is false ONLY when the
+// prefKey doesn't resolve to a removable imported dict (base/User — INV5,
+// F7-FR6) with a `reason`; a partial/idempotent delete (some artifact
+// already gone) still resolves ok:true (F7-FR5). `removed.*` reports which
+// sub-steps actually changed disk/db state: slugDb (handle closed + file
+// deleted), audit (imports row), pref (dict_prefs row), sources (the
+// leftover on-disk source set — false when it couldn't be removed, so the
+// caller warns the dict may reappear on reload, F7-AC3).
+export type DeleteResult = {
+  ok: boolean;
+  removed: {slugDb: boolean; audit: boolean; pref: boolean; sources: boolean};
+  reason?: string;
+};
+
 // Idempotent create of the three settings tables on the user.db handle
 // (mirrors ensureImportsTable). Runs inside bootstrap's degradable
 // user.db try, so a throw degrades userDb to null (F1-AC4).
@@ -116,6 +130,22 @@ export const setDictPrefs = async (
       ]);
     }
   });
+};
+
+// F7 — delete one source's dict_prefs row by prefKey. Idempotent (an
+// absent key is a no-op, changes:0) so deleting a dict whose pref was
+// never persisted still succeeds (F7-FR5). null db -> warn + no-op
+// (degraded). Resolves the rows-changed count for the delete summary.
+export const removeDictPref = async (
+  db: SqliteDb | null,
+  prefKey: string,
+  logger?: Logger,
+): Promise<{changes: number}> => {
+  if (db === null) {
+    logger?.warn('[settings] user.db unavailable — dict pref not removed');
+    return {changes: 0};
+  }
+  return db.run(DELETE_DICT_PREF, [prefKey]);
 };
 
 // --- F3: merge persisted prefs with the live registry ---------------
