@@ -25,9 +25,12 @@ import {
 import {ensureImportsTable} from './importAudit';
 import {
   ensureSettingsTables,
+  getKeepSources,
+  hasKeepSourcesSetting,
   mergeDictPrefs,
   readDictPrefs,
   setDictPrefs,
+  setKeepSources,
   type DictPref,
   type DictSourceIdentity,
 } from './settings';
@@ -38,14 +41,20 @@ type Logger = {warn: (msg: string) => void; log?: (msg: string) => void};
 
 // --- reconcileImports (PURE) ----------------------------------------
 // Decide, from the descriptors found on disk and the audit rows in
-// user.db, what to do with each. Pure — NO file-existence probe (a
-// missing/corrupt slug DB is not a bucket here; the lazy source handles
-// it as 'absent'/'failed', Designer ruling 1).
+// user.db, what to do with each. Pure — NO file-existence probe inside
+// the function (review fix 6 / F4-FR3): the slug-DB health probe runs in
+// bootstrap, which passes the precomputed `slugHealthy` Set + `keepSources`
+// flag. A missing/corrupt slug DB without an audit hit is still not a
+// bucket here; the lazy source handles it as 'absent'/'failed' (Designer
+// ruling 1).
 //
 //   'import' — a descriptor to (re)import. NEW (no audit hit) or
 //              RE-ADD (audit hit -> replacesFilename = prior slug).
 //   'open'   — an audit row with no matching descriptor on disk
-//              (already imported; just open its slug DB).
+//              (already imported; just open its slug DB), OR — F4-FR3 — an
+//              audit-hit descriptor whose sources were KEPT and whose slug
+//              DB is healthy (skip the re-import; the kept-source loop is
+//              broken here).
 //   'skip'   — a duplicate (name, lang) descriptor (first wins as
 //              'import', the rest skip — Designer flag 1).
 
@@ -53,6 +62,16 @@ export type ReconcileItem =
   | {bucket: 'import'; descriptor: ImportJobDescriptor; replacesFilename?: string}
   | {bucket: 'open'; row: ImportRow}
   | {bucket: 'skip'; reason: string; descriptor?: ImportJobDescriptor};
+
+// Precomputed (I/O-free) inputs to keep reconcileImports pure (F4-FR3 /
+// review fix 6). `keepSources` is the resolved keepSourcesAfterImport flag;
+// `slugHealthy` is the set of audit `filename`s whose slug DB bootstrap
+// has verified exists+opens. When keep=false (or the flag is unset and a
+// caller passes false), the legacy RE-ADD-on-re-drop behaviour holds.
+export type ReconcileOpts = {
+  keepSources: boolean;
+  slugHealthy: Set<string>;
+};
 
 export const identityKey = (name: string, lang: string): string =>
   `${name}\u0000${lang}`;
@@ -71,6 +90,7 @@ export const dictPrefKey = (
 export const reconcileImports = (
   descriptors: ImportJobDescriptor[],
   auditRows: ImportRow[],
+  opts: ReconcileOpts,
 ): ReconcileItem[] => {
   const auditByKey = new Map<string, ImportRow>();
   for (const row of auditRows) {
@@ -79,7 +99,10 @@ export const reconcileImports = (
 
   const items: ReconcileItem[] = [];
   const seen = new Set<string>();
-  const importedKeys = new Set<string>();
+  // Keys whose audit row is already consumed by a descriptor (as an
+  // 'import' RE-ADD or a kept 'open') so the trailing audit-only pass
+  // doesn't double-open them.
+  const consumedKeys = new Set<string>();
 
   // Descriptors first: NEW + RE-ADD become 'import'; duplicates skip.
   for (const descriptor of descriptors) {
@@ -94,19 +117,37 @@ export const reconcileImports = (
       continue;
     }
     seen.add(key);
-    importedKeys.add(key);
+    consumedKeys.add(key);
     const prior = auditByKey.get(key);
-    items.push(
-      prior
-        ? {bucket: 'import', descriptor, replacesFilename: prior.filename}
-        : {bucket: 'import', descriptor},
-    );
+    if (prior === undefined) {
+      // NEW dict (no audit hit) -> always import.
+      items.push({bucket: 'import', descriptor});
+      continue;
+    }
+    // F4-FR3: an audit-hit descriptor whose sources were KEPT and whose
+    // slug DB is healthy is "done" — 'open' the existing slug, skip the
+    // re-import (this is what breaks the kept-source re-import loop). A
+    // `.refresh` sentinel (forceRefresh) overrides this back to RE-ADD
+    // (F4-FR9), as does keep=false or an unhealthy slug.
+    const forceRefresh =
+      descriptor.kind === 'stardict' || descriptor.kind === 'csv'
+        ? descriptor.forceRefresh === true
+        : false;
+    if (
+      opts.keepSources &&
+      opts.slugHealthy.has(prior.filename) &&
+      !forceRefresh
+    ) {
+      items.push({bucket: 'open', row: prior});
+    } else {
+      items.push({bucket: 'import', descriptor, replacesFilename: prior.filename});
+    }
   }
 
   // Audit rows with no descriptor on disk -> 'open' the existing slug.
   for (const row of auditRows) {
     const key = identityKey(row.name, row.lang);
-    if (!importedKeys.has(key)) {
+    if (!consumedKeys.has(key)) {
       items.push({bucket: 'open', row});
     }
   }
@@ -162,6 +203,12 @@ export const deriveLiveSources = (
 export interface BootstrapDbPorts {
   openUserDb(): Promise<SqliteDb>;
   openImportedDb(filename: string): OpenSqliteDb;
+  // F4-FR3: probe whether a recorded slug DB still exists on disk
+  // (existence is enough for v1 — OQ6). Used to build the `slugHealthy`
+  // Set passed to the PURE reconcileImports, keeping the I/O out of it.
+  // Optional: a host that omits it makes every audited slug "unhealthy",
+  // so a kept set falls back to today's RE-ADD (safe).
+  slugDbExists?(filename: string): Promise<boolean>;
 }
 
 export interface BootstrapPorts {
@@ -171,8 +218,19 @@ export interface BootstrapPorts {
   // Build the format-agnostic import ports for a descriptor. The host
   // adapter (index.js) branches on descriptor.kind to wire the right
   // produceSlugDb (native StarDict vs JS CSV) + source/sidecar paths.
-  importPortsFor(d: ImportJobDescriptor, audit: SqliteDb): RunImportPorts;
+  // `keepSources` (F4) is resolved once at bootstrap and threaded in so
+  // the delete step is gated; the host passes it onto RunImportPorts.
+  importPortsFor(
+    d: ImportJobDescriptor,
+    audit: SqliteDb,
+    keepSources: boolean,
+  ): RunImportPorts;
   enableButtons(): Promise<void>;
+  // F4-FR5: the one-time first-run keep/delete dialog. Called at bootstrap
+  // ONLY when the keepSourcesAfterImport flag is unset AND there is ≥1
+  // import to dispatch — never mid-import on the detached path. Returns
+  // true=keep, false=delete. Optional: absent / throwing -> default KEEP.
+  promptKeepDelete?(): Promise<boolean>;
 }
 
 export interface RuntimeHandle {
@@ -217,6 +275,31 @@ export interface RuntimeHandle {
 
 const readAuditRows = async (userDb: SqliteDb): Promise<ImportRow[]> =>
   userDb.query<ImportRow>(SELECT_IMPORT_ALL);
+
+// F4-FR3: build the `slugHealthy` Set (audit filenames whose slug DB
+// exists) that the PURE reconcileImports consumes — the ONLY I/O probe in
+// the keep-vs-reimport decision, kept here in bootstrap. Existence is
+// enough for v1 (OQ6). A probe that throws / is absent treats that slug as
+// unhealthy (-> fall back to RE-ADD, the safe legacy path).
+const probeSlugHealth = async (
+  db: BootstrapDbPorts,
+  auditRows: ImportRow[],
+): Promise<Set<string>> => {
+  const healthy = new Set<string>();
+  if (db.slugDbExists === undefined) {
+    return healthy;
+  }
+  for (const row of auditRows) {
+    try {
+      if (await db.slugDbExists(row.filename)) {
+        healthy.add(row.filename);
+      }
+    } catch {
+      // Treat a probe failure as unhealthy — RE-ADD is the safe fallback.
+    }
+  }
+  return healthy;
+};
 
 export const bootstrap = async (
   ports: BootstrapPorts,
@@ -286,7 +369,13 @@ export const bootstrap = async (
       : null;
 
   // 4. Reconcile descriptors against audit rows (only if user.db is up).
+  //    F4: resolve keepSources + probe slug-DB health FIRST so the PURE
+  //    reconcileImports decides with no I/O (review fix 6). The first-run
+  //    keep/delete prompt (F4-FR5) runs here — once, before any import
+  //    dispatch, only when the flag is unset AND there is ≥1 import to
+  //    dispatch — and persists the choice; thereafter the toggle owns it.
   let reconciled: ReconcileItem[] = [];
+  let keepSources = true;
   if (userDb !== null) {
     let descriptors: ImportJobDescriptor[] = [];
     try {
@@ -295,7 +384,38 @@ export const bootstrap = async (
       logger?.warn(`[bootstrap] discover threw: ${(e as Error).message} — no imports`);
     }
     const auditRows = await readAuditRows(userDb);
-    reconciled = reconcileImports(descriptors, auditRows);
+
+    // F4-FR5: first-run prompt. Only when the flag is unset AND a
+    // descriptor would actually import (there's a pending re-/import). With
+    // keep=true a kept+healthy set reconciles to 'open', so we probe health
+    // FIRST and ask only if at least one descriptor still wants importing
+    // under keep=true. Default KEEP if the port is absent / throws.
+    keepSources = await getKeepSources(userDb);
+    const slugHealthy = await probeSlugHealth(ports.db, auditRows);
+    const flagSet = await hasKeepSourcesSetting(userDb);
+    if (!flagSet && ports.promptKeepDelete !== undefined) {
+      // Would any descriptor import under the current (default keep) rule?
+      const wouldImport = reconcileImports(descriptors, auditRows, {
+        keepSources,
+        slugHealthy,
+      }).some(i => i.bucket === 'import');
+      if (wouldImport) {
+        try {
+          keepSources = await ports.promptKeepDelete();
+        } catch (e) {
+          logger?.warn(
+            `[bootstrap] keep/delete prompt threw: ${(e as Error).message} — defaulting to keep`,
+          );
+          keepSources = true;
+        }
+        await setKeepSources(userDb, keepSources, logger);
+      }
+    }
+
+    reconciled = reconcileImports(descriptors, auditRows, {
+      keepSources,
+      slugHealthy,
+    });
     for (const item of reconciled) {
       if (item.bucket === 'skip') {
         logger?.warn(`[bootstrap] skip import: ${item.reason}`);
@@ -391,8 +511,9 @@ export const bootstrap = async (
         try {
           // Format-agnostic: importPortsFor wires the kind-appropriate
           // produceSlugDb; runImport drives the shared spine for both.
+          // keepSources (F4) gates the delete step inside runImport.
           const result = await runImport(
-            ports.importPortsFor(item.descriptor, audit),
+            ports.importPortsFor(item.descriptor, audit, keepSources),
             logger,
           );
           if (result.ok) {

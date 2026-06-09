@@ -855,6 +855,8 @@ const fakeActions = (
   relookup: async () => undefined,
   listDictPrefs: async () => [],
   setDictPrefs: async () => undefined,
+  getKeepSources: async () => true,
+  setKeepSources: async () => undefined,
 });
 
 describe('DefinitionPopup — Definition/Thesaurus toggle', () => {
@@ -1093,6 +1095,8 @@ const relookupActions = (
   relookup,
   listDictPrefs: async () => [],
   setDictPrefs: async () => undefined,
+  getKeepSources: async () => true,
+  setKeepSources: async () => undefined,
 });
 
 const findByLabel = (tree: ReactTestRenderer, label: string) =>
@@ -1223,6 +1227,8 @@ const addActions = (
   relookup,
   listDictPrefs: async () => [],
   setDictPrefs: async () => undefined,
+  getKeepSources: async () => true,
+  setKeepSources: async () => undefined,
 });
 
 describe('DefinitionPopup — add-word form', () => {
@@ -1602,15 +1608,20 @@ const dictPref = (
 
 // PopupActions whose listDictPrefs returns a fixed set and whose
 // setDictPrefs is a spy (captures the persisted payload the manager sends).
+// F4: optional keepSources value + setKeepSources spy for the toggle tests.
 const dictManagerActions = (
   prefs: DictPref[],
   setDictPrefs: PopupActions['setDictPrefs'] = async () => undefined,
+  keepSources = true,
+  setKeepSources: PopupActions['setKeepSources'] = async () => undefined,
 ): PopupActions => ({
   lookupThesaurus: async () => ({lang: 'en', omw: {synonyms: [], antonyms: []}}),
   addUserEntry: async () => undefined,
   relookup: async () => undefined,
   listDictPrefs: async () => prefs,
   setDictPrefs,
+  getKeepSources: async () => keepSources,
+  setKeepSources,
 });
 
 // Open settings from a result, then let the mount-time listDictPrefs fetch
@@ -1753,6 +1764,8 @@ describe('DefinitionPopup — dictionary manager (F3)', () => {
       relookup: async () => undefined,
       listDictPrefs: listSpy,
       setDictPrefs: async () => undefined,
+      getKeepSources: async () => true,
+      setKeepSources: async () => undefined,
     });
     const tree = renderPopup();
     await openSettings(tree);
@@ -1800,9 +1813,139 @@ describe('DefinitionPopup — dictionary manager (F3)', () => {
         throw new Error('read failed');
       },
       setDictPrefs: async () => undefined,
+      getKeepSources: async () => true,
+      setKeepSources: async () => undefined,
     });
     const tree = renderPopup();
     await openSettings(tree);
     expect(collectText(tree)).toContain('Dictionaries');
+  });
+});
+
+describe('DefinitionPopup — keep-sources toggle (F4)', () => {
+  test('renders the Import sources section with the keep label + hint', async () => {
+    setPopupActions(dictManagerActions([dictPref('WordNet', true, 0)]));
+    const tree = renderPopup();
+    await openSettings(tree);
+    const text = collectText(tree);
+    expect(text).toContain('Import sources');
+    expect(text).toContain('Keep source files after import');
+  });
+
+  test('keep=true shows the Keep state on the toggle', async () => {
+    setPopupActions(
+      dictManagerActions([dictPref('WordNet', true, 0)], undefined, true),
+    );
+    const tree = renderPopup();
+    await openSettings(tree);
+    // The switch control reflects the persisted keep state.
+    const sw = findByLabel(tree, 'Keep source files after import');
+    expect(sw).toHaveLength(1);
+    expect(sw[0].props.accessibilityState).toMatchObject({checked: true});
+  });
+
+  test('toggling persists the flipped value via setKeepSources', async () => {
+    const spy = jest.fn(async (_keep: boolean) => undefined);
+    setPopupActions(
+      dictManagerActions([dictPref('WordNet', true, 0)], undefined, true, spy),
+    );
+    const tree = renderPopup();
+    await openSettings(tree);
+    await act(async () => {
+      findByLabel(tree, 'Keep source files after import')[0].props.onPress();
+      await Promise.resolve();
+    });
+    // Flipped keep=true -> setKeepSources(false).
+    expect(spy).toHaveBeenCalledWith(false);
+    // The control now reflects the optimistic off (delete) state.
+    const sw = findByLabel(tree, 'Keep source files after import');
+    expect(sw[0].props.accessibilityState).toMatchObject({checked: false});
+  });
+
+  test('loads keep=false from the engine and shows the Delete state', async () => {
+    setPopupActions(
+      dictManagerActions([dictPref('WordNet', true, 0)], undefined, false),
+    );
+    const tree = renderPopup();
+    await openSettings(tree);
+    const sw = findByLabel(tree, 'Keep source files after import');
+    expect(sw[0].props.accessibilityState).toMatchObject({checked: false});
+  });
+
+  test('a setKeepSources rejection is swallowed (optimistic UI stays)', async () => {
+    const spy = jest.fn(async () => {
+      throw new Error('persist failed');
+    });
+    setPopupActions(
+      dictManagerActions([dictPref('WordNet', true, 0)], undefined, true, spy),
+    );
+    const tree = renderPopup();
+    await openSettings(tree);
+    await act(async () => {
+      findByLabel(tree, 'Keep source files after import')[0].props.onPress();
+      await Promise.resolve();
+    });
+    const sw = findByLabel(tree, 'Keep source files after import');
+    expect(sw[0].props.accessibilityState).toMatchObject({checked: false});
+  });
+
+  test('null actions: the toggle defaults to keep, no crash', async () => {
+    const tree = renderPopup();
+    await openSettings(tree);
+    const sw = findByLabel(tree, 'Keep source files after import');
+    expect(sw[0].props.accessibilityState).toMatchObject({checked: true});
+  });
+
+  test('a getKeepSources rejection keeps the safe default (keep), no crash', async () => {
+    setPopupActions({
+      lookupThesaurus: async () => ({lang: 'en', omw: {synonyms: [], antonyms: []}}),
+      addUserEntry: async () => undefined,
+      relookup: async () => undefined,
+      listDictPrefs: async () => [dictPref('WordNet', true, 0)],
+      setDictPrefs: async () => undefined,
+      getKeepSources: async () => {
+        throw new Error('read failed');
+      },
+      setKeepSources: async () => undefined,
+    });
+    const tree = renderPopup();
+    await openSettings(tree);
+    const sw = findByLabel(tree, 'Keep source files after import');
+    expect(sw[0].props.accessibilityState).toMatchObject({checked: true});
+  });
+
+  test('unmount before the keep/list fetches resolve does not setState (cancel guard)', async () => {
+    // Deferred actions so the panel unmounts (Back) while both fetches are
+    // still pending — the cancelled guard must skip both setState calls.
+    let releasePrefs!: (p: DictPref[]) => void;
+    let releaseKeep!: (k: boolean) => void;
+    setPopupActions({
+      lookupThesaurus: async () => ({lang: 'en', omw: {synonyms: [], antonyms: []}}),
+      addUserEntry: async () => undefined,
+      relookup: async () => undefined,
+      listDictPrefs: () =>
+        new Promise<DictPref[]>(res => {
+          releasePrefs = res;
+        }),
+      setDictPrefs: async () => undefined,
+      getKeepSources: () =>
+        new Promise<boolean>(res => {
+          releaseKeep = res;
+        }),
+      setKeepSources: async () => undefined,
+    });
+    const tree = renderPopup();
+    act(() => showDefinition(found('WordNet', 'hello', 'a greeting')));
+    act(() => pressLabel(tree, 'Settings'));
+    // Leave settings (unmount the panel) BEFORE the fetches resolve.
+    await act(async () => pressLabel(tree, 'Back'));
+    // Now resolve — the cancelled guard means no setState-after-unmount.
+    await act(async () => {
+      releasePrefs([dictPref('WordNet', true, 0)]);
+      releaseKeep(false);
+      await Promise.resolve();
+    });
+    // No crash / no warning surfaced; the popup is back on the result view.
+    expect(collectText(tree)).toContain('hello');
   });
 });

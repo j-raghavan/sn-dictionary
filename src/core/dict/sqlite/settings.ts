@@ -203,3 +203,32 @@ export const setAppSetting = async (
     await tx.run(INSERT_APP_SETTING, [key, value]);
   });
 };
+
+// --- F4: opt-in post-import source deletion -------------------------
+//
+// `app_settings('keepSourcesAfterImport')` is '1' (keep) / '0' (delete).
+// The DEFAULT is KEEP (opt-IN to delete): an absent row, a degraded
+// (null) user.db, or any value other than '0' reads as keep=true. The
+// flag gates runImport's delete step (F4-FR2) and reconcile's keep rule
+// (F4-FR3); a first-run bootstrap dialog seeds it (F4-FR5).
+export const KEEP_SOURCES_KEY = 'keepSourcesAfterImport';
+
+// True unless explicitly persisted as '0'. Total + null-db-safe (a
+// degraded user.db keeps sources — the safe default; nothing is deleted).
+export const getKeepSources = async (db: SqliteDb | null): Promise<boolean> =>
+  (await getAppSetting(db, KEEP_SOURCES_KEY)) !== '0';
+
+// Persist the keep/delete choice as '1'/'0' (round-trips through
+// getKeepSources). null db -> warn + no-op (degraded).
+export const setKeepSources = async (
+  db: SqliteDb | null,
+  keep: boolean,
+  logger?: Logger,
+): Promise<void> =>
+  setAppSetting(db, KEEP_SOURCES_KEY, keep ? '1' : '0', logger);
+
+// Whether the keep/delete flag has been chosen yet (drives the first-run
+// prompt — F4-FR5). null db / absent row -> not set.
+export const hasKeepSourcesSetting = async (
+  db: SqliteDb | null,
+): Promise<boolean> => (await getAppSetting(db, KEEP_SOURCES_KEY)) !== null;

@@ -54,7 +54,13 @@ export type StringId =
   | 'settings.moveDown'
   | 'settings.enableDict'
   | 'settings.disableDict'
-  | 'settings.allDisabled';
+  | 'settings.allDisabled'
+  | 'settings.sources'
+  | 'settings.keepSources'
+  | 'settings.keepSourcesHint'
+  | 'settings.keepPrompt'
+  | 'common.keep'
+  | 'common.delete';
 
 // Locale codes use the firmware's convention: en, zh_CN, zh_TW, ja,
 // th, nl. Underscore (not hyphen) matches PluginButton.nameMap shape
@@ -95,6 +101,14 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'settings.enableDict': 'Enable',
     'settings.disableDict': 'Disable',
     'settings.allDisabled': 'All dictionaries are off — lookups return nothing.',
+    'settings.sources': 'Import sources',
+    'settings.keepSources': 'Keep source files after import',
+    'settings.keepSourcesHint':
+      'When off, sideloaded files are deleted after a verified import.',
+    'settings.keepPrompt':
+      'Keep the dropped dictionary files after importing? Choose Delete to remove them once the dictionary is built.',
+    'common.keep': 'Keep',
+    'common.delete': 'Delete',
   },
   zh_CN: {
     'popup.synonyms': '同义词',
@@ -131,6 +145,12 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'settings.enableDict': '启用',
     'settings.disableDict': '停用',
     'settings.allDisabled': '所有词典均已关闭——查询将无结果。',
+    'settings.sources': '导入源文件',
+    'settings.keepSources': '导入后保留源文件',
+    'settings.keepSourcesHint': '关闭时，验证导入后将删除侧载文件。',
+    'settings.keepPrompt': '导入后保留拖入的词典文件吗？选择“删除”可在词典构建完成后移除它们。',
+    'common.keep': '保留',
+    'common.delete': '删除',
   },
   zh_TW: {
     'popup.synonyms': '同義詞',
@@ -167,6 +187,12 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'settings.enableDict': '啟用',
     'settings.disableDict': '停用',
     'settings.allDisabled': '所有詞典均已關閉——查詢將無結果。',
+    'settings.sources': '匯入來源檔案',
+    'settings.keepSources': '匯入後保留來源檔案',
+    'settings.keepSourcesHint': '關閉時，驗證匯入後將刪除側載檔案。',
+    'settings.keepPrompt': '匯入後保留拖入的詞典檔案嗎？選擇「刪除」可在詞典建立完成後移除它們。',
+    'common.keep': '保留',
+    'common.delete': '刪除',
   },
   ja: {
     'popup.synonyms': '類義語',
@@ -203,6 +229,14 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'settings.enableDict': '有効',
     'settings.disableDict': '無効',
     'settings.allDisabled': 'すべての辞書がオフです — 検索結果は表示されません。',
+    'settings.sources': 'インポート元ファイル',
+    'settings.keepSources': 'インポート後に元ファイルを残す',
+    'settings.keepSourcesHint':
+      'オフの場合、検証済みのインポート後にサイドロードファイルを削除します。',
+    'settings.keepPrompt':
+      'インポート後に追加した辞書ファイルを残しますか？「削除」を選ぶと辞書の構築後に削除します。',
+    'common.keep': '残す',
+    'common.delete': '削除',
   },
   th: {
     'popup.synonyms': 'คำพ้องความหมาย',
@@ -239,6 +273,14 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'settings.enableDict': 'เปิด',
     'settings.disableDict': 'ปิด',
     'settings.allDisabled': 'ปิดพจนานุกรมทั้งหมดแล้ว — การค้นหาจะไม่มีผลลัพธ์',
+    'settings.sources': 'ไฟล์ต้นทางการนำเข้า',
+    'settings.keepSources': 'เก็บไฟล์ต้นทางหลังการนำเข้า',
+    'settings.keepSourcesHint':
+      'เมื่อปิด ระบบจะลบไฟล์ที่ไซด์โหลดหลังการนำเข้าที่ตรวจสอบแล้ว',
+    'settings.keepPrompt':
+      'เก็บไฟล์พจนานุกรมที่วางไว้หลังการนำเข้าหรือไม่? เลือกลบเพื่อลบออกเมื่อสร้างพจนานุกรมเสร็จ',
+    'common.keep': 'เก็บ',
+    'common.delete': 'ลบ',
   },
   nl: {
     'popup.synonyms': 'Synoniemen',
@@ -276,6 +318,14 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'settings.disableDict': 'Uitschakelen',
     'settings.allDisabled':
       'Alle woordenboeken zijn uit — zoekopdrachten geven niets terug.',
+    'settings.sources': 'Importbronnen',
+    'settings.keepSources': 'Bronbestanden behouden na import',
+    'settings.keepSourcesHint':
+      'Indien uit, worden gesideloade bestanden na een geverifieerde import verwijderd.',
+    'settings.keepPrompt':
+      'De geplaatste woordenboekbestanden na het importeren behouden? Kies Verwijderen om ze te wissen zodra het woordenboek is gebouwd.',
+    'common.keep': 'Behouden',
+    'common.delete': 'Verwijderen',
   },
   de: {
     'popup.synonyms': 'Synonyme',
@@ -313,6 +363,14 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'settings.disableDict': 'Deaktivieren',
     'settings.allDisabled':
       'Alle Wörterbücher sind aus — Suchen liefern nichts.',
+    'settings.sources': 'Importquellen',
+    'settings.keepSources': 'Quelldateien nach Import behalten',
+    'settings.keepSourcesHint':
+      'Wenn aus, werden sideloadete Dateien nach einem verifizierten Import gelöscht.',
+    'settings.keepPrompt':
+      'Die abgelegten Wörterbuchdateien nach dem Import behalten? Wählen Sie Löschen, um sie nach dem Aufbau zu entfernen.',
+    'common.keep': 'Behalten',
+    'common.delete': 'Löschen',
   },
 };
 

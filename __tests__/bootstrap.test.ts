@@ -11,7 +11,9 @@ import {
 import {ensureImportsTable, upsertImport} from '../src/core/dict/sqlite/importAudit';
 import {
   ensureSettingsTables,
+  getKeepSources,
   setDictPrefs,
+  setKeepSources,
   type DictPref,
 } from '../src/core/dict/sqlite/settings';
 import {CREATE_ENTRIES_TABLE} from '../src/core/dict/sqlite/schema';
@@ -50,16 +52,22 @@ const auditRow = (name: string, lang: string, filename: string): ImportRow => ({
 
 const buckets = (items: ReconcileItem[]) => items.map(i => i.bucket);
 
+// Default reconcile opts for the legacy tests: keep=false reproduces the
+// pre-F4 RE-ADD-on-re-drop behaviour (so the existing assertions hold). The
+// F4 keep tests below pass their own {keepSources:true, slugHealthy}.
+const NO_KEEP = {keepSources: false, slugHealthy: new Set<string>()};
+
 describe('reconcileImports (pure)', () => {
   it('NEW descriptor (no audit) -> import without replacesFilename', () => {
-    const items = reconcileImports([descriptor('A', 'en')], []);
+    const items = reconcileImports([descriptor('A', 'en')], [], NO_KEEP);
     expect(items).toEqual([{bucket: 'import', descriptor: descriptor('A', 'en')}]);
   });
 
-  it('RE-ADD (audit hit) -> import with replacesFilename = prior slug', () => {
+  it('RE-ADD (audit hit, keep=false) -> import with replacesFilename = prior slug', () => {
     const items = reconcileImports(
       [descriptor('A', 'en')],
       [auditRow('A', 'en', 'a.en.db')],
+      NO_KEEP,
     );
     expect(items).toEqual([
       {bucket: 'import', descriptor: descriptor('A', 'en'), replacesFilename: 'a.en.db'},
@@ -67,14 +75,14 @@ describe('reconcileImports (pure)', () => {
   });
 
   it('audit row with no descriptor -> open bucket', () => {
-    const items = reconcileImports([], [auditRow('A', 'en', 'a.en.db')]);
+    const items = reconcileImports([], [auditRow('A', 'en', 'a.en.db')], NO_KEEP);
     expect(items).toEqual([{bucket: 'open', row: auditRow('A', 'en', 'a.en.db')}]);
   });
 
   it('DEDUPs duplicate name+lang on disk: first import, rest skip (Flag 1)', () => {
     const d1 = descriptor('A', 'en');
     const d2 = descriptor('A', 'en');
-    const items = reconcileImports([d1, d2], []);
+    const items = reconcileImports([d1, d2], [], NO_KEEP);
     expect(buckets(items)).toEqual(['import', 'skip']);
     expect(items[1]).toEqual({
       bucket: 'skip',
@@ -87,6 +95,7 @@ describe('reconcileImports (pure)', () => {
     const items = reconcileImports(
       [descriptor('A', 'en'), descriptor('A', 'de')],
       [],
+      NO_KEEP,
     );
     expect(buckets(items)).toEqual(['import', 'import']);
   });
@@ -95,8 +104,101 @@ describe('reconcileImports (pure)', () => {
     const items = reconcileImports(
       [descriptor('New', 'en')],
       [auditRow('Old', 'de', 'old.de.db')],
+      NO_KEEP,
     );
     expect(buckets(items)).toEqual(['import', 'open']);
+  });
+});
+
+// --- F4-FR3: the keep-vs-reimport rule (the blocker fix) ------------
+describe('reconcileImports (F4 keep rule, pure)', () => {
+  const KEEP = (healthy: string[]) => ({
+    keepSources: true,
+    slugHealthy: new Set(healthy),
+  });
+
+  it('audit-hit + keep + healthy slug -> OPEN (skips re-import; loop broken, AC3)', () => {
+    const items = reconcileImports(
+      [descriptor('A', 'en')],
+      [auditRow('A', 'en', 'a.en.db')],
+      KEEP(['a.en.db']),
+    );
+    // Reuses the 'open' bucket carrying the prior audit row — no re-import,
+    // no second slug DB.
+    expect(items).toEqual([{bucket: 'open', row: auditRow('A', 'en', 'a.en.db')}]);
+  });
+
+  it('audit-hit + keep + UNhealthy slug -> import (RE-ADD; safe fallback)', () => {
+    const items = reconcileImports(
+      [descriptor('A', 'en')],
+      [auditRow('A', 'en', 'a.en.db')],
+      KEEP([]), // slug DB missing
+    );
+    expect(items).toEqual([
+      {bucket: 'import', descriptor: descriptor('A', 'en'), replacesFilename: 'a.en.db'},
+    ]);
+  });
+
+  it('audit-hit + forceRefresh -> import even with keep + healthy slug (AC4, FR9)', () => {
+    const refreshing: ImportJobDescriptor = {
+      ...descriptor('A', 'en'),
+      forceRefresh: true,
+    };
+    const items = reconcileImports(
+      [refreshing],
+      [auditRow('A', 'en', 'a.en.db')],
+      KEEP(['a.en.db']),
+    );
+    expect(items).toEqual([
+      {bucket: 'import', descriptor: refreshing, replacesFilename: 'a.en.db'},
+    ]);
+  });
+
+  it('a CSV forceRefresh descriptor also overrides keep', () => {
+    const refreshing: ImportJobDescriptor = {
+      ...csvDescriptor('Dune', 'en'),
+      forceRefresh: true,
+    };
+    const items = reconcileImports(
+      [refreshing],
+      [auditRow('Dune', 'en', 'dune.en.db')],
+      KEEP(['dune.en.db']),
+    );
+    expect(buckets(items)).toEqual(['import']);
+  });
+
+  it('keep=false reproduces today RE-ADD even with a healthy slug', () => {
+    const items = reconcileImports(
+      [descriptor('A', 'en')],
+      [auditRow('A', 'en', 'a.en.db')],
+      {keepSources: false, slugHealthy: new Set(['a.en.db'])},
+    );
+    expect(buckets(items)).toEqual(['import']);
+  });
+
+  it('NEW descriptor still imports under keep (no audit hit -> nothing to open)', () => {
+    const items = reconcileImports([descriptor('New', 'en')], [], KEEP([]));
+    expect(items).toEqual([{bucket: 'import', descriptor: descriptor('New', 'en')}]);
+  });
+
+  it('a kept-open + a duplicate descriptor: first opens, the rest skip', () => {
+    const items = reconcileImports(
+      [descriptor('A', 'en'), descriptor('A', 'en')],
+      [auditRow('A', 'en', 'a.en.db')],
+      KEEP(['a.en.db']),
+    );
+    expect(buckets(items)).toEqual(['open', 'skip']);
+  });
+
+  it('does not double-open an audit row already opened via its descriptor (keep)', () => {
+    // The kept descriptor consumes the audit key; the trailing audit-only
+    // pass must NOT emit a second 'open' for the same slug.
+    const items = reconcileImports(
+      [descriptor('A', 'en')],
+      [auditRow('A', 'en', 'a.en.db')],
+      KEEP(['a.en.db']),
+    );
+    expect(items.filter(i => i.bucket === 'open')).toHaveLength(1);
   });
 });
 
@@ -109,6 +211,9 @@ type Harness = {
   importResults: Map<string, {ok: boolean; filename: string}>;
   baseDb: SqliteDb;
   userDb: SqliteDb;
+  // F4: keepSources values passed into importPortsFor (one per dispatched
+  // import) so a test can assert the delete gate was threaded through.
+  keepSourcesSeen: boolean[];
 };
 
 const makeBaseDb = (): Promise<SqliteDb> =>
@@ -137,6 +242,16 @@ const makeHarness = async (opts: {
   provisionRejects?: boolean;
   userDbThrows?: boolean;
   enableButtonsThrows?: boolean;
+  // F4: which audit filenames the slug-health probe reports as existing.
+  // Default: every filename is healthy (so a kept set reconciles to open).
+  slugHealthy?: (filename: string) => boolean;
+  // F4: omit to leave the slugDbExists probe unset (legacy host).
+  noSlugProbe?: boolean;
+  // F4: the first-run keep/delete prompt port; undefined -> not wired.
+  promptKeepDelete?: () => Promise<boolean>;
+  // F4: pre-seed the keepSourcesAfterImport flag (true=keep / false=delete)
+  // so the first-run prompt is skipped and reconcile uses this value.
+  keepSeed?: boolean;
   importOutcome?: (d: ImportJobDescriptor) => {
     ok: boolean;
     filename?: string;
@@ -164,6 +279,7 @@ const makeHarness = async (opts: {
     return db;
   });
   const importResults = new Map<string, {ok: boolean; filename: string}>();
+  const keepSourcesSeen: boolean[] = [];
 
   const ports: BootstrapPorts = {
     provision: {
@@ -184,6 +300,10 @@ const makeHarness = async (opts: {
           await ensureSettingsTables(userDb);
           await opts.prefsSeed(userDb);
         }
+        if (opts.keepSeed !== undefined) {
+          await ensureSettingsTables(userDb);
+          await setKeepSources(userDb, opts.keepSeed);
+        }
         if (opts.userDbAlterError) {
           // Intercept the ALTER ... ADD COLUMN phonetic call so it throws
           // a NON-"duplicate column" error (the re-throw branch in the
@@ -197,12 +317,21 @@ const makeHarness = async (opts: {
         return userDb;
       },
       openImportedDb,
+      // F4: slug-health probe (default every slug healthy). noSlugProbe
+      // omits it to model a legacy host (all slugs treated unhealthy).
+      ...(opts.noSlugProbe
+        ? {}
+        : {
+            slugDbExists: async (filename: string) =>
+              opts.slugHealthy ? opts.slugHealthy(filename) : true,
+          }),
     },
     discover: async () => opts.descriptors ?? [],
-    importPortsFor: (d, audit) => {
+    importPortsFor: (d, audit, keepSources) => {
       // Minimal fake RunImportPorts: the outcome map decides ok/fail. The
       // mocked runImport (below) reads the stashed outcome + the
       // descriptor's kind, so this exercises the kind-agnostic dispatch.
+      keepSourcesSeen.push(keepSources);
       const outcome = opts.importOutcome
         ? opts.importOutcome(d)
         : {ok: true, filename: `${d.sidecar.name}.${d.sidecar.language}.db`};
@@ -211,13 +340,23 @@ const makeHarness = async (opts: {
         __name: d.sidecar.name,
         __lang: d.sidecar.language,
         __kind: d.kind,
+        keepSources,
         audit,
       } as unknown as RunImportPorts;
       return fakePorts;
     },
     enableButtons,
+    ...(opts.promptKeepDelete ? {promptKeepDelete: opts.promptKeepDelete} : {}),
   };
-  return {ports, enableButtons, openImportedDb, importResults, baseDb, userDb};
+  return {
+    ports,
+    enableButtons,
+    openImportedDb,
+    importResults,
+    baseDb,
+    userDb,
+    keepSourcesSeen,
+  };
 };
 
 // runImport is mocked so bootstrap's (format-agnostic) dispatch is tested
@@ -365,8 +504,12 @@ describe('bootstrap', () => {
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('failed: verify failed'));
   });
 
-  it('opens already-imported sources (open bucket) and re-imports re-added ones', async () => {
+  it('opens already-imported sources (open bucket) and re-imports re-added ones (keep=false)', async () => {
     const h = await makeHarness({
+      // keep=false reproduces the ADR-0003 RE-ADD-on-re-drop default: the
+      // sources were deleted on the prior import, so a re-dropped ReAdd is
+      // a deliberate refresh -> 'import' (not the F4 kept 'open').
+      keepSeed: false,
       descriptors: [descriptor('ReAdd', 'en')],
       auditSeed: async db => {
         await upsertImport(db, auditRow('ReAdd', 'en', 'readd.en.db'));
@@ -790,5 +933,177 @@ describe('bootstrap — F3 dictionary manager (allSources + prefs)', () => {
     // setDictPrefs no-ops the persist (null db) but still recomputes live.
     await handle.setDictPrefs([prefRow('WordNet', 'WordNet', false, 0)]);
     expect(handle.sources.map(s => s.name)).toEqual([]);
+  });
+});
+
+// --- F4: opt-in source deletion (reconcile loop + first-run prompt) ---
+
+describe('bootstrap — F4 keep-then-rescan (the loop is broken, AC3)', () => {
+  it('a kept, already-imported set reconciles to OPEN — no re-import, no dup slug', async () => {
+    // Simulate the 2nd bootstrap: the audit row exists AND the descriptor
+    // is back on disk (sources kept), keep flag set, slug healthy. The set
+    // must 'open' (registered, never re-imported) — keepSourcesSeen stays
+    // empty (no import dispatched) and there is ONE source, not two.
+    const h = await makeHarness({
+      keepSeed: true,
+      descriptors: [descriptor('Kept', 'en')],
+      auditSeed: async db => {
+        await upsertImport(db, auditRow('Kept', 'en', 'kept.en.db'));
+      },
+    });
+    const handle = await bootstrap(h.ports);
+    await handle.importsSettled;
+    // 'Kept' present exactly once (opened, not re-imported + spliced).
+    expect(handle.sources.filter(s => s.name === 'Kept')).toHaveLength(1);
+    expect(handle.sources.map(s => s.name)).toEqual(['User', 'Kept', 'WordNet']);
+    // No import was dispatched -> the delete gate was never even reached.
+    expect(h.keepSourcesSeen).toEqual([]);
+  });
+
+  it('a kept set with an UNhealthy slug DB falls back to RE-ADD (import)', async () => {
+    const h = await makeHarness({
+      keepSeed: true,
+      slugHealthy: () => false, // slug DB missing on disk
+      descriptors: [descriptor('Gone', 'en')],
+      auditSeed: async db => {
+        await upsertImport(db, auditRow('Gone', 'en', 'gone.en.db'));
+      },
+    });
+    const handle = await bootstrap(h.ports);
+    await handle.importsSettled;
+    // Re-imported (the import dispatched -> keepSourcesSeen has one entry).
+    expect(h.keepSourcesSeen).toEqual([true]);
+    expect(handle.sources.filter(s => s.name === 'Gone')).toHaveLength(1);
+  });
+
+  it('a .refresh descriptor forces RE-ADD even when kept + healthy (AC4)', async () => {
+    const refreshing: ImportJobDescriptor = {
+      ...descriptor('Refresh', 'en'),
+      forceRefresh: true,
+      refreshPath: '/d/Refresh/.refresh',
+    };
+    const h = await makeHarness({
+      keepSeed: true,
+      descriptors: [refreshing],
+      auditSeed: async db => {
+        await upsertImport(db, auditRow('Refresh', 'en', 'refresh.en.db'));
+      },
+    });
+    const handle = await bootstrap(h.ports);
+    await handle.importsSettled;
+    // Re-imported (forceRefresh overrode the kept 'open').
+    expect(h.keepSourcesSeen).toEqual([true]);
+    expect(handle.sources.filter(s => s.name === 'Refresh')).toHaveLength(1);
+  });
+});
+
+describe('bootstrap — F4 keepSources threaded into the import (FR2)', () => {
+  it('keep=true is passed into importPortsFor for a fresh import', async () => {
+    const h = await makeHarness({
+      keepSeed: true,
+      descriptors: [descriptor('Fresh', 'en')],
+    });
+    const handle = await bootstrap(h.ports);
+    await handle.importsSettled;
+    expect(h.keepSourcesSeen).toEqual([true]);
+  });
+
+  it('keep=false is passed into importPortsFor (delete branch)', async () => {
+    const h = await makeHarness({
+      keepSeed: false,
+      descriptors: [descriptor('Fresh', 'en')],
+    });
+    const handle = await bootstrap(h.ports);
+    await handle.importsSettled;
+    expect(h.keepSourcesSeen).toEqual([false]);
+  });
+});
+
+describe('bootstrap — F4 first-run keep/delete prompt (FR5/AC5)', () => {
+  it('prompts ONCE when the flag is unset and there is a pending import; persists the choice', async () => {
+    const prompt = jest.fn(async () => false); // user chose delete
+    const h = await makeHarness({
+      promptKeepDelete: prompt,
+      descriptors: [descriptor('Fresh', 'en')],
+    });
+    const handle = await bootstrap(h.ports);
+    await handle.importsSettled;
+    expect(prompt).toHaveBeenCalledTimes(1);
+    // The chosen value (delete) was threaded into the import...
+    expect(h.keepSourcesSeen).toEqual([false]);
+    // ...and persisted, so a fresh read returns it.
+    expect(await getKeepSources(h.userDb)).toBe(false);
+  });
+
+  it('does NOT prompt when the flag is already set', async () => {
+    const prompt = jest.fn(async () => false);
+    const h = await makeHarness({
+      keepSeed: true,
+      promptKeepDelete: prompt,
+      descriptors: [descriptor('Fresh', 'en')],
+    });
+    const handle = await bootstrap(h.ports);
+    await handle.importsSettled;
+    expect(prompt).not.toHaveBeenCalled();
+    expect(h.keepSourcesSeen).toEqual([true]);
+  });
+
+  it('does NOT prompt when there is no pending import (flag unset, nothing to dispatch)', async () => {
+    const prompt = jest.fn(async () => false);
+    const h = await makeHarness({promptKeepDelete: prompt, descriptors: []});
+    await bootstrap(h.ports);
+    expect(prompt).not.toHaveBeenCalled();
+  });
+
+  it('does NOT prompt for a kept+healthy set that reconciles to open (no import)', async () => {
+    const prompt = jest.fn(async () => false);
+    const h = await makeHarness({
+      promptKeepDelete: prompt,
+      descriptors: [descriptor('Kept', 'en')],
+      auditSeed: async db => {
+        await upsertImport(db, auditRow('Kept', 'en', 'kept.en.db'));
+      },
+    });
+    await bootstrap(h.ports);
+    // Default keep + healthy slug -> 'open', no import -> no prompt.
+    expect(prompt).not.toHaveBeenCalled();
+  });
+
+  it('defaults to KEEP when the prompt port throws', async () => {
+    const prompt = jest.fn(async () => {
+      throw new Error('dialog dismissed');
+    });
+    const h = await makeHarness({
+      promptKeepDelete: prompt,
+      descriptors: [descriptor('Fresh', 'en')],
+    });
+    const handle = await bootstrap(h.ports, {warn: jest.fn()});
+    await handle.importsSettled;
+    expect(h.keepSourcesSeen).toEqual([true]);
+    expect(await getKeepSources(h.userDb)).toBe(true);
+  });
+
+  it('defaults to KEEP (no prompt) when no prompt port is wired', async () => {
+    const h = await makeHarness({descriptors: [descriptor('Fresh', 'en')]});
+    const handle = await bootstrap(h.ports);
+    await handle.importsSettled;
+    expect(h.keepSourcesSeen).toEqual([true]);
+  });
+});
+
+describe('bootstrap — F4 legacy host without a slug probe', () => {
+  it('treats every audited slug as unhealthy -> kept set RE-ADDs (safe)', async () => {
+    const h = await makeHarness({
+      keepSeed: true,
+      noSlugProbe: true,
+      descriptors: [descriptor('Kept', 'en')],
+      auditSeed: async db => {
+        await upsertImport(db, auditRow('Kept', 'en', 'kept.en.db'));
+      },
+    });
+    const handle = await bootstrap(h.ports);
+    await handle.importsSettled;
+    // No probe -> slugHealthy empty -> RE-ADD (an import dispatched).
+    expect(h.keepSourcesSeen).toEqual([true]);
   });
 });

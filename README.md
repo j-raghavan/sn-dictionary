@@ -17,7 +17,7 @@ A Supernote plugin that adds offline English-word lookup to handwritten notes an
 - **Structured popup.** Each WordNet sense renders as its own block: a part-of-speech badge (*noun* / *verb* / *adjective* / *adverb*), a numbered sense, the definition, italicised example sentences in curly quotes, and a `Synonyms:` line. Senses are visually separated so multi-sense entries (e.g. "AI" — Army Intelligence vs. artificial intelligence vs. three-toed sloth vs. artificial insemination) are scannable at a glance.
 - **Bilingual UI chrome.** The plugin name on the plugin manager card, the **Lookup** toolbar label, and every popup label (`Synonyms:`, `OCR:`, `No definition found for…`, `Close`) localise into Simplified Chinese, Traditional Chinese, Japanese, Thai, and Dutch based on the device's system locale. The dictionary content stays English; the surrounding chrome doesn't.
 - **Case- and whitespace-insensitive.** "Anatomy", "anatomy", and "  ANATOMY  " all hit the same entry.
-- **Bring-your-own dictionary** *(shipped)* — drop a **StarDict** folder or a **CSV** file into `MyStyle/SnDict/` and the plugin imports it into its own SQLite DB at startup (native, off-thread; sources are deleted after a verified import). User dictionaries precede the base on lookup, so your terms shadow generic ones, and a `meta.json` sidecar can name the dict, set its language, and (for CSV) map columns including an optional phonetic field. A separate prebuilt custom `.snplg` via an in-browser converter (Prong B) may still come later.
+- **Bring-your-own dictionary** *(shipped)* — drop a **StarDict** folder or a **CSV** file into `MyStyle/SnDict/` and the plugin imports it into its own SQLite DB at startup (native, off-thread; **source files are kept by default** — a Settings toggle / first-run prompt lets you opt in to deleting them after a verified import). User dictionaries precede the base on lookup, so your terms shadow generic ones, and a `meta.json` sidecar can name the dict, set its language, and (for CSV) map columns including an optional phonetic field. A separate prebuilt custom `.snplg` via an in-browser converter (Prong B) may still come later.
 
 ## Demo
 
@@ -68,7 +68,7 @@ Lookup is ready in well under a second after the plugin process spins up — the
 
 ## Adding your own dictionary
 
-The plugin scans `MyStyle/SnDict/` on every launch. A discovered dict is **imported** — parsed (natively, off the JS thread) and inserted into a self-contained SQLite DB under the plugin dir, then the source files are deleted after a verified commit. Imported dicts appear as separate sections in the popup, ahead of the bundled WordNet base — so a domain glossary like "medical" supplements the general definition rather than replacing it. Re-dropping the same dict replaces it; multiple dicts per language coexist.
+The plugin scans `MyStyle/SnDict/` on every launch. A discovered dict is **imported** — parsed (natively, off the JS thread) and inserted into a self-contained SQLite DB under the plugin dir. **By default the source files are kept** (a Settings toggle / one-time first-run prompt lets you opt in to deleting them after a verified commit). Imported dicts appear as separate sections in the popup, ahead of the bundled WordNet base — so a domain glossary like "medical" supplements the general definition rather than replacing it. Because sources are kept, a re-dropped dict that's already imported is just re-opened (idempotent), **not** re-imported — to refresh it, drop a `.refresh` marker in its folder (`<name>.refresh` beside a CSV) or toggle delete on and re-drop; multiple dicts per language coexist.
 
 ### Layout
 
@@ -93,7 +93,7 @@ MyStyle/
         └── de.dict.dz                (no meta.json — loads with defaults)
 ```
 
-Both formats are imported the same way (parsed → inserted into a SQLite DB → **source files deleted after a verified commit**); for StarDict the now-empty subfolder is removed too.
+Both formats are imported the same way (parsed → inserted into a SQLite DB → **source files kept by default**, or deleted after a verified commit if you opt in via the Settings toggle / first-run prompt); when deleting, StarDict's now-empty subfolder is removed too.
 
 `meta.json` is **optional** for both. For StarDict:
 
@@ -171,7 +171,7 @@ Two different things, and both are fast — there is **no per-session parse**. E
 
 **The bundled English dictionary is ready in ~0.25 s.** `base.db` (149k entries + thesaurus) ships *prebuilt* inside the `.snplg` and is *opened*, not parsed — the **Lookup** button is live within ~250–450 ms of the plugin starting (measured on a Manta).
 
-**A sideloaded dictionary is imported once, in the background.** When you drop a dict into `MyStyle/SnDict/`, it's indexed into its own SQLite DB at plugin start by a native (Kotlin) importer running **off the JS thread** — so it never blocks lookups, and the base dictionary is usable immediately. The new dict splices into the registry the moment its import finishes; after that it's permanent (the source files are deleted and the DB persists, so the next launch just *opens* it in milliseconds, like the base dictionary).
+**A sideloaded dictionary is imported once, in the background.** When you drop a dict into `MyStyle/SnDict/`, it's indexed into its own SQLite DB at plugin start by a native (Kotlin) importer running **off the JS thread** — so it never blocks lookups, and the base dictionary is usable immediately. The new dict splices into the registry the moment its import finishes; after that it's permanent (the DB persists, so the next launch just *opens* it in milliseconds, like the base dictionary). **Source files are kept by default** — on the next launch the kept-and-already-imported set is recognized and re-opened, not re-imported (no duplicate work, no loop); opt in to deleting sources after import via the Settings toggle / one-time first-run prompt.
 
 Import time scales with **entry count** at a steady **~18,000 entries/sec** (measured on a Manta), i.e. roughly `entries ÷ 18,000`:
 

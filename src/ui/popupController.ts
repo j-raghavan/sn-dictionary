@@ -75,6 +75,12 @@ export type PopupActions = {
   // panel engine-agnostic (Designer ruling 1).
   listDictPrefs(): Promise<DictPref[]>;
   setDictPrefs(prefs: DictPref[]): Promise<void>;
+  // F4 — the opt-in source-deletion toggle. Reads/writes the
+  // keepSourcesAfterImport app setting (default keep=true). Applies to
+  // FUTURE imports only (F4-FR7). Wired by index.js to the user.db
+  // getKeepSources/setKeepSources helpers.
+  getKeepSources(): Promise<boolean>;
+  setKeepSources(keep: boolean): Promise<void>;
 };
 
 let popupActions: PopupActions | null = null;

@@ -11,6 +11,10 @@ import {
   mergeDictPrefs,
   getAppSetting,
   setAppSetting,
+  getKeepSources,
+  setKeepSources,
+  hasKeepSourcesSetting,
+  KEEP_SOURCES_KEY,
   type DictPref,
   type DictSourceIdentity,
 } from '../src/core/dict/sqlite/settings';
@@ -244,6 +248,47 @@ describe('settings — app_settings CRUD', () => {
       ['exportDir'],
     );
     expect(rows[0].n).toBe(1);
+  });
+});
+
+describe('settings — keepSources (F4)', () => {
+  test('default is KEEP (true) when no row is set', async () => {
+    const db = await freshDb();
+    expect(await getKeepSources(db)).toBe(true);
+    expect(await hasKeepSourcesSetting(db)).toBe(false);
+  });
+
+  test('setKeepSources(false) persists 0 and round-trips to false', async () => {
+    const db = await freshDb();
+    await setKeepSources(db, false);
+    expect(await getAppSetting(db, KEEP_SOURCES_KEY)).toBe('0');
+    expect(await getKeepSources(db)).toBe(false);
+    expect(await hasKeepSourcesSetting(db)).toBe(true);
+  });
+
+  test('setKeepSources(true) persists 1 and round-trips to true', async () => {
+    const db = await freshDb();
+    await setKeepSources(db, true);
+    expect(await getAppSetting(db, KEEP_SOURCES_KEY)).toBe('1');
+    expect(await getKeepSources(db)).toBe(true);
+    expect(await hasKeepSourcesSetting(db)).toBe(true);
+  });
+
+  test('only an explicit 0 reads as delete; any other value is keep', async () => {
+    const db = await freshDb();
+    await setAppSetting(db, KEEP_SOURCES_KEY, 'true');
+    expect(await getKeepSources(db)).toBe(true);
+  });
+
+  test('null db -> keep (the safe default; nothing is deleted)', async () => {
+    expect(await getKeepSources(null)).toBe(true);
+    expect(await hasKeepSourcesSetting(null)).toBe(false);
+  });
+
+  test('setKeepSources(null) warns and no-ops (no throw)', async () => {
+    const warn = jest.fn();
+    await expect(setKeepSources(null, false, {warn})).resolves.toBeUndefined();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('[settings]'));
   });
 });
 

@@ -563,3 +563,79 @@ describe('discoverUserDicts — loose CSV (M16)', () => {
     expect(byName).toEqual({Dune: 'csv', wiki: 'stardict'});
   });
 });
+
+// --- F4-FR9: the `.refresh` sentinel forces a re-import ------------
+describe('discoverUserDicts — .refresh sentinel (F4-FR9)', () => {
+  it('flags forceRefresh + refreshPath on a StarDict set with a .refresh file', async () => {
+    const dir = `${ROOT}/dune`;
+    const {deps} = makeDeps(
+      {
+        [ROOT]: [folder('dune')],
+        [dir]: [
+          ...triple(dir),
+          fileEntry(`${dir}/meta.json`, 1),
+          fileEntry(`${dir}/.refresh`, 1),
+        ],
+      },
+      {[`${dir}/meta.json`]: JSON.stringify({name: 'Dune', language: 'en'})},
+    );
+    const out = await discoverUserDicts(deps);
+    expect(out[0]).toMatchObject({
+      kind: 'stardict',
+      forceRefresh: true,
+      refreshPath: `${dir}/.refresh`,
+    });
+  });
+
+  it('flags forceRefresh on a no-meta StarDict set too', async () => {
+    const dir = `${ROOT}/plain`;
+    const {deps} = makeDeps(
+      {
+        [ROOT]: [folder('plain')],
+        [dir]: [...triple(dir), fileEntry(`${dir}/.refresh`, 1)],
+      },
+      {},
+    );
+    const out = await discoverUserDicts(deps);
+    expect(out[0]).toMatchObject({forceRefresh: true, refreshPath: `${dir}/.refresh`});
+  });
+
+  it('omits forceRefresh when no .refresh sentinel is present', async () => {
+    const dir = `${ROOT}/dune`;
+    const {deps} = makeDeps(
+      {[ROOT]: [folder('dune')], [dir]: triple(dir)},
+      {},
+    );
+    const out = await discoverUserDicts(deps);
+    expect(out[0].forceRefresh).toBeUndefined();
+    expect((out[0] as {refreshPath?: string}).refreshPath).toBeUndefined();
+  });
+
+  it('flags forceRefresh + refreshPath on a loose CSV with a <name>.refresh', async () => {
+    const {deps} = makeDeps(
+      {
+        [ROOT]: [
+          fileEntry(`${ROOT}/Dune.csv`, 1),
+          fileEntry(`${ROOT}/Dune.refresh`, 1),
+        ],
+      },
+      {},
+    );
+    const out = await discoverUserDicts(deps);
+    expect(out[0]).toMatchObject({
+      kind: 'csv',
+      sidecar: {name: 'Dune'},
+      forceRefresh: true,
+      refreshPath: `${ROOT}/Dune.refresh`,
+    });
+  });
+
+  it('a CSV without its .refresh sibling is not flagged', async () => {
+    const {deps} = makeDeps(
+      {[ROOT]: [fileEntry(`${ROOT}/Dune.csv`, 1)]},
+      {},
+    );
+    const out = await discoverUserDicts(deps);
+    expect(out[0].forceRefresh).toBeUndefined();
+  });
+});

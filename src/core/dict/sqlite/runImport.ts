@@ -17,6 +17,11 @@
 //     the slug DB is durably recorded and a later deleteFile failure
 //     must NOT discard it (a stale audit row pointing at still-present
 //     sources self-heals on the next discovery).
+//   - F4: the final delete step is CONDITIONAL on keepSources (default
+//     keep). When keeping, the audit row + slug DB are still written but
+//     the sources stay on disk; reconcile then sends the kept+healthy set
+//     to 'open' (not a re-import) so the keep doesn't loop. The verify ->
+//     audit -> (conditional) delete ORDERING is unchanged.
 
 import type {SqliteDb} from './db';
 import {parseSidecar, slugDbFilename} from './importSidecar';
@@ -45,6 +50,13 @@ export interface RunImportPorts {
   // guard is a no-op (e.g. CSV, capped at 10 MB, skips it).
   getAvailableSpace?(): Promise<number>;
   estimateRequiredBytes?(): Promise<number>;
+  // F4-FR2: keep the source files after a verified import (the new
+  // DEFAULT, opt-IN to delete). When true, the audit row + slug DB are
+  // still written, but deleteFile / deleteFolder are SKIPPED — leaving the
+  // sources on disk for an idempotent re-open on the next bootstrap
+  // (reconcile sends a kept+healthy set to 'open', not 'import' — F4-FR3).
+  // Optional so legacy callers default to today's delete behaviour.
+  keepSources?: boolean;
   // Delete a source file after a verified import.
   deleteFile(path: string): Promise<void>;
   // The source files to delete on success (data files + sidecar).
@@ -57,6 +69,14 @@ export interface RunImportPorts {
   // Remove the (now-empty) source folder. Only called when sourceFolder
   // is set. Resolving false / throwing is tolerated.
   deleteFolder?(path: string): Promise<boolean>;
+  // F4-FR9: after a successful refresh import (a `.refresh` sentinel
+  // forced a re-import of a kept set), delete the sentinel so it doesn't
+  // loop on the next bootstrap. Best-effort + ISOLATED — a failure never
+  // fails the verified+audited import. Called AFTER the audit row commits,
+  // regardless of keepSources (the sentinel itself is never "kept").
+  deleteRefreshSentinel?(path: string): Promise<void>;
+  // The `.refresh` sentinel path (set only when this is a refresh import).
+  refreshPath?: string;
   slugDb: SlugDbLifecycle;
   // The WRITABLE user.db handle the audit row is written to.
   audit: SqliteDb;
@@ -171,20 +191,43 @@ export const runImport = async (
     });
     committedAndAudited = true;
 
-    for (const path of ports.sourcePaths) {
-      await ports.deleteFile(path);
+    // F4-FR2: with keepSources, SKIP the source deletion entirely — the
+    // audit row + slug DB above are already durably written, and leaving
+    // the sources on disk is the new default. The ordering (audit-FIRST,
+    // then the conditional delete) is unchanged (F4-FR6); only whether the
+    // final delete runs is gated.
+    if (ports.keepSources !== true) {
+      for (const path of ports.sourcePaths) {
+        await ports.deleteFile(path);
+      }
+
+      // Best-effort: remove the now-empty source folder (StarDict's
+      // subfolder; CSV sets none). ISOLATED so a non-empty/failed rmdir
+      // NEVER flips the verified+audited import to a failure or discards
+      // the DB — the worst case is an empty folder left on disk.
+      if (ports.sourceFolder !== undefined && ports.deleteFolder !== undefined) {
+        try {
+          await ports.deleteFolder(ports.sourceFolder);
+        } catch (e) {
+          logger?.warn(
+            `[import] could not remove source folder "${ports.sourceFolder}": ${(e as Error).message} — left in place`,
+          );
+        }
+      }
     }
 
-    // Best-effort: remove the now-empty source folder (StarDict's
-    // subfolder; CSV sets none). ISOLATED so a non-empty/failed rmdir
-    // NEVER flips the verified+audited import to a failure or discards
-    // the DB — the worst case is an empty folder left on disk.
-    if (ports.sourceFolder !== undefined && ports.deleteFolder !== undefined) {
+    // F4-FR9: a refresh import's `.refresh` sentinel is always removed
+    // (even with keepSources) so the same set doesn't re-import forever.
+    // ISOLATED: a delete failure never fails the verified+audited import.
+    if (
+      ports.refreshPath !== undefined &&
+      ports.deleteRefreshSentinel !== undefined
+    ) {
       try {
-        await ports.deleteFolder(ports.sourceFolder);
+        await ports.deleteRefreshSentinel(ports.refreshPath);
       } catch (e) {
         logger?.warn(
-          `[import] could not remove source folder "${ports.sourceFolder}": ${(e as Error).message} — left in place`,
+          `[import] could not remove refresh sentinel "${ports.refreshPath}": ${(e as Error).message} — left in place`,
         );
       }
     }

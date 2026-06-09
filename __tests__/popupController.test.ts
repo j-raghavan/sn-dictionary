@@ -195,6 +195,8 @@ describe('popupController — actions registry', () => {
     relookup: async () => undefined,
     listDictPrefs: async () => [],
     setDictPrefs: async () => undefined,
+    getKeepSources: async () => true,
+    setKeepSources: async () => undefined,
   };
 
   test('getPopupActions is null before registration', () => {

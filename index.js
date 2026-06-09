@@ -16,6 +16,7 @@ import App from './App';
 import {name as appName} from './app.json';
 import {
   FileUtils,
+  NativeUIUtils,
   PluginCommAPI,
   PluginDocAPI,
   PluginFileAPI,
@@ -41,6 +42,11 @@ import {openRnSqliteDb} from './src/core/dict/sqlite/rnSqliteDb';
 import {discoverUserDicts} from './src/core/dict/userDictDiscovery';
 import {lookupThesaurus} from './src/core/dict/sqlite/thesaurusLookup';
 import {addUserEntry} from './src/core/dict/sqlite/userEntries';
+import {
+  getKeepSources,
+  setKeepSources,
+} from './src/core/dict/sqlite/settings';
+import {t} from './src/i18n/i18n';
 import {setPopupActions} from './src/ui/popupController';
 import {
   hideDefinition,
@@ -165,12 +171,32 @@ const bootstrapPorts = {
       return db;
     },
     openImportedDb: filename => openDbByName(filename),
+    // F4-FR3: slug-DB health probe (existence is enough for v1). The slug
+    // lives at PLUGIN_LOCATION/<filename> (same path resolveSlugDbPath
+    // builds); a probe failure -> treated as unhealthy upstream (RE-ADD).
+    slugDbExists: filename =>
+      FileUtils.exists(`${PLUGIN_LOCATION}${filename}`),
   },
   discover: () => discoverUserDicts({fileUtils: FileUtils, logger}),
+  // F4-FR5: the one-time first-run keep/delete dialog. Device-only (the
+  // RattaDialog is a native overlay); bootstrap calls it once before the
+  // first import dispatch when the flag is unset. true=keep, false=delete.
+  promptKeepDelete: () =>
+    NativeUIUtils.showRattaDialog(
+      t('settings.keepPrompt'),
+      t('common.delete'),
+      t('common.keep'),
+      true,
+    ),
   // Build the format-agnostic RunImportPorts for a descriptor, branching
   // on descriptor.kind. StarDict -> native produce-step (via
   // stardictRunPorts); CSV -> JS produce-step (createRnCsvImportPorts).
-  importPortsFor: (descriptor, audit) =>
+  // F4: the kind-specific factories build the produce/delete seam; this
+  // shell layers on the keepSources gate + the `.refresh` sentinel cleanup
+  // (both format-agnostic) so runImport skips the delete when keeping and
+  // removes a refresh marker after a verified refresh import.
+  importPortsFor: (descriptor, audit, keepSources) => {
+    const base =
     descriptor.kind === 'csv'
       ? createRnCsvImportPorts({
           csvPath: descriptor.csvPath,
@@ -229,7 +255,20 @@ const bootstrapPorts = {
               FileUtils.deleteFile(`${PLUGIN_LOCATION}${filename}`).catch(() => {}),
             audit,
           }),
-        ),
+        );
+    base.keepSources = keepSources;
+    // F4-FR9: when a `.refresh` sentinel forced this re-import, delete it
+    // after a verified commit so the same set doesn't loop next boot.
+    if (descriptor.refreshPath !== undefined) {
+      base.refreshPath = descriptor.refreshPath;
+      base.deleteRefreshSentinel = path =>
+        FileUtils.deleteFile(path).then(
+          () => undefined,
+          () => undefined,
+        );
+    }
+    return base;
+  },
   enableButtons,
 };
 
@@ -269,6 +308,10 @@ bootstrap(bootstrapPorts, logger)
       // tested handle; index.js just forwards.
       listDictPrefs: () => handle.listDictPrefs(),
       setDictPrefs: prefs => handle.setDictPrefs(prefs),
+      // F4 opt-in delete toggle: read/write the keepSourcesAfterImport
+      // app setting on the live user.db (default keep; null-db-safe).
+      getKeepSources: () => getKeepSources(handle.userDb),
+      setKeepSources: keep => setKeepSources(handle.userDb, keep, logger),
     });
 
     logger.log(

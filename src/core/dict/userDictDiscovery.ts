@@ -74,6 +74,14 @@ export type StardictJobDescriptor = {
   // Always resolved: the parsed meta.json, or a default {name:
   // folderName, language:'und'} when meta.json is absent/invalid.
   sidecar: Sidecar;
+  // F4-FR9: set true when a `.refresh` sentinel is present in the set
+  // folder. reconcileImports then forces a re-import even for a kept,
+  // already-imported set (overriding the keep+healthy 'open' rule); the
+  // sentinel is deleted (best-effort) after a successful refresh import.
+  forceRefresh?: boolean;
+  // F4-FR9: absolute path of the `.refresh` sentinel (when present), so
+  // the import can delete it after a verified refresh.
+  refreshPath?: string;
 };
 
 // One sideloadable CSV found loose at the root. csvPath is the *.csv
@@ -87,6 +95,11 @@ export type CsvJobDescriptor = {
   sidecarPath?: string;
   // name = filename-sans-.csv; language from the sidecar or 'und'.
   sidecar: Sidecar;
+  // F4-FR9: set true when a `<name>.refresh` sentinel sits beside the
+  // `.csv`. Forces a re-import for a kept, already-imported CSV.
+  forceRefresh?: boolean;
+  // F4-FR9: absolute path of the `<name>.refresh` sentinel (when present).
+  refreshPath?: string;
 };
 
 export type ImportJobDescriptor = StardictJobDescriptor | CsvJobDescriptor;
@@ -154,6 +167,11 @@ const findTriple = (files: FileEntry[]): StardictTriple | null => {
 const findSidecar = (files: FileEntry[]): FileEntry | undefined =>
   files.find(f => f.type === 1 && isMetaJsonName(basenameOf(f.path)));
 
+// F4-FR9: the StarDict refresh sentinel is a file named exactly
+// `.refresh` in the set folder. Its presence forces a re-import.
+const findRefreshSentinel = (files: FileEntry[]): FileEntry | undefined =>
+  files.find(f => f.type === 1 && basenameOf(f.path) === '.refresh');
+
 const buildDescriptor = async (
   folder: FileEntry,
   files: FileEntry[],
@@ -178,13 +196,17 @@ const buildDescriptor = async (
   // -> importStardict derives it from the .ifo sametypesequence.
   const defaultSidecar: Sidecar = {name: folderName, language: 'und'};
 
+  // F4-FR9: a `.refresh` sentinel in the folder forces a re-import even
+  // for a kept, already-imported set.
+  const refreshEntry = findRefreshSentinel(files);
+
   const sidecarEntry = findSidecar(files);
   // No meta.json -> load with defaults (NOT skipped).
   if (sidecarEntry === undefined) {
     logger.log(
       `${TAG} folder "${folderName}" has no meta.json — loading with defaults (name="${folderName}", language="und")`,
     );
-    return {
+    const descriptor: StardictJobDescriptor = {
       kind: 'stardict',
       setPath: folder.path,
       ifoPath: triple.ifo,
@@ -193,6 +215,11 @@ const buildDescriptor = async (
       synPath: triple.syn,
       sidecar: defaultSidecar,
     };
+    if (refreshEntry !== undefined) {
+      descriptor.forceRefresh = true;
+      descriptor.refreshPath = refreshEntry.path;
+    }
+    return descriptor;
   }
 
   // meta.json present — try to use it, but DEGRADE to defaults on any
@@ -215,7 +242,7 @@ const buildDescriptor = async (
     );
   }
 
-  return {
+  const descriptor: StardictJobDescriptor = {
     kind: 'stardict',
     setPath: folder.path,
     ifoPath: triple.ifo,
@@ -225,6 +252,11 @@ const buildDescriptor = async (
     sidecarPath: sidecarEntry.path,
     sidecar,
   };
+  if (refreshEntry !== undefined) {
+    descriptor.forceRefresh = true;
+    descriptor.refreshPath = refreshEntry.path;
+  }
+  return descriptor;
 };
 
 // --- CSV (loose root file) discovery (M16) -------------------------
@@ -262,6 +294,7 @@ const csvNameOf = (csvPath: string): string => {
 const buildCsvDescriptor = async (
   csvPath: string,
   perFileSidecarPath: string | undefined,
+  refreshPath: string | undefined,
   rootMeta: Record<string, unknown> | null,
   fetchFn: typeof fetch,
   logger: Logger,
@@ -302,6 +335,11 @@ const buildCsvDescriptor = async (
   };
   if (perFileSidecarPath !== undefined) {
     descriptor.sidecarPath = perFileSidecarPath;
+  }
+  // F4-FR9: a `<name>.refresh` sentinel beside the csv forces a re-import.
+  if (refreshPath !== undefined) {
+    descriptor.forceRefresh = true;
+    descriptor.refreshPath = refreshPath;
   }
   return descriptor;
 };
@@ -385,23 +423,26 @@ export const discoverUserDicts = async (
       sharedMetaEntry !== undefined
         ? await readJson(sharedMetaEntry.path, fetchFn)
         : null;
-    // Index per-file sidecars by basename for O(1) `<base>.meta.json` hits.
+    // Index per-file sidecars + `.refresh` sentinels by basename for O(1)
+    // `<base>.meta.json` / `<base>.refresh` hits (F4-FR9).
     const byBasename = new Map<string, string>();
     for (const f of rootFiles) {
-      if (isMetaJsonName(basenameOf(f.path))) {
-        byBasename.set(basenameOf(f.path), f.path);
+      const fileBase = basenameOf(f.path);
+      if (isMetaJsonName(fileBase) || fileBase.endsWith('.refresh')) {
+        byBasename.set(fileBase, f.path);
       }
     }
     for (const csv of csvFiles) {
       const base = basenameOf(csv.path);
-      const perFileSidecarPath = byBasename.get(
-        `${base.slice(0, base.length - '.csv'.length)}.meta.json`,
-      );
+      const stem = base.slice(0, base.length - '.csv'.length);
+      const perFileSidecarPath = byBasename.get(`${stem}.meta.json`);
+      const refreshPath = byBasename.get(`${stem}.refresh`);
       try {
         descriptors.push(
           await buildCsvDescriptor(
             csv.path,
             perFileSidecarPath,
+            refreshPath,
             rootMeta,
             fetchFn,
             logger,

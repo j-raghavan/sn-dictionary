@@ -132,20 +132,38 @@ describe('t (popup string lookup)', () => {
     const settingsIds = Object.keys(STRINGS.en).filter(k =>
       k.startsWith('settings.'),
     );
-    // Sanity: F1's three + F3's dictionary-manager keys.
+    // Sanity: F1's three + F3's dictionary-manager keys + F4's keep-sources
+    // keys (the keepPrompt is also used by the first-run dialog).
     expect(settingsIds.sort()).toEqual([
       'settings.allDisabled',
       'settings.back',
       'settings.dictionaries',
       'settings.disableDict',
       'settings.enableDict',
+      'settings.keepPrompt',
+      'settings.keepSources',
+      'settings.keepSourcesHint',
       'settings.moveDown',
       'settings.moveUp',
       'settings.open',
+      'settings.sources',
       'settings.title',
     ]);
     for (const locale of Object.keys(STRINGS)) {
       for (const id of settingsIds) {
+        const value = STRINGS[locale][id as keyof (typeof STRINGS)[string]];
+        expect(typeof value === 'string' && value.length > 0).toBe(true);
+      }
+    }
+  });
+
+  test('every locale DEFINES every common.* string (F4 dialog buttons)', () => {
+    const commonIds = Object.keys(STRINGS.en).filter(k =>
+      k.startsWith('common.'),
+    );
+    expect(commonIds.sort()).toEqual(['common.delete', 'common.keep']);
+    for (const locale of Object.keys(STRINGS)) {
+      for (const id of commonIds) {
         const value = STRINGS[locale][id as keyof (typeof STRINGS)[string]];
         expect(typeof value === 'string' && value.length > 0).toBe(true);
       }

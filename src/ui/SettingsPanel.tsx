@@ -16,6 +16,10 @@ export default function SettingsPanel(_props: {
   resume?: ResultSnapshot;
 }): React.JSX.Element {
   const [prefs, setPrefs] = React.useState<DictPref[]>([]);
+  // F4: keep-source-files toggle. Defaults to true (keep) until the engine
+  // resolves the persisted flag — matching the engine default, so the
+  // initial render never shows a misleading "delete" state.
+  const [keepSources, setKeepSources] = React.useState<boolean>(true);
 
   // Re-fetch the current order+enablement on every mount (EC6): a detached
   // import may have landed since the panel last opened, so the list must
@@ -37,6 +41,18 @@ export default function SettingsPanel(_props: {
       .catch(() => {
         // The engine surfaces its own errors; the panel just shows an
         // empty list rather than crashing the popup.
+      });
+    // F4: load the persisted keep/delete preference (default keep on any
+    // failure / degraded user.db — never surface a wrong "delete" state).
+    actions
+      .getKeepSources()
+      .then(keep => {
+        if (!cancelled) {
+          setKeepSources(keep);
+        }
+      })
+      .catch(() => {
+        // Keep the safe default (keep=true); the engine logs its own error.
       });
     return () => {
       cancelled = true;
@@ -72,6 +88,19 @@ export default function SettingsPanel(_props: {
     const next = prefs.slice();
     [next[index], next[target]] = [next[target], next[index]];
     commit(next);
+  };
+
+  // F4: flip the keep-source-files preference. Optimistic local update +
+  // best-effort persist (a degraded user.db just no-ops). Applies to FUTURE
+  // imports only (F4-FR7) — never retroactively deletes kept sources.
+  const toggleKeepSources = (): void => {
+    const next = !keepSources;
+    setKeepSources(next);
+    getPopupActions()
+      ?.setKeepSources(next)
+      .catch(() => {
+        // No rethrow — optimistic UI stays; the engine logs the failure.
+      });
   };
 
   const anyEnabled = prefs.some(pref => pref.enabled);
@@ -156,6 +185,28 @@ export default function SettingsPanel(_props: {
           {t('settings.allDisabled')}
         </Text>
       ) : null}
+
+      <Text style={styles.settingsSectionTitle}>{t('settings.sources')}</Text>
+      <View style={styles.settingsToggleRow}>
+        <View style={styles.settingsToggleLabelCol}>
+          <Text style={styles.settingsToggleLabel}>
+            {t('settings.keepSources')}
+          </Text>
+          <Text style={styles.settingsToggleHint}>
+            {t('settings.keepSourcesHint')}
+          </Text>
+        </View>
+        <Pressable
+          accessibilityRole="switch"
+          accessibilityState={{checked: keepSources}}
+          accessibilityLabel={t('settings.keepSources')}
+          onPress={toggleKeepSources}
+          style={styles.dictControl}>
+          <Text style={styles.dictControlLabel}>
+            {keepSources ? t('common.keep') : t('common.delete')}
+          </Text>
+        </Pressable>
+      </View>
     </View>
   );
 }

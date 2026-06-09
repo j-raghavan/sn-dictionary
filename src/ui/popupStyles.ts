@@ -328,6 +328,28 @@ export const popupStyles = StyleSheet.create({
     color: '#000000',
     fontWeight: '700',
   },
+  // --- F4 keep-sources toggle ----------------------------------------
+  // One settings row: label + hint on the left, a toggle control on the
+  // right (same bordered-control look as the dictionary manager).
+  settingsToggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 10,
+  },
+  settingsToggleLabelCol: {
+    flex: 1,
+    paddingRight: 12,
+  },
+  settingsToggleLabel: {
+    fontSize: 16,
+    color: '#000000',
+  },
+  settingsToggleHint: {
+    marginTop: 2,
+    fontSize: 13,
+    color: '#777777',
+  },
   // Body-text size selector: three circular elements in a row,
   // ( − )( A )( + ). The outer two are Pressables; the middle is a
   // static "A" indicator that anchors the meaning to "text size".
