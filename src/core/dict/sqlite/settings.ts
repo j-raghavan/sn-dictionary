@@ -56,6 +56,17 @@ export type ExportSummary = {
   targetDir: string;
 };
 
+// F8 — the outcome of a restore run: which DB filenames were copied back
+// over the live ones, which failed (with a reason), and the backup folder
+// they came from. `restored` is empty (with no failures) when the chosen
+// folder held no restorable DBs — the UI then shows "nothing to restore".
+// base.db is NEVER in either list (the build helper excludes it).
+export type RestoreSummary = {
+  restored: string[];
+  failed: {file: string; reason: string}[];
+  backupDir: string;
+};
+
 // F7 — the outcome of deleteImportedDict. `ok` is false ONLY when the
 // prefKey doesn't resolve to a removable imported dict (base/User — INV5,
 // F7-FR6) with a `reason`; a partial/idempotent delete (some artifact

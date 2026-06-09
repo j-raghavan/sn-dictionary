@@ -65,6 +65,11 @@ export type StringId =
   | 'settings.newFolder'
   | 'settings.exportNoSpace'
   | 'settings.exportDone'
+  | 'settings.restore'
+  | 'settings.restorePrompt'
+  | 'settings.restoreDone'
+  | 'settings.restoreReopen'
+  | 'settings.restoreNoBackup'
   | 'common.keep'
   | 'common.delete'
   | 'common.cancel';
@@ -121,6 +126,12 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'settings.newFolder': 'New folder',
     'settings.exportNoSpace': 'Not enough free space to export — nothing was copied.',
     'settings.exportDone': 'Export complete',
+    'settings.restore': 'Restore from here',
+    'settings.restorePrompt':
+      'Restore from this backup? This replaces your current dictionaries and saved words.',
+    'settings.restoreDone': 'Restored',
+    'settings.restoreReopen': 'reopen the plugin to finish',
+    'settings.restoreNoBackup': 'No dictionary backups found in this folder.',
     'common.keep': 'Keep',
     'common.delete': 'Delete',
     'common.cancel': 'Cancel',
@@ -171,6 +182,11 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'settings.newFolder': '新建文件夹',
     'settings.exportNoSpace': '可用空间不足，无法导出——未复制任何文件。',
     'settings.exportDone': '导出完成',
+    'settings.restore': '从此处恢复',
+    'settings.restorePrompt': '要从此备份恢复吗？这将替换您当前的词典和已保存的单词。',
+    'settings.restoreDone': '已恢复',
+    'settings.restoreReopen': '请重新打开插件以完成',
+    'settings.restoreNoBackup': '此文件夹中未找到词典备份。',
     'common.keep': '保留',
     'common.delete': '删除',
     'common.cancel': '取消',
@@ -221,6 +237,11 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'settings.newFolder': '新增資料夾',
     'settings.exportNoSpace': '可用空間不足，無法匯出——未複製任何檔案。',
     'settings.exportDone': '匯出完成',
+    'settings.restore': '從此處還原',
+    'settings.restorePrompt': '要從此備份還原嗎？這將取代您目前的詞典和已儲存的單字。',
+    'settings.restoreDone': '已還原',
+    'settings.restoreReopen': '請重新開啟外掛以完成',
+    'settings.restoreNoBackup': '此資料夾中未找到詞典備份。',
     'common.keep': '保留',
     'common.delete': '刪除',
     'common.cancel': '取消',
@@ -273,6 +294,12 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'settings.newFolder': '新しいフォルダ',
     'settings.exportNoSpace': '空き容量が足りません — 何もコピーされませんでした。',
     'settings.exportDone': 'エクスポート完了',
+    'settings.restore': 'ここから復元',
+    'settings.restorePrompt':
+      'このバックアップから復元しますか？現在の辞書と保存した単語が置き換えられます。',
+    'settings.restoreDone': '復元しました',
+    'settings.restoreReopen': 'プラグインを開き直して完了してください',
+    'settings.restoreNoBackup': 'このフォルダに辞書のバックアップが見つかりません。',
     'common.keep': '残す',
     'common.delete': '削除',
     'common.cancel': 'キャンセル',
@@ -325,6 +352,12 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'settings.newFolder': 'โฟลเดอร์ใหม่',
     'settings.exportNoSpace': 'พื้นที่ว่างไม่พอสำหรับการส่งออก — ไม่มีการคัดลอกไฟล์ใด',
     'settings.exportDone': 'ส่งออกเสร็จสิ้น',
+    'settings.restore': 'กู้คืนจากที่นี่',
+    'settings.restorePrompt':
+      'กู้คืนจากข้อมูลสำรองนี้หรือไม่? การดำเนินการนี้จะแทนที่พจนานุกรมและคำที่บันทึกไว้ของคุณ',
+    'settings.restoreDone': 'กู้คืนแล้ว',
+    'settings.restoreReopen': 'เปิดปลั๊กอินใหม่เพื่อให้เสร็จสมบูรณ์',
+    'settings.restoreNoBackup': 'ไม่พบข้อมูลสำรองพจนานุกรมในโฟลเดอร์นี้',
     'common.keep': 'เก็บ',
     'common.delete': 'ลบ',
     'common.cancel': 'ยกเลิก',
@@ -379,6 +412,12 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'settings.exportNoSpace':
       'Onvoldoende vrije ruimte om te exporteren — er is niets gekopieerd.',
     'settings.exportDone': 'Export voltooid',
+    'settings.restore': 'Vanaf hier herstellen',
+    'settings.restorePrompt':
+      'Herstellen vanaf deze back-up? Dit vervangt je huidige woordenboeken en opgeslagen woorden.',
+    'settings.restoreDone': 'Hersteld',
+    'settings.restoreReopen': 'open de plug-in opnieuw om te voltooien',
+    'settings.restoreNoBackup': 'Geen woordenboekback-ups in deze map gevonden.',
     'common.keep': 'Behouden',
     'common.delete': 'Verwijderen',
     'common.cancel': 'Annuleren',
@@ -433,6 +472,12 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'settings.exportNoSpace':
       'Nicht genug freier Speicher zum Exportieren — es wurde nichts kopiert.',
     'settings.exportDone': 'Export abgeschlossen',
+    'settings.restore': 'Von hier wiederherstellen',
+    'settings.restorePrompt':
+      'Aus dieser Sicherung wiederherstellen? Dies ersetzt Ihre aktuellen Wörterbücher und gespeicherten Wörter.',
+    'settings.restoreDone': 'Wiederhergestellt',
+    'settings.restoreReopen': 'Plugin neu öffnen, um abzuschließen',
+    'settings.restoreNoBackup': 'Keine Wörterbuch-Sicherungen in diesem Ordner gefunden.',
     'common.keep': 'Behalten',
     'common.delete': 'Löschen',
     'common.cancel': 'Abbrechen',

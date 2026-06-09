@@ -84,17 +84,19 @@ class SnDictImportModule(
     }
   }
 
-  // Copy a plugin DB to an absolute (external-storage) destination — the
-  // DB export. A REAL byte copy: RTNFileUtils.copyFile is a File.renameTo
-  // under the hood, which cannot cross the internal(filesDir)->external
-  // filesystem boundary (and would MOVE, not copy). The source may be
-  // relative (resolved under filesDir); the dest is absolute. Resolves true.
+  // Copy a plugin DB across the internal(filesDir)<->external boundary, in
+  // EITHER direction. A REAL byte copy: RTNFileUtils.copyFile is a
+  // File.renameTo under the hood, which cannot cross that boundary (and
+  // would MOVE, not copy). BOTH ends are resolve()d (absolute as-is;
+  // relative under filesDir), so the SAME method serves the DB export
+  // (src=relative plugin DB, dest=absolute backup) and the F8 restore
+  // (src=absolute backup, dest=relative live plugin DB). Resolves true.
   @ReactMethod
-  fun copyToExternal(srcPath: String, destPath: String, promise: Promise) {
+  fun copyResolved(srcPath: String, destPath: String, promise: Promise) {
     executor.execute {
       try {
         val src = resolve(srcPath)
-        val dest = java.io.File(destPath)
+        val dest = resolve(destPath)
         dest.parentFile?.mkdirs()
         src.inputStream().use { input ->
           dest.outputStream().use { output -> input.copyTo(output) }

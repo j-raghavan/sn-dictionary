@@ -1,7 +1,7 @@
 import React from 'react';
 import {Pressable, ScrollView, Text, TextInput, View} from 'react-native';
 import {getPopupActions} from './popupController';
-import type {ExportSummary} from '../core/dict/sqlite/settings';
+import type {ExportSummary, RestoreSummary} from '../core/dict/sqlite/settings';
 import {joinPath} from '../core/dict/sqlite/exportDbs';
 import {popupStyles as styles} from './popupStyles';
 import {t} from '../i18n/i18n';
@@ -22,6 +22,15 @@ import {t} from '../i18n/i18n';
 // per-file summary. A rejection (plugin-dir guard / no-space abort)
 // surfaces its localised reason as the summary — nothing partially
 // copied (the orchestration aborts BEFORE any copyFile).
+//
+// "Restore from here" (F8) is the inverse: it restores the backup DBs in
+// the CURRENT folder over the live ones. It first confirms via the
+// host-mockable `confirmRestore` port (showRattaDialog — "this REPLACES
+// your current dictionaries + saved words"); only on confirm does it call
+// `restoreDbs(current)`, which closes the writable handles + copies the
+// backup over the live DBs (NEVER base.db). The summary then appends the
+// "reopen the plugin to finish" message — there is no auto re-bootstrap.
+// The Restore button only renders when the `restoreDbs` port is wired.
 export default function ExportSection(props: {
   // The folder the chooser opens at (MyStyle; the host derives it from
   // getExternalDirPath, falling back to DEFAULT_EXPORT_DIR's parent).
@@ -33,6 +42,8 @@ export default function ExportSection(props: {
   // not-yet-bootstrapped runtime), render nothing rather than a dead UI.
   const exportFn = actions?.exportDbs;
   const listFoldersFn = actions?.listFolders;
+  // F8 — the Restore button renders only when its port is wired.
+  const restoreFn = actions?.restoreDbs;
 
   const [current, setCurrent] = React.useState(props.rootParent);
   const [folders, setFolders] = React.useState<string[]>([]);
@@ -151,6 +162,53 @@ export default function ExportSection(props: {
       });
   };
 
+  // F8 — restore the backup DBs in the current folder over the live ones.
+  // Confirm FIRST (host-mockable port — a native overlay on-device): only a
+  // user-confirmed restore proceeds. restoreDbs closes the writable handles +
+  // copies the backup over the live DBs (NEVER base.db) and reports per-file
+  // outcome; append the "reopen the plugin" message (no auto re-bootstrap). A
+  // null confirm port -> treat as confirmed (the section is still inert
+  // without restoreFn, which gates the button). A rejection surfaces verbatim.
+  const runRestore = (
+    restore: NonNullable<typeof restoreFn>,
+  ): void => {
+    setSummary(null);
+    const confirmFn = actions?.confirmRestore;
+    const confirmed = confirmFn ? confirmFn() : Promise.resolve(true);
+    confirmed
+      .then(ok => {
+        if (!ok || cancelledRef.current) {
+          return undefined;
+        }
+        return restore(current).then((result: RestoreSummary) => {
+          if (cancelledRef.current) {
+            return;
+          }
+          // Nothing restored AND nothing succeeded -> the empty-backup no-op:
+          // surface the orchestration's reason (the localised "no backups
+          // found") verbatim, with no reopen prompt (no files changed).
+          if (result.restored.length === 0 && result.failed.length > 0) {
+            setSummary(result.failed[0].reason);
+            return;
+          }
+          const parts = [`${t('settings.restoreDone')}: ${result.restored.length}`];
+          if (result.failed.length > 0) {
+            parts.push(
+              `${result.failed.length} (${result.failed
+                .map(f => f.file)
+                .join(', ')})`,
+            );
+          }
+          setSummary(`${parts.join(' · ')} — ${t('settings.restoreReopen')}`);
+        });
+      })
+      .catch((e: unknown) => {
+        if (!cancelledRef.current) {
+          setSummary((e as Error).message);
+        }
+      });
+  };
+
   const atRoot = current === props.rootParent;
 
   return (
@@ -202,6 +260,15 @@ export default function ExportSection(props: {
           style={styles.exportButton}>
           <Text style={styles.exportButtonLabel}>{t('settings.export')}</Text>
         </Pressable>
+        {restoreFn ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={t('settings.restore')}
+            onPress={() => runRestore(restoreFn)}
+            style={styles.exportButton}>
+            <Text style={styles.exportButtonLabel}>{t('settings.restore')}</Text>
+          </Pressable>
+        ) : null}
       </View>
 
       {summary !== null ? (

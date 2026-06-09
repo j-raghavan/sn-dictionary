@@ -1904,3 +1904,123 @@ describe('bootstrap — F7 detached-import eager-open failure (handle stays null
     );
   });
 });
+
+describe('bootstrap — F8 closeWritable (close writable handles for restore)', () => {
+  // A bootstrap with one kept, already-imported Dune (eager-opened, so its
+  // slug handle is retained in the F7 registry — exactly what closeWritable
+  // must close alongside user.db).
+  const seedDune = () =>
+    makeHarness({
+      keepSeed: true,
+      descriptors: [descriptor('Dune', 'en')],
+      auditSeed: async db => {
+        await upsertImport(db, auditRow('Dune', 'en', 'dune.en.db'));
+      },
+    });
+
+  it('closes user.db AND each imported slug handle; leaves base.db OPEN', async () => {
+    const h = await seedDune();
+    const handle = await bootstrap(h.ports);
+    // Dune is eager-opened (its handle is retained, close is recorded).
+    expect(handle.allSources.map(s => s.name)).toContain('Dune');
+
+    const userClose = jest.spyOn(h.userDb, 'close');
+    const baseClose = jest.spyOn(h.baseDb, 'close');
+
+    await handle.closeWritable();
+
+    // user.db closed once; the imported slug handle closed; base.db NEVER
+    // closed (read-only, not restored).
+    expect(userClose).toHaveBeenCalledTimes(1);
+    expect(h.closedSlugs).toContain('dune.en.db');
+    expect(baseClose).not.toHaveBeenCalled();
+  });
+
+  it('is a no-op on user.db when the user DB is degraded (null)', async () => {
+    const h = await makeHarness({userDbThrows: true});
+    const handle = await bootstrap(h.ports);
+    expect(handle.userDb).toBeNull();
+    // No throw with a null user.db + no imported handles — nothing to close.
+    await expect(handle.closeWritable()).resolves.toBeUndefined();
+  });
+
+  it('skips a slug whose eager-open returned null (no handle to close)', async () => {
+    // Dune's eager-open throws -> the source stays lazy (handle null), so
+    // closeWritable has nothing to close for it (and must not throw).
+    const h = await makeHarness({
+      keepSeed: true,
+      descriptors: [descriptor('Dune', 'en')],
+      auditSeed: async db => {
+        await upsertImport(db, auditRow('Dune', 'en', 'dune.en.db'));
+      },
+      openImportedThrows: filename => filename === 'dune.en.db',
+    });
+    const handle = await bootstrap(h.ports);
+    const userClose = jest.spyOn(h.userDb, 'close');
+    await handle.closeWritable();
+    // user.db still closed; no slug close (the handle was null).
+    expect(userClose).toHaveBeenCalledTimes(1);
+    expect(h.closedSlugs).not.toContain('dune.en.db');
+  });
+
+  it('best-effort: a throwing user.db close still closes the slug handles', async () => {
+    const h = await seedDune();
+    const handle = await bootstrap(h.ports);
+    jest.spyOn(h.userDb, 'close').mockRejectedValueOnce(new Error('wal locked'));
+    const warn = jest.fn();
+
+    await expect(handle.closeWritable()).resolves.toBeUndefined();
+
+    // The user.db throw was swallowed AND the slug handle still closed.
+    expect(h.closedSlugs).toContain('dune.en.db');
+    // The warn path is exercised via the bootstrap logger; re-run with one
+    // wired to assert the message (a fresh bootstrap to avoid double-close).
+    const h2 = await seedDune();
+    const handle2 = await bootstrap(h2.ports, {warn});
+    jest.spyOn(h2.userDb, 'close').mockRejectedValueOnce(new Error('wal locked'));
+    await handle2.closeWritable();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('close user.db'));
+  });
+
+  it('best-effort: a throwing slug close is logged and does not block the rest', async () => {
+    // Two imported dicts; the FIRST slug's close throws — the second must
+    // still close (best-effort per handle).
+    const h = await makeHarness({
+      keepSeed: true,
+      descriptors: [descriptor('Dune', 'en'), descriptor('Atlas', 'de')],
+      auditSeed: async db => {
+        await upsertImport(db, auditRow('Dune', 'en', 'dune.en.db'));
+        await upsertImport(db, auditRow('Atlas', 'de', 'atlas.de.db'));
+      },
+    });
+    // Wrap openImportedDb so dune.en.db's close THROWS (mirrors the F7
+    // ORDER-guard test): the eager-opened handle is what closeWritable closes.
+    const realOpen = h.ports.db.openImportedDb;
+    const closed: string[] = [];
+    h.ports.db.openImportedDb = (filename: string) => async () => {
+      const db = await realOpen(filename)();
+      if (db !== null) {
+        db.close = async () => {
+          closed.push(filename);
+          if (filename === 'dune.en.db') {
+            throw new Error('slug handle stuck');
+          }
+        };
+      }
+      return db;
+    };
+    const warn = jest.fn();
+    const handle = await bootstrap(h.ports, {warn});
+
+    await expect(handle.closeWritable()).resolves.toBeUndefined();
+
+    // Both slug closes were ATTEMPTED (Dune threw, Atlas succeeded); the
+    // throw on Dune did not block Atlas.
+    expect(closed).toEqual(
+      expect.arrayContaining(['dune.en.db', 'atlas.de.db']),
+    );
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('close slug "dune.en.db"'),
+    );
+  });
+});

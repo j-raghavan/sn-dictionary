@@ -5,6 +5,7 @@ import type {
   DeleteResult,
   DictPref,
   ExportSummary,
+  RestoreSummary,
 } from '../core/dict/sqlite/settings';
 
 // Bridge between async handlers (which don't render React) and the
@@ -109,6 +110,18 @@ export type PopupActions = {
   listFolders?(parent: string): Promise<string[]>;
   createFolder?(path: string): Promise<boolean>;
   exportDbs?(targetDir: string): Promise<ExportSummary>;
+  // F8 — DB restore (the inverse of export). `confirmRestore` shows the
+  // device confirm dialog (showRattaDialog: "this REPLACES your current
+  // dictionaries + saved words") and resolves true ONLY when the user
+  // confirms; it is a host-mockable PORT (like F4's promptKeepDelete / F7's
+  // confirmDeleteDict) so the panel stays renderer-testable off-device.
+  // `restoreDbs(backupDir)` closes the writable handles, copies the backup
+  // DBs over the live ones (NEVER base.db), and reports the per-file outcome;
+  // the panel then shows "Restored: N — reopen the plugin to finish" (no auto
+  // re-bootstrap). Both OPTIONAL so the existing fakeActions (and a not-yet-
+  // wired engine) still satisfy PopupActions; the panel guards on presence.
+  confirmRestore?(): Promise<boolean>;
+  restoreDbs?(backupDir: string): Promise<RestoreSummary>;
 };
 
 let popupActions: PopupActions | null = null;

@@ -348,6 +348,15 @@ export interface RuntimeHandle {
   // (ok:false) a key resolving to base/User (INV5, F7-FR6); idempotent /
   // partial-safe (a missing artifact is a no-op success — F7-FR5).
   deleteImportedDict(prefKey: string): Promise<DeleteResult>;
+  // F8 — close the WRITABLE live DB handles so a restore can overwrite their
+  // on-disk files: user.db (saved words + settings + the imports audit) AND
+  // every eager-opened imported slug handle (the F7 imported registry retains
+  // them). base.db is read-only and NEVER restored, so it stays open. Each
+  // handle is closed best-effort (a throw on one doesn't block the rest);
+  // after this the live lookup references closed handles — that is fine, the
+  // restore prompts the user to reopen the plugin, which re-bootstraps over
+  // the restored DBs on the next note-open.
+  closeWritable(): Promise<void>;
 }
 
 const readAuditRows = async (userDb: SqliteDb): Promise<ImportRow[]> =>
@@ -897,6 +906,39 @@ export const bootstrap = async (
     return {ok: true, removed};
   };
 
+  // F8 — close the WRITABLE handles (user.db + every eager-opened imported
+  // slug) so a restore can overwrite their files; base.db (read-only, never
+  // restored) is left open. Best-effort PER HANDLE: a throw on one is logged
+  // and the rest still close (a half-closed set is fine — the user reopens
+  // the plugin and bootstrap reopens everything over the restored DBs). The
+  // imported handles come from the F7 `imported` registry, which retains the
+  // eager-opened slug handle (null when a slug opened absent/failed — nothing
+  // to close). Idempotent enough for one restore: closing an already-closed
+  // handle just throws and is swallowed.
+  const closeWritable = async (): Promise<void> => {
+    if (userDb !== null) {
+      try {
+        await userDb.close();
+      } catch (e) {
+        logger?.warn(
+          `[restore] close user.db threw: ${(e as Error).message} — continuing`,
+        );
+      }
+    }
+    for (const record of imported.values()) {
+      if (record.handle === null) {
+        continue;
+      }
+      try {
+        await record.handle.close();
+      } catch (e) {
+        logger?.warn(
+          `[restore] close slug "${record.filename}" threw: ${(e as Error).message} — continuing`,
+        );
+      }
+    }
+  };
+
   return {
     lookup,
     sources,
@@ -908,5 +950,6 @@ export const bootstrap = async (
     listDictPrefs,
     setDictPrefs: applyDictPrefs,
     deleteImportedDict,
+    closeWritable,
   };
 };

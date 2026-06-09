@@ -151,6 +151,11 @@ describe('t (popup string lookup)', () => {
       'settings.newFolder',
       'settings.open',
       'settings.removeDict',
+      'settings.restore',
+      'settings.restoreDone',
+      'settings.restoreNoBackup',
+      'settings.restorePrompt',
+      'settings.restoreReopen',
       'settings.sources',
       'settings.title',
     ]);

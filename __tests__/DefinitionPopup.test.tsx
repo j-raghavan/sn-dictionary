@@ -39,7 +39,11 @@ import {
 } from '../src/ui/popupController';
 import type {DefinitionFormat, LookupResult} from '../src/core/lookup';
 import type {ThesaurusResult} from '../src/core/dict/sqlite/thesaurusLookup';
-import type {DbFile, DictPref} from '../src/core/dict/sqlite/settings';
+import type {
+  DbFile,
+  DictPref,
+  RestoreSummary,
+} from '../src/core/dict/sqlite/settings';
 
 import {copyToClipboard} from '../src/native/clipboard';
 import {htmlToPlainText} from '../src/ui/htmlToPlainText';
@@ -2410,5 +2414,178 @@ describe('DefinitionPopup — DB export (F5)', () => {
     const tree = renderPopup();
     await openSettings(tree);
     expect(findByLabel(tree, 'Use this folder: solo')).toHaveLength(1);
+  });
+});
+
+// --- DB restore section (F8) ---------------------------------------
+
+// PopupActions carrying the F5 export ports PLUS the F8 restore ports
+// (confirmRestore + restoreDbs). The Restore button renders only when
+// restoreDbs is wired; the confirm gate uses confirmRestore (a
+// host-mockable port).
+const restoreActions = (
+  restoreDbs: PopupActions['restoreDbs'] = async (backupDir) => ({
+    restored: ['user.db', 'dune.en.db'],
+    failed: [],
+    backupDir,
+  }),
+  confirmRestore: PopupActions['confirmRestore'] = async () => true,
+): PopupActions => ({
+  ...exportActions(),
+  restoreDbs,
+  confirmRestore,
+});
+
+describe('DefinitionPopup — DB restore (F8)', () => {
+  test('the Restore control renders when the restore port is wired', async () => {
+    setPopupActions(restoreActions());
+    const tree = renderPopup();
+    await openSettings(tree);
+    expect(findByLabel(tree, 'Restore from here')).toHaveLength(1);
+  });
+
+  test('the Restore control is ABSENT when only the export ports are wired', async () => {
+    // exportActions() has no restoreDbs port -> no Restore button.
+    setPopupActions(exportActions());
+    const tree = renderPopup();
+    await openSettings(tree);
+    expect(findByLabel(tree, 'Restore from here')).toHaveLength(0);
+  });
+
+  test('confirm -> restoreDbs(current) -> shows the restored count + reopen message', async () => {
+    const restoreSpy = jest.fn(async (backupDir: string) => ({
+      restored: ['user.db', 'dune.en.db'],
+      failed: [],
+      backupDir,
+    }));
+    const confirmSpy = jest.fn(async () => true);
+    setPopupActions(restoreActions(restoreSpy, confirmSpy));
+    const tree = renderPopup();
+    await openSettings(tree);
+    await act(async () => {
+      findByLabel(tree, 'Restore from here')[0].props.onPress();
+      await flush();
+    });
+    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    // Restored from the current (root) folder; the summary shows the count
+    // AND the "reopen the plugin to finish" message (no auto re-bootstrap).
+    expect(restoreSpy).toHaveBeenCalledWith(MYSTYLE);
+    const text = collectText(tree);
+    expect(text).toContain('Restored: 2');
+    expect(text).toContain('reopen the plugin to finish');
+  });
+
+  test('cancel (confirm -> false) does NOT call restoreDbs', async () => {
+    const restoreSpy = jest.fn(async (backupDir: string) => ({
+      restored: [],
+      failed: [],
+      backupDir,
+    }));
+    setPopupActions(restoreActions(restoreSpy, async () => false));
+    const tree = renderPopup();
+    await openSettings(tree);
+    await act(async () => {
+      findByLabel(tree, 'Restore from here')[0].props.onPress();
+      await flush();
+    });
+    expect(restoreSpy).not.toHaveBeenCalled();
+    // No reopen message (nothing was restored).
+    expect(collectText(tree)).not.toContain('reopen the plugin');
+  });
+
+  test('an empty-backup summary surfaces the no-backup reason (no reopen prompt)', async () => {
+    const restoreSpy = jest.fn(async (backupDir: string) => ({
+      restored: [],
+      failed: [{file: backupDir, reason: 'No dictionary backups found in this folder.'}],
+      backupDir,
+    }));
+    setPopupActions(restoreActions(restoreSpy));
+    const tree = renderPopup();
+    await openSettings(tree);
+    await act(async () => {
+      findByLabel(tree, 'Restore from here')[0].props.onPress();
+      await flush();
+    });
+    const text = collectText(tree);
+    expect(text).toContain('No dictionary backups found');
+    // No reopen prompt — nothing changed on disk.
+    expect(text).not.toContain('reopen the plugin to finish');
+  });
+
+  test('a partial-failure restore lists the failed file + the reopen message', async () => {
+    const restoreSpy = jest.fn(async (backupDir: string) => ({
+      restored: ['user.db'],
+      failed: [{file: 'dune.en.db', reason: 'disk error'}],
+      backupDir,
+    }));
+    setPopupActions(restoreActions(restoreSpy));
+    const tree = renderPopup();
+    await openSettings(tree);
+    await act(async () => {
+      findByLabel(tree, 'Restore from here')[0].props.onPress();
+      await flush();
+    });
+    const text = collectText(tree);
+    expect(text).toContain('Restored: 1');
+    expect(text).toContain('dune.en.db');
+    expect(text).toContain('reopen the plugin to finish');
+  });
+
+  test('a restore REJECTION surfaces its reason verbatim', async () => {
+    const restoreSpy = jest.fn(async () => {
+      throw new Error('native copy unavailable');
+    });
+    setPopupActions(
+      restoreActions(restoreSpy as PopupActions['restoreDbs']),
+    );
+    const tree = renderPopup();
+    await openSettings(tree);
+    await act(async () => {
+      findByLabel(tree, 'Restore from here')[0].props.onPress();
+      await flush();
+    });
+    expect(collectText(tree)).toContain('native copy unavailable');
+  });
+
+  test('a null confirmRestore port treats restore as confirmed (still inert without restoreDbs)', async () => {
+    // restoreDbs wired but confirmRestore absent -> the restore proceeds
+    // without a confirm dialog (the port gates the button, not the confirm).
+    const restoreSpy = jest.fn(async (backupDir: string) => ({
+      restored: ['user.db'],
+      failed: [],
+      backupDir,
+    }));
+    const actions = restoreActions(restoreSpy);
+    delete actions.confirmRestore;
+    setPopupActions(actions);
+    const tree = renderPopup();
+    await openSettings(tree);
+    await act(async () => {
+      findByLabel(tree, 'Restore from here')[0].props.onPress();
+      await flush();
+    });
+    expect(restoreSpy).toHaveBeenCalledWith(MYSTYLE);
+    expect(collectText(tree)).toContain('Restored: 1');
+  });
+
+  test('unmount before a restore resolves does not setState (cancelled guard)', async () => {
+    let resolveRestore!: (s: RestoreSummary) => void;
+    const restoreSpy: PopupActions['restoreDbs'] = () =>
+      new Promise<RestoreSummary>(res => {
+        resolveRestore = res;
+      });
+    setPopupActions(restoreActions(restoreSpy));
+    const tree = renderPopup();
+    await openSettings(tree);
+    await act(async () => {
+      findByLabel(tree, 'Restore from here')[0].props.onPress();
+      await flush();
+    });
+    await act(async () => pressLabel(tree, 'Back'));
+    await act(async () => {
+      resolveRestore({restored: ['user.db'], failed: [], backupDir: MYSTYLE});
+      await Promise.resolve();
+    });
+    expect(collectText(tree)).toContain('hello');
   });
 });

@@ -58,6 +58,7 @@ import {
   listFolders as listExportFolders,
   toDbFiles,
 } from './src/core/dict/sqlite/exportDbs';
+import {restoreDbs as orchestrateRestoreDbs} from './src/core/dict/sqlite/restoreDbs';
 import {SELECT_IMPORT_ALL} from './src/core/dict/sqlite/schema';
 import {t} from './src/i18n/i18n';
 import {setPopupActions} from './src/ui/popupController';
@@ -417,6 +418,53 @@ bootstrap(bootstrapPorts, logger)
             pluginDir: PLUGIN_LOCATION,
             noSpace: t('settings.exportNoSpace'),
           },
+          logger,
+        ),
+      // F8 DB restore (the inverse of export). The orchestration (the
+      // base.db exclusion, close-writable-before-copy, per-file copy) is
+      // host-tested in restoreDbs.ts; index.js only supplies the device
+      // ports. DEVICE-UNVERIFIED.
+      //
+      // The confirm dialog is a native overlay (device-only), so it lives
+      // here as the host-mockable port the panel calls; only the Restore
+      // button (showRattaDialog -> true) proceeds. The restore itself runs
+      // through the host-tested orchestration over the live handle.
+      confirmRestore: () =>
+        NativeUIUtils.showRattaDialog(
+          t('settings.restorePrompt'),
+          t('common.cancel'),
+          t('settings.restore'),
+          false,
+        ),
+      restoreDbs: backupDir =>
+        orchestrateRestoreDbs(
+          backupDir,
+          {
+            // The backup folder is external (MyStyle/...), so FileUtils
+            // reaches it; keep only the .db files (type===1), by basename.
+            listBackup: async dir => {
+              const entries = await FileUtils.listFiles(dir);
+              if (!entries) {
+                return [];
+              }
+              return entries
+                .filter(e => e.type === 1 && e.path.endsWith('.db'))
+                .map(e => {
+                  const slash = e.path.lastIndexOf('/');
+                  return slash >= 0 ? e.path.slice(slash + 1) : e.path;
+                });
+            },
+            // copyPluginFile resolves BOTH ends (absolute backup src,
+            // relative live dest) via the native copyResolved — a real
+            // byte copy across the external->filesDir boundary.
+            copyInto: (absSrc, relDest) => copyPluginFile(absSrc, relDest),
+            resolveLivePath: resolveSlugDbPath,
+            // Close the WRITABLE handles (user.db + imported slugs) BEFORE
+            // the copy overwrites their files; base.db stays open (read-only,
+            // never restored). The user reopens the plugin to finish.
+            closeWritable: () => handle.closeWritable(),
+          },
+          {noBackup: t('settings.restoreNoBackup')},
           logger,
         ),
     });

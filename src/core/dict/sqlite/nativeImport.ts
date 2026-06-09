@@ -50,19 +50,23 @@ export const getFileSize = async (path: string): Promise<number> => {
   return mod.fileSize(path);
 };
 
-// Copy a plugin DB (relative path resolved under filesDir) to an absolute
-// destination — the DB export. Uses our native byte-copy, NOT
-// FileUtils.copyFile (which is a rename and can't cross filesDir->external).
+// Copy a plugin DB across the filesDir<->external boundary in EITHER
+// direction — the native copyResolved resolves BOTH ends (absolute as-is;
+// relative under filesDir). The F5 export passes src=relative/dest=absolute;
+// the F8 restore passes src=absolute(backup)/dest=relative(live). Uses our
+// native byte-copy, NOT FileUtils.copyFile (a rename that can't cross the
+// boundary). The (src, dest) contract is unchanged — only the resolution
+// of `dest` is now symmetric with `src`.
 export const copyPluginFile = async (
   srcPath: string,
   destPath: string,
 ): Promise<boolean> => {
   const {NativeModules} = require('react-native');
   const mod = NativeModules.SnDictImport;
-  if (mod === undefined || typeof mod.copyToExternal !== 'function') {
-    throw new Error('[export] native SnDictImport.copyToExternal is unavailable');
+  if (mod === undefined || typeof mod.copyResolved !== 'function') {
+    throw new Error('[copy] native SnDictImport.copyResolved is unavailable');
   }
-  return mod.copyToExternal(srcPath, destPath);
+  return mod.copyResolved(srcPath, destPath);
 };
 
 // Delete a plugin file (relative path resolved under filesDir, e.g. a slug
