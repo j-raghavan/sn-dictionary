@@ -20,15 +20,19 @@
 // dict/moby/ is gitignored (regenerable). Run `npm run build:base-db`
 // next; the build warn-skips Moby if dict/moby/ is absent.
 
-import {mkdir, rm, stat, readFile, copyFile} from 'node:fs/promises';
+import {mkdir, rm, stat, readFile, writeFile, copyFile} from 'node:fs/promises';
 import {createWriteStream} from 'node:fs';
 import {createHash} from 'node:crypto';
+import {gunzip} from 'node:zlib';
+import {promisify} from 'node:util';
 import {dirname, join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {spawn} from 'node:child_process';
 import {tmpdir} from 'node:os';
 import {Readable} from 'node:stream';
 import {pipeline} from 'node:stream/promises';
+
+const gunzipAsync = promisify(gunzip);
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = join(__dirname, '..');
@@ -40,12 +44,22 @@ const BASENAME = 'thesaurus-ee';
 const PARTS = ['ifo', 'idx', 'dict'];
 const targetPath = ext => join(MOBY_DIR, `${BASENAME}.${ext}`);
 
-// Pinned remote (tabo's English Thesaurus on the huzheng.org StarDict
-// mirror). Left as a placeholder until a release pins URL + SHA; the
-// local-zip fallback covers the common developer path. HTTPS, so the
-// SHA is defence-in-depth.
-const URL = process.env.SNDICT_MOBY_URL ?? '';
-const EXPECTED_SHA256 = process.env.SNDICT_MOBY_SHA256 ?? '';
+// Pinned mirror of tabo's "English Thesaurus" (Moby; public domain). The
+// original download.huzheng.org host went permanently offline (~Nov 2023);
+// stardict.uber.space serves the byte-identical tarball. The Internet
+// Archive Wayback Machine is the durable fallback (override SNDICT_MOBY_URL):
+//   https://web.archive.org/web/2id_/http://download.huzheng.org/dict.org/stardict-thesaurus-ee-2.4.2.tar.bz2
+// The pinned SHA-256 guarantees integrity regardless of mirror, so a moved
+// mirror is a one-line SNDICT_MOBY_URL override, not a re-pin. The tarball
+// ships thesaurus-ee.{ifo,idx,dict.dz}; the .dict.dz is decompressed to a
+// plain thesaurus-ee.dict on stage (so dict/moby/ matches the local-zip
+// layout the build reads).
+const DEFAULT_URL =
+  'https://stardict.uber.space/dict.org/stardict-thesaurus-ee-2.4.2.tar.bz2';
+const DEFAULT_SHA256 =
+  '91f0b221d16a7fb67befddae6487f08d7b76dfe0342a4e6b01677167115ee135';
+const URL = process.env.SNDICT_MOBY_URL ?? DEFAULT_URL;
+const EXPECTED_SHA256 = process.env.SNDICT_MOBY_SHA256 ?? DEFAULT_SHA256;
 
 const log = msg => process.stderr.write(`${msg}\n`);
 
@@ -108,11 +122,33 @@ const run = (cmd, args, cwd) =>
     );
   });
 
+// Decompress a dictzip .dict.dz into a plain .dict. dictzip is a gzip
+// member with a random-access FEXTRA subfield that zlib transparently
+// skips, so a full gunzip yields the byte-identical uncompressed .dict.
+const gunzipTo = async (src, dest) => {
+  await writeFile(dest, await gunzipAsync(await readFile(src)));
+};
+
 // Copy the three StarDict files out of an extracted directory tree into
 // dict/moby/, regardless of the (possibly nested / space-containing)
-// folder the archive used. Throws if any part is missing.
+// folder the archive used. The .dict may arrive plain (local zip) or as
+// .dict.dz (the canonical tarball) — the latter is decompressed. Throws
+// if any part is missing.
 const collectInto = async sourceDir => {
   for (const ext of PARTS) {
+    if (ext === 'dict') {
+      const plain = await findFile(sourceDir, `${BASENAME}.dict`);
+      if (plain) {
+        await copyFile(plain, targetPath('dict'));
+        continue;
+      }
+      const dz = await findFile(sourceDir, `${BASENAME}.dict.dz`);
+      if (!dz) {
+        throw new Error(`Extracted archive is missing ${BASENAME}.dict[.dz]`);
+      }
+      await gunzipTo(dz, targetPath('dict'));
+      continue;
+    }
     const found = await findFile(sourceDir, `${BASENAME}.${ext}`);
     if (!found) {
       throw new Error(`Extracted archive is missing ${BASENAME}.${ext}`);
