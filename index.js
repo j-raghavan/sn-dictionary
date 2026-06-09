@@ -49,6 +49,7 @@ import {
 import {
   exportDbs as orchestrateExportDbs,
   buildExportableDbs,
+  joinPath,
   listFolders as listExportFolders,
   toDbFiles,
 } from './src/core/dict/sqlite/exportDbs';
@@ -84,6 +85,14 @@ const logger = {
 const PLUGIN_LOCATION = 'plugins/sndictdfltbasev1/';
 
 const openDbByName = name => openRnSqliteDb({name, location: PLUGIN_LOCATION});
+
+// SINGLE source of truth for the slug-DB on-device path (P2-1). Both the
+// F7 delete port (resolveSlugPath) and the F5 export set (resolvePath)
+// address a slug DB at PLUGIN_LOCATION/<filename>; routing both through one
+// helper means they can never diverge. PLUGIN_LOCATION ends in '/', so
+// joinPath collapses to the same string the import path's resolveSlugDbPath
+// builds. joinPath is the shared, host-tested join from exportDbs.
+const resolveSlugDbPath = filename => joinPath(PLUGIN_LOCATION, filename);
 
 // Captured by the handlers; set when bootstrap resolves — which is NOW
 // fast: bootstrap returns as soon as base + user + already-imported are
@@ -190,7 +199,7 @@ const bootstrapPorts = {
   // the import path) and the leftover on-disk source set. All best-effort;
   // bootstrap reflects per-step success in the DeleteResult it returns.
   delete: {
-    resolveSlugPath: filename => `${PLUGIN_LOCATION}${filename}`,
+    resolveSlugPath: resolveSlugDbPath,
     deleteFile: path => FileUtils.deleteFile(path).then(() => undefined),
     deleteFolder: path => FileUtils.deleteDir(path),
   },
@@ -357,7 +366,7 @@ bootstrap(bootstrapPorts, logger)
             hasBase: true,
             hasUser: handle.userDb !== null,
             imports,
-            resolvePath: filename => `${PLUGIN_LOCATION}${filename}`,
+            resolvePath: resolveSlugDbPath,
           }),
         );
       },
@@ -378,7 +387,7 @@ bootstrap(bootstrapPorts, logger)
                 hasBase: true,
                 hasUser: handle.userDb !== null,
                 imports,
-                resolvePath: filename => `${PLUGIN_LOCATION}${filename}`,
+                resolvePath: resolveSlugDbPath,
               });
             },
             availableSpace: () => FileUtils.getStorageAvailableSpace(),

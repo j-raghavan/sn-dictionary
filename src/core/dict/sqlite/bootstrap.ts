@@ -9,7 +9,7 @@
 // host-tested with fakes. The thin device shell (index.js) supplies the
 // real RN/SDK-backed ports.
 
-import type {DictLookup, DictSource} from '../lookup';
+import type {DictLookup, DictSource} from '../../lookup';
 import {createMultiDictLookup} from '../multiDictLookup';
 import {createSqliteDictSource} from './sqliteDictSource';
 import type {OpenSqliteDb, SqliteDb} from './db';
@@ -51,8 +51,10 @@ type Logger = {warn: (msg: string) => void; log?: (msg: string) => void};
 // bucket here; the lazy source handles it as 'absent'/'failed' (Designer
 // ruling 1).
 //
-//   'import' — a descriptor to (re)import. NEW (no audit hit) or
-//              RE-ADD (audit hit -> replacesFilename = prior slug).
+//   'import' — a descriptor to (re)import. NEW (no audit hit) or RE-ADD
+//              (audit hit -> the prior slug is overwritten in place, since
+//              resolveSlugCollision returns the same filename for the same
+//              (name, lang) and upsertImport replaces the audit row).
 //   'open'   — an audit row with no matching descriptor on disk
 //              (already imported; just open its slug DB), OR — F4-FR3 — an
 //              audit-hit descriptor whose sources were KEPT and whose slug
@@ -62,7 +64,7 @@ type Logger = {warn: (msg: string) => void; log?: (msg: string) => void};
 //              'import', the rest skip — Designer flag 1).
 
 export type ReconcileItem =
-  | {bucket: 'import'; descriptor: ImportJobDescriptor; replacesFilename?: string}
+  | {bucket: 'import'; descriptor: ImportJobDescriptor}
   | {bucket: 'open'; row: ImportRow}
   | {bucket: 'skip'; reason: string; descriptor?: ImportJobDescriptor};
 
@@ -185,7 +187,10 @@ export const reconcileImports = (
     ) {
       items.push({bucket: 'open', row: prior});
     } else {
-      items.push({bucket: 'import', descriptor, replacesFilename: prior.filename});
+      // RE-ADD: re-import in place — resolveSlugCollision yields the same
+      // slug filename for the same (name, lang) and upsertImport overwrites
+      // the audit row, so no prior-filename bookkeeping is needed.
+      items.push({bucket: 'import', descriptor});
     }
   }
 
@@ -785,7 +790,18 @@ export const bootstrap = async (
       }
       identities.delete(targetSource);
       imported.delete(targetSource);
-      delete sourceLang[targetSource.name];
+      // sourceLang is keyed by display NAME (M1): only drop the entry when
+      // NO surviving source in the post-splice `allSources` still carries
+      // that name, so deleting one dict never strips the language resolution
+      // of a same-named sibling. Pre-existing limitation, NOT fixed here:
+      // two LIVE dicts that share a display name in different languages
+      // collapse to ONE sourceLang entry (last-writer-wins) — a real fix
+      // would re-key sourceLang by source identity and touch the
+      // popup->thesaurus contract, so it is tracked, not done in this pass.
+      const removedName = targetSource.name;
+      if (!allSources.some(s => s.name === removedName)) {
+        delete sourceLang[removedName];
+      }
       // Recompute the live `sources` in place (the lookup's next snapshot
       // excludes the removed source; an in-flight snapshot is unaffected).
       deriveLiveSources(sources, allSources, identities, persistedPrefs);

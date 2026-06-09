@@ -48,6 +48,16 @@ describe('exportDbs — joinPath / isInsidePluginDir / toDbFiles', () => {
     expect(joinPath('/a/b/', 'c.db')).toBe('/a/b/c.db');
   });
 
+  // P2-1: index.js routes BOTH the F7 delete slug path and the F5 export
+  // slug path through joinPath(PLUGIN_LOCATION, filename) so they can't
+  // diverge. PLUGIN_LOCATION ends in '/', so the result is exactly the
+  // legacy `${PLUGIN_LOCATION}${filename}` string the import path builds.
+  test('joinPath(PLUGIN_LOCATION, filename) === the slug-DB device path', () => {
+    expect(joinPath(PLUGIN_DIR, 'dune-english.en.db')).toBe(
+      `${PLUGIN_DIR}dune-english.en.db`,
+    );
+  });
+
   test('isInsidePluginDir: equal or nested is inside; a sibling prefix is NOT', () => {
     expect(isInsidePluginDir(PLUGIN_DIR, PLUGIN_DIR)).toBe(true);
     expect(isInsidePluginDir(`${PLUGIN_DIR}sub`, PLUGIN_DIR)).toBe(true);
@@ -327,6 +337,37 @@ describe('buildExportableDbs (F5-FR1)', () => {
       resolvePath,
     });
     expect(dbs.map(d => d.filename)).toEqual(['user.db']);
+  });
+
+  // P2-2 (F7 -> F5): a dict deleted via deleteImportedDict drops its audit
+  // row, so the export set (driven off SELECT_IMPORT_ALL) sees the audit
+  // MINUS that dict — base.db + user.db + the remaining imports only. Feed
+  // the post-delete rows and assert the deleted dict is absent.
+  test('a just-deleted dict (audit row gone) is absent from the export set', () => {
+    const twoImports: ImportRow[] = [
+      ...imports,
+      {
+        name: 'Atlas',
+        lang: 'en',
+        entry_count: 5,
+        imported_at: '2026-02-02',
+        filename: 'atlas-world.en.db',
+      },
+    ];
+    // Dune was deleted: its audit row is gone, leaving only Atlas.
+    const afterDelete = twoImports.filter(r => r.name !== 'Dune');
+    const dbs = buildExportableDbs({
+      hasBase: true,
+      hasUser: true,
+      imports: afterDelete,
+      resolvePath,
+    });
+    expect(dbs.map(d => d.filename)).toEqual([
+      'base.db',
+      'user.db',
+      'atlas-world.en.db',
+    ]);
+    expect(dbs.some(d => d.label === 'Dune')).toBe(false);
   });
 });
 

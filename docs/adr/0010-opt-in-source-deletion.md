@@ -46,6 +46,7 @@ So opt-in deletion is **two coupled changes**: gate the delete, AND teach reconc
 - The verify → audit → (conditional) delete ordering and the failure/atomicity contracts are unchanged from ADR-0003/0008.
 - Discovery gains a `forceRefresh?` + `refreshPath?` on the descriptor, driven by a `.refresh` sentinel; `runImport` deletes the sentinel after a verified refresh (regardless of keep).
 - A legacy host that omits the slug-health probe treats every audited slug as unhealthy → a kept set RE-ADDs (the safe fallback), never silently skips an import.
+- Because keep-by-default makes deletion a deliberate, later action (F7's `deleteImportedDict`), each imported slug DB is now **EAGER-opened at bootstrap** (it was lazy) — both the reconciled `'open'` bucket and each detached import retain their open `SqliteDb` handle. F7 needs that live handle to `close()` it before unlinking the file (a never-opened lazy source has nothing to close, but a since-opened one would lock the file on Windows-class hosts). The cost is bounded — exactly **one extra open per imported dict** at boot — and it **degrades to lazy** when the eager open resolves absent / throws (handle `null`, nothing to close, the source still serves lookups lazily).
 
 ## More Information
 

@@ -70,15 +70,15 @@ describe('reconcileImports (pure)', () => {
     expect(items).toEqual([{bucket: 'import', descriptor: descriptor('A', 'en')}]);
   });
 
-  it('RE-ADD (audit hit, keep=false) -> import with replacesFilename = prior slug', () => {
+  it('RE-ADD (audit hit, keep=false) -> import in place (prior slug overwritten)', () => {
     const items = reconcileImports(
       [descriptor('A', 'en')],
       [auditRow('A', 'en', 'a.en.db')],
       NO_KEEP,
     );
-    expect(items).toEqual([
-      {bucket: 'import', descriptor: descriptor('A', 'en'), replacesFilename: 'a.en.db'},
-    ]);
+    // RE-ADD overwrites the same slug + audit row (resolveSlugCollision is
+    // deterministic for the same name+lang), so no prior-filename bookkeeping.
+    expect(items).toEqual([{bucket: 'import', descriptor: descriptor('A', 'en')}]);
   });
 
   it('audit row with no descriptor -> open bucket', () => {
@@ -192,9 +192,7 @@ describe('reconcileImports (F4 keep rule, pure)', () => {
       [auditRow('A', 'en', 'a.en.db')],
       KEEP([]), // slug DB missing
     );
-    expect(items).toEqual([
-      {bucket: 'import', descriptor: descriptor('A', 'en'), replacesFilename: 'a.en.db'},
-    ]);
+    expect(items).toEqual([{bucket: 'import', descriptor: descriptor('A', 'en')}]);
   });
 
   it('audit-hit + forceRefresh -> import even with keep + healthy slug (AC4, FR9)', () => {
@@ -207,9 +205,7 @@ describe('reconcileImports (F4 keep rule, pure)', () => {
       [auditRow('A', 'en', 'a.en.db')],
       KEEP(['a.en.db']),
     );
-    expect(items).toEqual([
-      {bucket: 'import', descriptor: refreshing, replacesFilename: 'a.en.db'},
-    ]);
+    expect(items).toEqual([{bucket: 'import', descriptor: refreshing}]);
   });
 
   it('a CSV forceRefresh descriptor also overrides keep', () => {
@@ -1329,6 +1325,110 @@ describe('bootstrap — F7 splice BEFORE close (in-flight lookup safe, AC6/EC9)'
   });
 });
 
+describe('bootstrap — F7 splice/close ORDER guard (AC6/EC9, P0-1)', () => {
+  // A genuine ordering guard: instrument the live-array splice AND the eager
+  // slug handle's close() onto ONE call-order array, then assert the splice
+  // (which removes the source from the LIVE registry so a NEXT lookup snapshot
+  // can't reach it) runs STRICTLY BEFORE close() (which makes the handle
+  // unusable). If close were moved BEFORE the splice, a lookup snapshotted in
+  // that window would race a closing handle — this test FAILS under that
+  // mutation (verified: swapping the two lines in deleteImportedDict flips the
+  // recorded order and trips the assertion below).
+  it('splices the source out of the live registry BEFORE closing its handle', async () => {
+    const h = await makeHarness({
+      keepSeed: true,
+      withDeletePorts: true,
+      descriptors: [descriptor('Dune', 'en')],
+      auditSeed: async db => {
+        await upsertImport(db, auditRow('Dune', 'en', 'dune.en.db'));
+      },
+    });
+    // Wrap the eager open so the SAME handle records 'close' onto a shared
+    // order array (the harness's closedSlugs only records the filename, not
+    // the interleaving with the splice).
+    const order: string[] = [];
+    const realOpen = h.ports.db.openImportedDb;
+    h.ports.db.openImportedDb = (filename: string) => async () => {
+      const db = await realOpen(filename)();
+      if (db !== null) {
+        const realClose = db.close.bind(db);
+        db.close = async () => {
+          order.push('close');
+          await realClose();
+        };
+      }
+      return db;
+    };
+    const handle = await bootstrap(h.ports);
+    // Instrument the LIVE allSources splice (the array the lookup is derived
+    // from). deleteImportedDict splices THIS reference at step (1).
+    const realSplice = handle.allSources.splice.bind(handle.allSources);
+    handle.allSources.splice = ((start: number, deleteCount?: number) => {
+      order.push('splice');
+      return realSplice(start, deleteCount as number);
+    }) as typeof handle.allSources.splice;
+
+    await handle.deleteImportedDict(DUNE_KEY);
+
+    // Both operations ran, and the splice came FIRST.
+    expect(order).toContain('splice');
+    expect(order).toContain('close');
+    expect(order.indexOf('splice')).toBeLessThan(order.indexOf('close'));
+  });
+});
+
+describe('bootstrap — F7 same-named survivor keeps its language (M1)', () => {
+  // sourceLang is keyed by display NAME. Two imported dicts that share the
+  // SAME display name in DIFFERENT languages must not let deleting one strip
+  // the survivor's language resolution. (A single LIVE sourceLang entry is a
+  // tracked pre-existing limitation; this guards the DELETE path.)
+  it('deleting one of two same-named dicts preserves the survivor sourceLang', async () => {
+    const h = await makeHarness({
+      keepSeed: true,
+      withDeletePorts: true,
+      auditSeed: async db => {
+        // Same display name "Atlas", different languages -> distinct slug
+        // files + distinct dict_prefs identities, but ONE sourceLang key.
+        await upsertImport(db, auditRow('Atlas', 'en', 'atlas.en.db'));
+        await upsertImport(db, auditRow('Atlas', 'de', 'atlas.de.db'));
+      },
+    });
+    const handle = await bootstrap(h.ports, {warn: jest.fn()});
+    // Both opened; the name-keyed sourceLang carries one Atlas entry.
+    expect(handle.allSources.map(s => s.name)).toEqual([
+      'User',
+      'Atlas',
+      'Atlas',
+      'WordNet',
+    ]);
+    expect(handle.sourceLang.Atlas).toBeDefined();
+
+    // Delete the German Atlas; the English Atlas survives in allSources.
+    const res = await handle.deleteImportedDict(identityKey('Atlas', 'de'));
+    expect(res.ok).toBe(true);
+    expect(handle.allSources.filter(s => s.name === 'Atlas')).toHaveLength(1);
+    // The survivor's language resolution is PRESERVED, not dropped (M1): a
+    // live Atlas still exists, so the name-keyed entry must remain.
+    expect(handle.sourceLang.Atlas).toBeDefined();
+  });
+
+  it('deleting the LAST same-named dict drops the sourceLang entry', async () => {
+    const h = await makeHarness({
+      keepSeed: true,
+      withDeletePorts: true,
+      descriptors: [descriptor('Solo', 'en')],
+      auditSeed: async db => {
+        await upsertImport(db, auditRow('Solo', 'en', 'solo.en.db'));
+      },
+    });
+    const handle = await bootstrap(h.ports);
+    expect(handle.sourceLang.Solo).toBe('en');
+    await handle.deleteImportedDict(identityKey('Solo', 'en'));
+    // No surviving source carries the name -> the entry IS removed.
+    expect(handle.sourceLang.Solo).toBeUndefined();
+  });
+});
+
 describe('bootstrap — F7 no resurrection (AC2/FR4)', () => {
   it('after delete + a 2nd bootstrap whose discovery is empty, Dune stays gone', async () => {
     // 1st session: Dune kept+open, delete removes the source set (modelled
@@ -1509,6 +1609,166 @@ describe('bootstrap — F7 idempotent / partial delete (AC5/FR5/EC10)', () => {
     const res = await handle.deleteImportedDict('Anything en');
     expect(res.ok).toBe(true);
     expect(res.removed.audit).toBe(false);
+  });
+});
+
+describe('bootstrap — F7 x F3 cross-feature delete', () => {
+  const ATLAS_KEY = identityKey('Atlas', 'en');
+
+  // P1-1: delete one imported dict while ANOTHER is disabled AND the order
+  // was customised. The disabled dict must stay in allSources (re-enableable
+  // with no reopen) and the reorder must survive the delete.
+  it('delete-while-disabled+reordered: retains the disabled dict + the order', async () => {
+    const h = await makeHarness({
+      keepSeed: true,
+      withDeletePorts: true,
+      descriptors: [descriptor('Dune', 'en'), descriptor('Atlas', 'en')],
+      auditSeed: async db => {
+        await upsertImport(db, auditRow('Dune', 'en', 'dune.en.db'));
+        await upsertImport(db, auditRow('Atlas', 'en', 'atlas.en.db'));
+      },
+      // Atlas DISABLED; WordNet moved to the TOP (reorder).
+      prefsSeed: async db => {
+        await setDictPrefs(db, [
+          {prefKey: 'WordNet', name: 'WordNet', enabled: true, sortOrder: 0, removable: false},
+          {prefKey: DUNE_KEY, name: 'Dune', enabled: true, sortOrder: 1, removable: true},
+          {prefKey: ATLAS_KEY, name: 'Atlas', enabled: false, sortOrder: 2, removable: true},
+          {prefKey: 'User', name: 'User', enabled: true, sortOrder: 3, removable: false},
+        ]);
+      },
+    });
+    const handle = await bootstrap(h.ports);
+    // Live `sources`: reordered, Atlas excluded (disabled), Dune present.
+    expect(handle.sources.map(s => s.name)).toEqual(['WordNet', 'Dune', 'User']);
+    // Full registry holds every opened source (natural order).
+    expect(handle.allSources.map(s => s.name)).toEqual([
+      'User',
+      'Dune',
+      'Atlas',
+      'WordNet',
+    ]);
+
+    const res = await handle.deleteImportedDict(DUNE_KEY);
+    expect(res.ok).toBe(true);
+    // Atlas RETAINED (still disabled), Dune gone from the full registry.
+    expect(handle.allSources.map(s => s.name)).toEqual(['User', 'Atlas', 'WordNet']);
+    // The reorder is PRESERVED (WordNet still on top); Atlas still excluded.
+    expect(handle.sources.map(s => s.name)).toEqual(['WordNet', 'User']);
+  });
+
+  // P1-2: import a fresh dict AFTER a reorder pref, then delete that
+  // freshly-imported (detached-import-record path, not the boot 'open'
+  // bucket) dict — proving the detached record is deletable.
+  it('import-after-reorder, then delete the fresh dict (detached-record path)', async () => {
+    const h = await makeHarness({
+      keepSeed: true,
+      withDeletePorts: true,
+      descriptors: [descriptor('Fresh', 'en')],
+      importOutcome: () => ({ok: true, filename: 'fresh.en.db'}),
+      // A reorder pref (WordNet on top) persisted BEFORE the import lands.
+      prefsSeed: async db => {
+        await setDictPrefs(db, [
+          {prefKey: 'WordNet', name: 'WordNet', enabled: true, sortOrder: 0, removable: false},
+          {prefKey: 'User', name: 'User', enabled: true, sortOrder: 1, removable: false},
+        ]);
+      },
+    });
+    const handle = await bootstrap(h.ports);
+    await handle.importsSettled;
+    // Fresh spliced into the full registry; it came from the DETACHED import
+    // path (NO audit at boot -> reconcile 'import' -> detached splice), NOT
+    // the boot 'open' bucket.
+    expect(handle.allSources.map(s => s.name)).toContain('Fresh');
+    // runImport (mocked here) would have written the audit row on a verified
+    // import; seed it now so the delete's audit-drop runs against a real row
+    // (the delete resolves name/lang/filename from the LIVE detached record).
+    await upsertImport(h.userDb, auditRow('Fresh', 'en', 'fresh.en.db'));
+
+    const res = await handle.deleteImportedDict(identityKey('Fresh', 'en'));
+    expect(res.ok).toBe(true);
+    // The detached-import RECORD was deletable: slug file + audit removed and
+    // its eager handle closed — proving the detached path (not just 'open').
+    expect(res.removed.slugDb).toBe(true);
+    expect(res.removed.audit).toBe(true);
+    expect(h.closedSlugs).toContain('fresh.en.db');
+    expect(handle.allSources.map(s => s.name)).not.toContain('Fresh');
+  });
+
+  // P1-3: delete with ALL sources disabled. The live `sources` is a valid
+  // empty set; delete drops only the target from allSources; re-enabling the
+  // survivors then recomputes correctly.
+  it('all-disabled-then-delete: empty-but-valid live set, survivors re-enable', async () => {
+    const h = await makeHarness({
+      keepSeed: true,
+      withDeletePorts: true,
+      descriptors: [descriptor('Dune', 'en')],
+      auditSeed: async db => {
+        await upsertImport(db, auditRow('Dune', 'en', 'dune.en.db'));
+      },
+      // EVERY source disabled.
+      prefsSeed: async db => {
+        await setDictPrefs(db, [
+          {prefKey: 'User', name: 'User', enabled: false, sortOrder: 0, removable: false},
+          {prefKey: DUNE_KEY, name: 'Dune', enabled: false, sortOrder: 1, removable: true},
+          {prefKey: 'WordNet', name: 'WordNet', enabled: false, sortOrder: 2, removable: false},
+        ]);
+      },
+    });
+    const handle = await bootstrap(h.ports);
+    expect(handle.sources).toEqual([]);
+
+    const res = await handle.deleteImportedDict(DUNE_KEY);
+    expect(res.ok).toBe(true);
+    // Live set stays empty-but-valid; allSources lost ONLY Dune.
+    expect(handle.sources).toEqual([]);
+    expect(handle.allSources.map(s => s.name)).toEqual(['User', 'WordNet']);
+
+    // Re-enabling the survivors recomputes the live set correctly (no Dune).
+    await handle.setDictPrefs([
+      {prefKey: 'User', name: 'User', enabled: true, sortOrder: 0, removable: false},
+      {prefKey: 'WordNet', name: 'WordNet', enabled: true, sortOrder: 1, removable: false},
+    ]);
+    expect(handle.sources.map(s => s.name)).toEqual(['User', 'WordNet']);
+  });
+
+  // P1-4: keep=false — runImport deletes the source set, so the delete finds
+  // NO descriptor on disk to remove. removed.sources===false is a SUCCESS
+  // (not a failure), and a 2nd bootstrap doesn't resurrect the dict.
+  it('keep=false fresh import -> delete: removed.sources false is ok:true, no resurrect', async () => {
+    // keep=false: the import deletes its sources, so discovery is empty AFTER
+    // the import (model it with a one-shot descriptor list).
+    let discovered: ImportJobDescriptor[] = [descriptor('Fresh', 'en')];
+    const h = await makeHarness({
+      keepSeed: false,
+      withDeletePorts: true,
+      importOutcome: () => ({ok: true, filename: 'fresh.en.db'}),
+    });
+    h.ports.discover = async () => discovered;
+    const handle = await bootstrap(h.ports);
+    await handle.importsSettled;
+    // keep=false was threaded into the import gate.
+    expect(h.keepSourcesSeen).toEqual([false]);
+    // runImport (mocked) would have written the audit row on a verified
+    // import; seed it so the delete drops a real row. The detached record
+    // resolves name/lang/filename, so the delete proceeds either way.
+    await upsertImport(h.userDb, auditRow('Fresh', 'en', 'fresh.en.db'));
+    // The source set is gone on disk (keep=false): empty discovery now.
+    discovered = [];
+
+    const res = await handle.deleteImportedDict(identityKey('Fresh', 'en'));
+    // No descriptor to remove -> removed.sources false, but that is SUCCESS.
+    expect(res.ok).toBe(true);
+    expect(res.removed.sources).toBe(false);
+    expect(res.removed.audit).toBe(true);
+    expect(res.removed.slugDb).toBe(true);
+    expect(await findImportByNameLang(h.userDb, 'Fresh', 'en')).toBeNull();
+
+    // 2nd bootstrap: no descriptor (sources deleted) + no audit row -> Fresh
+    // does NOT resurrect.
+    const handle2 = await bootstrap(h.ports);
+    await handle2.importsSettled;
+    expect(handle2.allSources.map(s => s.name)).not.toContain('Fresh');
+    expect(handle2.sources.map(s => s.name)).toEqual(['User', 'WordNet']);
   });
 });
 
