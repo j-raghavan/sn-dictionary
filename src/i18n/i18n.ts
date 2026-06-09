@@ -42,8 +42,7 @@ export type StringId =
   | 'popup.save'
   | 'popup.addEmptyError'
   | 'popup.addFailedError'
-  | 'popup.copyWord'
-  | 'popup.copyText'
+  | 'popup.copy'
   | 'popup.copied'
   | 'popup.copyFailed'
   | 'settings.open'
@@ -96,8 +95,7 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.save': 'Save',
     'popup.addEmptyError': 'Enter a headword and a definition.',
     'popup.addFailedError': 'Could not save — please try again.',
-    'popup.copyWord': 'Copy word',
-    'popup.copyText': 'Copy',
+    'popup.copy': 'Copy',
     'popup.copied': 'Copied',
     'popup.copyFailed': "Couldn't copy",
     'settings.open': 'Settings',
@@ -149,8 +147,7 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.save': '保存',
     'popup.addEmptyError': '请输入词条和释义。',
     'popup.addFailedError': '保存失败，请重试。',
-    'popup.copyWord': '复制单词',
-    'popup.copyText': '复制',
+    'popup.copy': '复制',
     'popup.copied': '已复制',
     'popup.copyFailed': '复制失败',
     'settings.open': '设置',
@@ -200,8 +197,7 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.save': '儲存',
     'popup.addEmptyError': '請輸入詞條和釋義。',
     'popup.addFailedError': '儲存失敗，請重試。',
-    'popup.copyWord': '複製單字',
-    'popup.copyText': '複製',
+    'popup.copy': '複製',
     'popup.copied': '已複製',
     'popup.copyFailed': '複製失敗',
     'settings.open': '設定',
@@ -251,8 +247,7 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.save': '保存',
     'popup.addEmptyError': '見出し語と定義を入力してください。',
     'popup.addFailedError': '保存できませんでした。もう一度お試しください。',
-    'popup.copyWord': '単語をコピー',
-    'popup.copyText': 'コピー',
+    'popup.copy': 'コピー',
     'popup.copied': 'コピーしました',
     'popup.copyFailed': 'コピーできませんでした',
     'settings.open': '設定',
@@ -304,8 +299,7 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.save': 'บันทึก',
     'popup.addEmptyError': 'กรุณาใส่คำหลักและคำจำกัดความ',
     'popup.addFailedError': 'บันทึกไม่สำเร็จ โปรดลองอีกครั้ง',
-    'popup.copyWord': 'คัดลอกคำ',
-    'popup.copyText': 'คัดลอก',
+    'popup.copy': 'คัดลอก',
     'popup.copied': 'คัดลอกแล้ว',
     'popup.copyFailed': 'คัดลอกไม่ได้',
     'settings.open': 'การตั้งค่า',
@@ -357,8 +351,7 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.save': 'Opslaan',
     'popup.addEmptyError': 'Voer een trefwoord en een definitie in.',
     'popup.addFailedError': 'Opslaan mislukt — probeer opnieuw.',
-    'popup.copyWord': 'Woord kopiëren',
-    'popup.copyText': 'Kopiëren',
+    'popup.copy': 'Kopiëren',
     'popup.copied': 'Gekopieerd',
     'popup.copyFailed': 'Kopiëren mislukt',
     'settings.open': 'Instellingen',
@@ -412,8 +405,7 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.save': 'Speichern',
     'popup.addEmptyError': 'Bitte Stichwort und Definition eingeben.',
     'popup.addFailedError': 'Speichern fehlgeschlagen — bitte erneut versuchen.',
-    'popup.copyWord': 'Wort kopieren',
-    'popup.copyText': 'Kopieren',
+    'popup.copy': 'Kopieren',
     'popup.copied': 'Kopiert',
     'popup.copyFailed': 'Kopieren fehlgeschlagen',
     'settings.open': 'Einstellungen',

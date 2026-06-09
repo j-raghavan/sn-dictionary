@@ -153,6 +153,9 @@ export default function SettingsPanel(_props: {
   };
 
   const anyEnabled = prefs.some(pref => pref.enabled);
+  // Reorder controls only make sense with ≥2 dictionaries; with one
+  // dictionary the row is just a checkbox (nothing to reorder).
+  const multiDict = prefs.length > 1;
 
   return (
     <View style={styles.card}>
@@ -167,68 +170,64 @@ export default function SettingsPanel(_props: {
         </Pressable>
       </View>
 
-      <Text style={styles.settingsSectionTitle}>
-        {t('settings.dictionaries')}
-      </Text>
-
-      <ScrollView>
+      <ScrollView style={styles.settingsBody}>
+        {/* DICTIONARIES — a checkbox per dict (tap the row to enable/
+            disable), circular up/down to reorder (only with ≥2), Remove on
+            imported dicts. */}
+        <Text style={styles.settingsSectionTitle}>
+          {t('settings.dictionaries')}
+        </Text>
         {prefs.map((pref, index) => (
           <View key={pref.prefKey} style={styles.dictRow}>
-            <View style={styles.dictRowLabel}>
+            <Pressable
+              accessibilityRole="checkbox"
+              accessibilityState={{checked: pref.enabled}}
+              accessibilityLabel={
+                pref.enabled
+                  ? `${t('settings.disableDict')}: ${pref.name}`
+                  : `${t('settings.enableDict')}: ${pref.name}`
+              }
+              onPress={() => toggle(index)}
+              style={styles.dictToggleTap}>
+              <Text style={styles.dictCheckbox}>
+                {pref.enabled ? '☑' : '☐'}
+              </Text>
               <Text
                 style={
                   pref.enabled
                     ? styles.dictName
                     : [styles.dictName, styles.dictNameDisabled]
-                }>
+                }
+                numberOfLines={1}>
                 {pref.name}
               </Text>
-            </View>
+            </Pressable>
             <View style={styles.dictRowControls}>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={
-                  pref.enabled
-                    ? `${t('settings.disableDict')}: ${pref.name}`
-                    : `${t('settings.enableDict')}: ${pref.name}`
-                }
-                onPress={() => toggle(index)}
-                style={styles.dictControl}>
-                <Text style={styles.dictControlLabel}>
-                  {pref.enabled
-                    ? t('settings.disableDict')
-                    : t('settings.enableDict')}
-                </Text>
-              </Pressable>
-              {index > 0 ? (
+              {multiDict && index > 0 ? (
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel={`${t('settings.moveUp')}: ${pref.name}`}
                   onPress={() => move(index, -1)}
-                  style={styles.dictControl}>
-                  <Text style={styles.dictControlLabel}>↑</Text>
+                  style={styles.dictArrowButton}>
+                  <Text style={styles.dictArrowLabel}>↑</Text>
                 </Pressable>
-              ) : (
-                <View style={styles.dictControlSpacer} />
-              )}
-              {index < prefs.length - 1 ? (
+              ) : null}
+              {multiDict && index < prefs.length - 1 ? (
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel={`${t('settings.moveDown')}: ${pref.name}`}
                   onPress={() => move(index, 1)}
-                  style={styles.dictControl}>
-                  <Text style={styles.dictControlLabel}>↓</Text>
+                  style={styles.dictArrowButton}>
+                  <Text style={styles.dictArrowLabel}>↓</Text>
                 </Pressable>
-              ) : (
-                <View style={styles.dictControlSpacer} />
-              )}
+              ) : null}
               {pref.removable ? (
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel={`${t('settings.removeDict')}: ${pref.name}`}
                   onPress={() => removeDict(pref)}
-                  style={styles.dictControl}>
-                  <Text style={styles.dictControlLabel}>
+                  style={styles.removeButton}>
+                  <Text style={styles.removeButtonLabel}>
                     {t('settings.removeDict')}
                   </Text>
                 </Pressable>
@@ -236,41 +235,35 @@ export default function SettingsPanel(_props: {
             </View>
           </View>
         ))}
-      </ScrollView>
-
-      {prefs.length > 0 && !anyEnabled ? (
-        <Text
-          accessibilityRole="alert"
-          style={styles.settingsWarning}>
-          {t('settings.allDisabled')}
-        </Text>
-      ) : null}
-
-      <Text style={styles.settingsSectionTitle}>{t('settings.sources')}</Text>
-      <View style={styles.settingsToggleRow}>
-        <View style={styles.settingsToggleLabelCol}>
-          <Text style={styles.settingsToggleLabel}>
-            {t('settings.keepSources')}
+        {prefs.length > 0 && !anyEnabled ? (
+          <Text accessibilityRole="alert" style={styles.settingsWarning}>
+            {t('settings.allDisabled')}
           </Text>
-          <Text style={styles.settingsToggleHint}>
-            {t('settings.keepSourcesHint')}
-          </Text>
-        </View>
+        ) : null}
+
+        {/* IMPORTS — keep-vs-delete the dropped source files after import. */}
+        <Text style={styles.settingsSectionTitle}>{t('settings.sources')}</Text>
         <Pressable
-          accessibilityRole="switch"
+          accessibilityRole="checkbox"
           accessibilityState={{checked: keepSources}}
           accessibilityLabel={t('settings.keepSources')}
           onPress={toggleKeepSources}
-          style={styles.dictControl}>
-          <Text style={styles.dictControlLabel}>
-            {keepSources ? t('common.keep') : t('common.delete')}
-          </Text>
+          style={styles.dictToggleTap}>
+          <Text style={styles.dictCheckbox}>{keepSources ? '☑' : '☐'}</Text>
+          <View style={styles.settingsToggleLabelCol}>
+            <Text style={styles.settingsToggleLabel}>
+              {t('settings.keepSources')}
+            </Text>
+            <Text style={styles.settingsToggleHint}>
+              {t('settings.keepSourcesHint')}
+            </Text>
+          </View>
         </Pressable>
-      </View>
 
-      {/* F5: DB export. The section renders null when the engine hasn't
-          wired the export ports (engine-agnostic; guarded like F7). */}
-      <ExportSection rootParent={exportRootParent()} />
+        {/* BACKUP — export all DBs. ExportSection renders its own section
+            title + controls, or null when the export ports aren't wired. */}
+        <ExportSection rootParent={exportRootParent()} />
+      </ScrollView>
     </View>
   );
 }

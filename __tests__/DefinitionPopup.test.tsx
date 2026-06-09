@@ -1342,21 +1342,19 @@ describe('DefinitionPopup — add-word form', () => {
 });
 
 describe('DefinitionPopup — copy to clipboard', () => {
-  test('Copy word writes the headword and shows the "Copied" status', async () => {
+  test('Copy writes the word + definition and shows the "Copied" status', async () => {
     const tree = renderPopup();
     act(() => showDefinition(found('WordNet', 'rain', 'to fall as water')));
-    await act(async () =>
-      findByLabel(tree, 'Copy word')[0].props.onPress(),
-    );
-    expect(copyMock).toHaveBeenCalledWith('rain');
+    await act(async () => findByLabel(tree, 'Copy')[0].props.onPress());
+    expect(copyMock).toHaveBeenCalledWith('rain\nto fall as water');
     expect(collectText(tree)).toContain('Copied');
   });
 
-  test('Copy writes the active tab\'s reduced definition text', async () => {
+  test('Copy on a single-hit definition copies the word then the body', async () => {
     const tree = renderPopup();
     act(() => showDefinition(found('User', 'apple', 'a fruit')));
     await act(async () => findByLabel(tree, 'Copy')[0].props.onPress());
-    expect(copyMock).toHaveBeenCalledWith('a fruit');
+    expect(copyMock).toHaveBeenCalledWith('apple\na fruit');
   });
 
   test('a failed copy shows the failure status, not "Copied"', async () => {
@@ -1369,9 +1367,7 @@ describe('DefinitionPopup — copy to clipboard', () => {
     );
     const tree = renderPopup();
     act(() => showDefinition(found('WordNet', 'rain', 'to fall as water')));
-    await act(async () =>
-      findByLabel(tree, 'Copy word')[0].props.onPress(),
-    );
+    await act(async () => findByLabel(tree, 'Copy')[0].props.onPress());
     const text = collectText(tree);
     expect(text).toContain("Couldn't copy");
     expect(text).not.toContain('Copied');
@@ -1381,25 +1377,20 @@ describe('DefinitionPopup — copy to clipboard', () => {
     copyMock.mockImplementation(() => Promise.reject(new Error('boom')));
     const tree = renderPopup();
     act(() => showDefinition(found('WordNet', 'rain', 'to fall as water')));
-    await act(async () =>
-      findByLabel(tree, 'Copy word')[0].props.onPress(),
-    );
+    await act(async () => findByLabel(tree, 'Copy')[0].props.onPress());
     expect(collectText(tree)).toContain("Couldn't copy");
   });
 
-  test('no copy actions in the not-found state (nothing to copy)', () => {
+  test('no Copy action in the not-found state (nothing to copy)', () => {
     const tree = renderPopup();
     act(() => showDefinition(notFound('photon')));
-    expect(findByLabel(tree, 'Copy word')).toHaveLength(0);
     expect(findByLabel(tree, 'Copy')).toHaveLength(0);
   });
 
   test('the copy status clears when a new word is looked up', async () => {
     const tree = renderPopup();
     act(() => showDefinition(found('WordNet', 'rain', 'to fall as water')));
-    await act(async () =>
-      findByLabel(tree, 'Copy word')[0].props.onPress(),
-    );
+    await act(async () => findByLabel(tree, 'Copy')[0].props.onPress());
     expect(collectText(tree)).toContain('Copied');
     act(() => showDefinition(found('WordNet', 'snow', 'frozen rain')));
     expect(collectText(tree)).not.toContain('Copied');
@@ -1418,7 +1409,7 @@ const pressTab = (tree: ReactTestRenderer, label: string) =>
   )[0].props.onPress();
 
 describe('DefinitionPopup — copy wiring (tab / multi-source / format)', () => {
-  test('Copy on the Thesaurus tab copies the assembled synonyms/antonyms', async () => {
+  test('Copy on the Thesaurus tab copies the word + synonyms/antonyms', async () => {
     setPopupActions(
       fakeActions(async () => ({
         lang: 'en',
@@ -1430,7 +1421,9 @@ describe('DefinitionPopup — copy wiring (tab / multi-source / format)', () => 
     await act(async () => pressTab(tree, 'Thesaurus'));
     await flush();
     await act(async () => findByLabel(tree, 'Copy')[0].props.onPress());
-    expect(copyMock).toHaveBeenCalledWith('Synonyms: glad\nAntonyms: sad');
+    expect(copyMock).toHaveBeenCalledWith(
+      'happy\nSynonyms: glad\nAntonyms: sad',
+    );
   });
 
   test('the copy status clears when switching tabs', async () => {
@@ -1442,16 +1435,14 @@ describe('DefinitionPopup — copy wiring (tab / multi-source / format)', () => 
     );
     const tree = renderPopup();
     act(() => showDefinition(wordnetHit('happy', 'feeling joy')));
-    await act(async () =>
-      findByLabel(tree, 'Copy word')[0].props.onPress(),
-    );
+    await act(async () => findByLabel(tree, 'Copy')[0].props.onPress());
     expect(collectText(tree)).toContain('Copied');
     await act(async () => pressTab(tree, 'Thesaurus'));
     await flush();
     expect(collectText(tree)).not.toContain('Copied');
   });
 
-  test('Copy on a multi-source result copies each badged section', async () => {
+  test('Copy on a multi-source result copies the word + each badged section', async () => {
     setPopupActions(
       fakeActions(async () => ({lang: 'en', omw: {synonyms: [], antonyms: []}})),
     );
@@ -1478,11 +1469,11 @@ describe('DefinitionPopup — copy wiring (tab / multi-source / format)', () => 
     );
     await act(async () => findByLabel(tree, 'Copy')[0].props.onPress());
     expect(copyMock).toHaveBeenCalledWith(
-      'WordNet\na fruit\n\nDune\na house word',
+      'apple\nWordNet\na fruit\n\nDune\na house word',
     );
   });
 
-  test('on the Thesaurus tab with no thesaurus, "Copy" hides but "Copy word" stays', async () => {
+  test('on the Thesaurus tab with no thesaurus, Copy still copies the word', async () => {
     setPopupActions(
       fakeActions(async () => ({lang: 'und', omw: {synonyms: [], antonyms: []}})),
     );
@@ -1490,18 +1481,20 @@ describe('DefinitionPopup — copy wiring (tab / multi-source / format)', () => 
     act(() => showDefinition(wordnetHit('xyzzy', 'no known relations')));
     await act(async () => pressTab(tree, 'Thesaurus'));
     await flush();
-    expect(findByLabel(tree, 'Copy word')).toHaveLength(1);
-    expect(findByLabel(tree, 'Copy')).toHaveLength(0);
+    // The single Copy stays (it always copies at least the word).
+    expect(findByLabel(tree, 'Copy')).toHaveLength(1);
+    await act(async () => findByLabel(tree, 'Copy')[0].props.onPress());
+    expect(copyMock).toHaveBeenCalledWith('xyzzy');
   });
 
-  test('Copy of an html-format definition copies exactly the reduced text', async () => {
+  test('Copy of an html-format definition copies the word + the reduced text', async () => {
     const html = '<div>noun<br>a domestic animal</div>';
     const tree = renderPopup();
     act(() => showDefinition(found('Dict', 'cat', html, 'html')));
     await act(async () => findByLabel(tree, 'Copy')[0].props.onPress());
     const copied = copyMock.mock.calls[copyMock.mock.calls.length - 1][0];
     expect(copied).not.toMatch(/[<>]/);
-    expect(copied).toBe(htmlToPlainText(html));
+    expect(copied).toBe(`cat\n${htmlToPlainText(html)}`);
   });
 });
 

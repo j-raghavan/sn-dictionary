@@ -210,10 +210,17 @@ export const popupStyles = StyleSheet.create({
     flexShrink: 1,
     marginRight: 12,
   },
+  // Right-aligned header control cluster: the font-size stepper, then the
+  // settings gear pinned to the top-right corner. space-between in headerRow
+  // pushes this whole group to the right edge.
+  headerControls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
   // Settings gear button — same 32×32 circular bordered touch target as
   // the font-size −/+ glyph buttons (crisp on e-ink; no emoji, no PNG).
-  // marginRight nudges it left of the stepper so the header reads
-  // [headword] … [⚙][−][A][+].
+  // marginLeft separates it from the stepper; it is the rightmost element
+  // so the header reads [headword] … [−][A][+][⚙] — gear in the corner.
   gearButton: {
     width: 32,
     height: 32,
@@ -222,7 +229,7 @@ export const popupStyles = StyleSheet.create({
     borderColor: '#000000',
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 6,
+    marginLeft: 10,
   },
   gearLabel: {
     fontSize: 18,
@@ -264,85 +271,109 @@ export const popupStyles = StyleSheet.create({
   },
   // --- F3 dictionary manager -----------------------------------------
   // Section heading above the dictionary list.
+  // Section header inside the Settings panel — a small uppercase label with
+  // a hairline divider, grouping the panel into Dictionaries / Import
+  // sources / Backup. Shared by SettingsPanel + ExportSection.
   settingsSectionTitle: {
-    marginTop: 16,
-    marginBottom: 4,
-    fontSize: 16,
+    marginTop: 18,
+    marginBottom: 6,
+    paddingBottom: 4,
+    fontSize: 13,
     fontWeight: '700',
-    color: '#000000',
+    letterSpacing: 1,
+    color: '#555555',
+    borderBottomWidth: 1,
+    borderBottomColor: '#000000',
   },
-  // One dictionary row: name on the left, controls on the right.
+  // Scrollable settings body, below the fixed title + Back header.
+  settingsBody: {
+    marginTop: 4,
+  },
+  // One dictionary row: a tappable checkbox+name on the left, the reorder /
+  // remove controls on the right.
   dictRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: '#DDDDDD',
+    paddingVertical: 8,
   },
-  // Name + language badge column (takes the remaining width).
-  dictRowLabel: {
-    flex: 1,
+  // The whole checkbox + name is one tap target (toggles enable/disable).
+  dictToggleTap: {
     flexDirection: 'row',
     alignItems: 'center',
+    flexShrink: 1,
+    paddingVertical: 4,
   },
-  // Disabled dicts render dimmed (the toggle still flips them back) — the
-  // text itself, NOT a hidden row (hide-don't-grey applies to the move
-  // arrows, not to enablement which needs a visible off-state).
-  dictName: {
-    fontSize: 16,
+  // ☑ / ☐ enable glyph — a dingbat (crisp on e-ink), not an emoji.
+  dictCheckbox: {
+    fontSize: 22,
     color: '#000000',
+    marginRight: 12,
+    lineHeight: 24,
+  },
+  // A disabled dict greys out; the checkbox shows the off-state.
+  dictName: {
+    fontSize: 17,
+    color: '#000000',
+    flexShrink: 1,
   },
   dictNameDisabled: {
     color: '#999999',
   },
-  // The control cluster on the right (toggle + the two move arrows).
+  // The right-side control cluster (move arrows + Remove).
   dictRowControls: {
     flexDirection: 'row',
     alignItems: 'center',
   },
-  // A bordered tappable control (toggle + move arrows share the look).
-  dictControl: {
-    marginLeft: 6,
+  // Circular move-up/down buttons — same 32×32 e-ink target as the
+  // font-size stepper. Hidden (not greyed) at the top/bottom bound and
+  // entirely when there is only one dictionary.
+  dictArrowButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#000000',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 8,
+  },
+  dictArrowLabel: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#000000',
+    lineHeight: 20,
+  },
+  // Remove (imported dicts only) — a bordered text button, set slightly
+  // apart so it isn't mistaken for a move arrow.
+  removeButton: {
+    marginLeft: 14,
     paddingVertical: 6,
     paddingHorizontal: 12,
     borderWidth: 1,
     borderColor: '#000000',
     borderRadius: 4,
   },
-  dictControlLabel: {
+  removeButtonLabel: {
     fontSize: 14,
     color: '#000000',
   },
-  // Fixed-width spacer that reserves the move-arrow slot on the top/bottom
-  // rows where one direction is hidden, so rows don't reflow (hide-don't-
-  // grey without a layout jump).
-  dictControlSpacer: {
-    marginLeft: 6,
-    width: 44,
-  },
   // The all-disabled warning banner (F3-FR5).
   settingsWarning: {
-    marginTop: 12,
+    marginTop: 10,
+    marginBottom: 4,
     fontSize: 14,
     color: '#000000',
     fontWeight: '700',
   },
-  // --- F4 keep-sources toggle ----------------------------------------
-  // One settings row: label + hint on the left, a toggle control on the
-  // right (same bordered-control look as the dictionary manager).
-  settingsToggleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 10,
-  },
+  // --- F4 keep-sources toggle (a checkbox row) -----------------------
+  // The label + hint sit to the right of the shared checkbox glyph.
   settingsToggleLabelCol: {
-    flex: 1,
+    flexShrink: 1,
     paddingRight: 12,
   },
   settingsToggleLabel: {
-    fontSize: 16,
+    fontSize: 17,
     color: '#000000',
   },
   settingsToggleHint: {

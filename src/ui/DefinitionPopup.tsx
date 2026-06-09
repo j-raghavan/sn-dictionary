@@ -369,6 +369,11 @@ export default function DefinitionPopup(): React.JSX.Element {
     thesaurus: thesaurusForHeadword,
     showSourceBadges,
   });
+  // A single "Copy" copies the whole entry: the headword followed by the
+  // active tab's visible text (definition or thesaurus). When the active
+  // tab has nothing (e.g. an empty thesaurus), it falls back to the word.
+  const copyAllText =
+    copyActiveText !== '' ? `${headerWord}\n${copyActiveText}` : headerWord;
   const hasThesaurus =
     thesaurusForHeadword !== null &&
     (thesaurusForHeadword.synonyms.length > 0 ||
@@ -385,23 +390,9 @@ export default function DefinitionPopup(): React.JSX.Element {
           <Text style={[styles.word, styles.headerWordWrap]} numberOfLines={1}>
             {headerWord}
           </Text>
-          {/* Settings gear — shown in every result state (incl. not-found
-              / loading), sitting left of the font-size stepper. Captures
-              the active tab so Back restores it (F1-AC2). */}
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={t('settings.open')}
-            onPress={() =>
-              showSettings({
-                ocrLabel: state.ocrLabel,
-                result: state.result,
-                editable: state.editable,
-                activeTab: tab,
-              })
-            }
-            style={styles.gearButton}>
-            <Text style={styles.gearLabel}>⚙</Text>
-          </Pressable>
+          {/* Right-aligned control cluster: the font-size stepper, then the
+              settings gear pinned to the top-right corner of the card. */}
+          <View style={styles.headerControls}>
           <View style={styles.fontSizeRow}>
             <Pressable
               accessibilityRole="button"
@@ -440,6 +431,21 @@ export default function DefinitionPopup(): React.JSX.Element {
                 +
               </Text>
             </Pressable>
+          </View>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={t('settings.open')}
+            onPress={() =>
+              showSettings({
+                ocrLabel: state.ocrLabel,
+                result: state.result,
+                editable: state.editable,
+                activeTab: tab,
+              })
+            }
+            style={styles.gearButton}>
+            <Text style={styles.gearLabel}>⚙</Text>
+          </Pressable>
           </View>
         </View>
         {headerPhonetic ? (
@@ -653,22 +659,15 @@ export default function DefinitionPopup(): React.JSX.Element {
         </ScrollView>
         <View style={styles.footerRow}>
           <View style={styles.copyActions}>
+            {/* One Copy action — copies the word + the visible definition/
+                thesaurus text in one go. Hidden when there's nothing to copy. */}
             {hits.length > 0 ? (
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel={t('popup.copyWord')}
-                onPress={() => runCopy(headerWord)}
+                accessibilityLabel={t('popup.copy')}
+                onPress={() => runCopy(copyAllText)}
                 style={styles.copyButton}>
-                <Text style={styles.copyLabel}>{t('popup.copyWord')}</Text>
-              </Pressable>
-            ) : null}
-            {copyActiveText !== '' ? (
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={t('popup.copyText')}
-                onPress={() => runCopy(copyActiveText)}
-                style={styles.copyButton}>
-                <Text style={styles.copyLabel}>{t('popup.copyText')}</Text>
+                <Text style={styles.copyLabel}>{t('popup.copy')}</Text>
               </Pressable>
             ) : null}
             {copyStatus !== 'idle' ? (

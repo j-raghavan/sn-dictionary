@@ -70,8 +70,7 @@ describe('t (popup string lookup)', () => {
       'popup.save',
       'popup.addEmptyError',
       'popup.addFailedError',
-      'popup.copyWord',
-      'popup.copyText',
+      'popup.copy',
       'popup.copied',
       'popup.copyFailed',
     ] as const;
@@ -116,8 +115,7 @@ describe('t (popup string lookup)', () => {
       'popup.save',
       'popup.addEmptyError',
       'popup.addFailedError',
-      'popup.copyWord',
-      'popup.copyText',
+      'popup.copy',
       'popup.copied',
       'popup.copyFailed',
     ].sort();
