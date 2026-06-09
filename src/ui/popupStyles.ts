@@ -146,6 +146,44 @@ export const popupStyles = StyleSheet.create({
     fontWeight: '600',
     color: '#000000',
   },
+  // Footer action row: copy actions on the left, Close on the right.
+  // space-between with an (often empty) left group keeps Close pinned to
+  // the right in every state, matching the previous solo-Close layout.
+  footerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  copyActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexShrink: 1,
+  },
+  // Copy buttons mirror the bordered look of Close / Look up. Hidden
+  // (not greyed) when there's nothing to copy — same rule as the rest of
+  // the popup chrome.
+  copyButton: {
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderWidth: 1,
+    borderColor: '#000000',
+    borderRadius: 4,
+    marginRight: 8,
+  },
+  copyLabel: {
+    fontSize: 16,
+    color: '#000000',
+  },
+  // Transient "Copied" / "Couldn't copy" feedback shown next to the copy
+  // buttons after a press. Italic grey so it reads as a status, not an
+  // action. Clears on a new headword / tab switch (no timer — e-ink
+  // shouldn't flap).
+  copyStatus: {
+    fontSize: 14,
+    color: '#555555',
+    fontStyle: 'italic',
+    flexShrink: 1,
+  },
   closeButton: {
     alignSelf: 'flex-end',
     paddingVertical: 8,

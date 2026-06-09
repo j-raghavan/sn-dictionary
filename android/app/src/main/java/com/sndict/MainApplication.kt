@@ -11,6 +11,7 @@ import com.facebook.react.defaults.DefaultReactHost.getDefaultReactHost
 import com.facebook.react.defaults.DefaultReactNativeHost
 import com.facebook.react.soloader.OpenSourceMergedSoMapping
 import com.facebook.soloader.SoLoader
+import com.sndict.clipboard.SnDictClipboardPackage
 import com.sndict.imports.SnDictImportPackage
 import org.pgsqlite.SQLitePluginPackage
 
@@ -28,6 +29,9 @@ class MainApplication : Application(), ReactApplication {
                     // Native StarDict importer (ADR-0006): parse+insert
                     // off the Hermes thread.
                     add(SnDictImportPackage())
+                    // Native clipboard bridge (copy word / definition to
+                    // the OS clipboard via ClipboardManager).
+                    add(SnDictClipboardPackage())
                 }
 
             override fun getJSMainModuleName(): String = "index"

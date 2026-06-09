@@ -41,7 +41,11 @@ export type StringId =
   | 'popup.definitionBody'
   | 'popup.save'
   | 'popup.addEmptyError'
-  | 'popup.addFailedError';
+  | 'popup.addFailedError'
+  | 'popup.copyWord'
+  | 'popup.copyText'
+  | 'popup.copied'
+  | 'popup.copyFailed';
 
 // Locale codes use the firmware's convention: en, zh_CN, zh_TW, ja,
 // th, nl. Underscore (not hyphen) matches PluginButton.nameMap shape
@@ -69,6 +73,10 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.save': 'Save',
     'popup.addEmptyError': 'Enter a headword and a definition.',
     'popup.addFailedError': 'Could not save — please try again.',
+    'popup.copyWord': 'Copy word',
+    'popup.copyText': 'Copy',
+    'popup.copied': 'Copied',
+    'popup.copyFailed': "Couldn't copy",
   },
   zh_CN: {
     'popup.synonyms': '同义词',
@@ -92,6 +100,10 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.save': '保存',
     'popup.addEmptyError': '请输入词条和释义。',
     'popup.addFailedError': '保存失败，请重试。',
+    'popup.copyWord': '复制单词',
+    'popup.copyText': '复制',
+    'popup.copied': '已复制',
+    'popup.copyFailed': '复制失败',
   },
   zh_TW: {
     'popup.synonyms': '同義詞',
@@ -115,6 +127,10 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.save': '儲存',
     'popup.addEmptyError': '請輸入詞條和釋義。',
     'popup.addFailedError': '儲存失敗，請重試。',
+    'popup.copyWord': '複製單字',
+    'popup.copyText': '複製',
+    'popup.copied': '已複製',
+    'popup.copyFailed': '複製失敗',
   },
   ja: {
     'popup.synonyms': '類義語',
@@ -138,6 +154,10 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.save': '保存',
     'popup.addEmptyError': '見出し語と定義を入力してください。',
     'popup.addFailedError': '保存できませんでした。もう一度お試しください。',
+    'popup.copyWord': '単語をコピー',
+    'popup.copyText': 'コピー',
+    'popup.copied': 'コピーしました',
+    'popup.copyFailed': 'コピーできませんでした',
   },
   th: {
     'popup.synonyms': 'คำพ้องความหมาย',
@@ -161,6 +181,10 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.save': 'บันทึก',
     'popup.addEmptyError': 'กรุณาใส่คำหลักและคำจำกัดความ',
     'popup.addFailedError': 'บันทึกไม่สำเร็จ โปรดลองอีกครั้ง',
+    'popup.copyWord': 'คัดลอกคำ',
+    'popup.copyText': 'คัดลอก',
+    'popup.copied': 'คัดลอกแล้ว',
+    'popup.copyFailed': 'คัดลอกไม่ได้',
   },
   nl: {
     'popup.synonyms': 'Synoniemen',
@@ -184,6 +208,10 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.save': 'Opslaan',
     'popup.addEmptyError': 'Voer een trefwoord en een definitie in.',
     'popup.addFailedError': 'Opslaan mislukt — probeer opnieuw.',
+    'popup.copyWord': 'Woord kopiëren',
+    'popup.copyText': 'Kopiëren',
+    'popup.copied': 'Gekopieerd',
+    'popup.copyFailed': 'Kopiëren mislukt',
   },
   de: {
     'popup.synonyms': 'Synonyme',
@@ -207,6 +235,10 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.save': 'Speichern',
     'popup.addEmptyError': 'Bitte Stichwort und Definition eingeben.',
     'popup.addFailedError': 'Speichern fehlgeschlagen — bitte erneut versuchen.',
+    'popup.copyWord': 'Wort kopieren',
+    'popup.copyText': 'Kopieren',
+    'popup.copied': 'Kopiert',
+    'popup.copyFailed': 'Kopieren fehlgeschlagen',
   },
 };
 
