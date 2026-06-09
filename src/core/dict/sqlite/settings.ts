@@ -42,6 +42,20 @@ export type DictPref = {
   removable: boolean;
 };
 
+// F5 — one DB in the export set: a human `label` (source name) + the
+// on-disk `filename` it keeps in the target folder. The UI summary lists
+// these; the orchestration (exportDbs.ts) carries the absolute path too.
+export type DbFile = {label: string; filename: string};
+
+// F5 — the outcome of an export run: which DB filenames copied, which
+// failed (with a reason), and the resolved target directory. Partial
+// failures are reported, never dropped (F5-FR5).
+export type ExportSummary = {
+  copied: string[];
+  failed: {file: string; reason: string}[];
+  targetDir: string;
+};
+
 // F7 — the outcome of deleteImportedDict. `ok` is false ONLY when the
 // prefKey doesn't resolve to a removable imported dict (base/User — INV5,
 // F7-FR6) with a `reason`; a partial/idempotent delete (some artifact

@@ -46,6 +46,13 @@ import {
   getKeepSources,
   setKeepSources,
 } from './src/core/dict/sqlite/settings';
+import {
+  exportDbs as orchestrateExportDbs,
+  buildExportableDbs,
+  listFolders as listExportFolders,
+  toDbFiles,
+} from './src/core/dict/sqlite/exportDbs';
+import {SELECT_IMPORT_ALL} from './src/core/dict/sqlite/schema';
 import {t} from './src/i18n/i18n';
 import {setPopupActions} from './src/ui/popupController';
 import {
@@ -333,6 +340,66 @@ bootstrap(bootstrapPorts, logger)
           false,
         ),
       deleteImportedDict: prefKey => handle.deleteImportedDict(prefKey),
+      // F5 DB export. The orchestration (space pre-check, plugin-dir
+      // guard, user.db checkpoint, per-file copy) is host-tested in
+      // exportDbs.ts; index.js only supplies the device ports
+      // (NativeFileUtils) and the live audit/handle state.
+      //
+      // The export set is base.db + user.db + every imported slug (from
+      // the imports audit table), each addressed at PLUGIN_LOCATION/<fn>.
+      listExportableDbs: async () => {
+        const imports =
+          handle.userDb !== null
+            ? await handle.userDb.query(SELECT_IMPORT_ALL)
+            : [];
+        return toDbFiles(
+          buildExportableDbs({
+            hasBase: true,
+            hasUser: handle.userDb !== null,
+            imports,
+            resolvePath: filename => `${PLUGIN_LOCATION}${filename}`,
+          }),
+        );
+      },
+      // Folder chooser: reuse the type-tagged FileUtils.listFiles (dirs
+      // only) — the SAME FileUtils discovery injects (resolution #4).
+      listFolders: parent => listExportFolders(FileUtils, parent),
+      createFolder: path => FileUtils.makeDir(path),
+      exportDbs: targetDir =>
+        orchestrateExportDbs(
+          targetDir,
+          {
+            listDbs: async () => {
+              const imports =
+                handle.userDb !== null
+                  ? await handle.userDb.query(SELECT_IMPORT_ALL)
+                  : [];
+              return buildExportableDbs({
+                hasBase: true,
+                hasUser: handle.userDb !== null,
+                imports,
+                resolvePath: filename => `${PLUGIN_LOCATION}${filename}`,
+              });
+            },
+            availableSpace: () => FileUtils.getStorageAvailableSpace(),
+            sizeOf: srcPath => getFileSize(srcPath),
+            copyFile: (srcPath, destPath) =>
+              FileUtils.copyFile(srcPath, destPath),
+            ensureDir: dir => FileUtils.makeDir(dir),
+            // Checkpoint the OPEN user.db so its on-disk file is
+            // WAL-consistent before the raw copy (resolution #9).
+            checkpointUserDb: async () => {
+              if (handle.userDb !== null) {
+                await handle.userDb.run('PRAGMA wal_checkpoint(TRUNCATE)');
+              }
+            },
+          },
+          {
+            pluginDir: PLUGIN_LOCATION,
+            noSpace: t('settings.exportNoSpace'),
+          },
+          logger,
+        ),
     });
 
     logger.log(

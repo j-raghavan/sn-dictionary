@@ -2,6 +2,8 @@ import React from 'react';
 import {Pressable, ScrollView, Text, View} from 'react-native';
 import {closeSettings, getPopupActions, type ResultSnapshot} from './popupController';
 import type {DictPref} from '../core/dict/sqlite/settings';
+import {exportRootParent} from '../core/dict/sqlite/exportDbs';
+import ExportSection from './ExportSection';
 import {popupStyles as styles} from './popupStyles';
 import {t} from '../i18n/i18n';
 
@@ -265,6 +267,10 @@ export default function SettingsPanel(_props: {
           </Text>
         </Pressable>
       </View>
+
+      {/* F5: DB export. The section renders null when the engine hasn't
+          wired the export ports (engine-agnostic; guarded like F7). */}
+      <ExportSection rootParent={exportRootParent()} />
     </View>
   );
 }

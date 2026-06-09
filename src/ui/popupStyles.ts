@@ -350,6 +350,50 @@ export const popupStyles = StyleSheet.create({
     fontSize: 13,
     color: '#777777',
   },
+  // --- F5 export section ----------------------------------------------
+  // The current export-target path, shown above the folder list.
+  exportTargetLabel: {
+    marginTop: 4,
+    marginBottom: 8,
+    fontSize: 14,
+    color: '#000000',
+  },
+  // One navigable subfolder row in the chooser (full-width tappable).
+  exportFolderRow: {
+    paddingVertical: 8,
+    paddingHorizontal: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: '#EEEEEE',
+  },
+  exportFolderRowLabel: {
+    fontSize: 15,
+    color: '#000000',
+  },
+  // The action-button row under the chooser (New folder + Export).
+  exportActionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 12,
+  },
+  // A primary action button (Export / New folder / Use this folder).
+  exportButton: {
+    marginRight: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderWidth: 1,
+    borderColor: '#000000',
+    borderRadius: 4,
+  },
+  exportButtonLabel: {
+    fontSize: 14,
+    color: '#000000',
+  },
+  // The post-export result summary line.
+  exportSummary: {
+    marginTop: 12,
+    fontSize: 14,
+    color: '#000000',
+  },
   // Body-text size selector: three circular elements in a row,
   // ( − )( A )( + ). The outer two are Pressables; the middle is a
   // static "A" indicator that anchors the meaning to "text size".

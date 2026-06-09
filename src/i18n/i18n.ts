@@ -61,6 +61,11 @@ export type StringId =
   | 'settings.keepPrompt'
   | 'settings.removeDict'
   | 'settings.deleteDictPrompt'
+  | 'settings.export'
+  | 'settings.exportFolder'
+  | 'settings.newFolder'
+  | 'settings.exportNoSpace'
+  | 'settings.exportDone'
   | 'common.keep'
   | 'common.delete'
   | 'common.cancel';
@@ -113,6 +118,11 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'settings.removeDict': 'Remove',
     'settings.deleteDictPrompt':
       'Remove this dictionary? Its database and any leftover source files are deleted; it will not reappear on reload.',
+    'settings.export': 'Export dictionaries',
+    'settings.exportFolder': 'Use this folder',
+    'settings.newFolder': 'New folder',
+    'settings.exportNoSpace': 'Not enough free space to export — nothing was copied.',
+    'settings.exportDone': 'Export complete',
     'common.keep': 'Keep',
     'common.delete': 'Delete',
     'common.cancel': 'Cancel',
@@ -159,6 +169,11 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'settings.removeDict': '移除',
     'settings.deleteDictPrompt':
       '要移除此词典吗？将删除其数据库及任何残留的源文件；重新加载后不会再次出现。',
+    'settings.export': '导出词典',
+    'settings.exportFolder': '使用此文件夹',
+    'settings.newFolder': '新建文件夹',
+    'settings.exportNoSpace': '可用空间不足，无法导出——未复制任何文件。',
+    'settings.exportDone': '导出完成',
     'common.keep': '保留',
     'common.delete': '删除',
     'common.cancel': '取消',
@@ -205,6 +220,11 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'settings.removeDict': '移除',
     'settings.deleteDictPrompt':
       '要移除此詞典嗎？將刪除其資料庫及任何殘留的來源檔案；重新載入後不會再次出現。',
+    'settings.export': '匯出詞典',
+    'settings.exportFolder': '使用此資料夾',
+    'settings.newFolder': '新增資料夾',
+    'settings.exportNoSpace': '可用空間不足，無法匯出——未複製任何檔案。',
+    'settings.exportDone': '匯出完成',
     'common.keep': '保留',
     'common.delete': '刪除',
     'common.cancel': '取消',
@@ -253,6 +273,11 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'settings.removeDict': '削除',
     'settings.deleteDictPrompt':
       'この辞書を削除しますか？データベースと残っている元ファイルが削除され、再読み込みしても再表示されません。',
+    'settings.export': '辞書をエクスポート',
+    'settings.exportFolder': 'このフォルダを使う',
+    'settings.newFolder': '新しいフォルダ',
+    'settings.exportNoSpace': '空き容量が足りません — 何もコピーされませんでした。',
+    'settings.exportDone': 'エクスポート完了',
     'common.keep': '残す',
     'common.delete': '削除',
     'common.cancel': 'キャンセル',
@@ -301,6 +326,11 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'settings.removeDict': 'ลบออก',
     'settings.deleteDictPrompt':
       'ลบพจนานุกรมนี้หรือไม่? ฐานข้อมูลและไฟล์ต้นทางที่เหลือจะถูกลบ และจะไม่ปรากฏอีกเมื่อโหลดใหม่',
+    'settings.export': 'ส่งออกพจนานุกรม',
+    'settings.exportFolder': 'ใช้โฟลเดอร์นี้',
+    'settings.newFolder': 'โฟลเดอร์ใหม่',
+    'settings.exportNoSpace': 'พื้นที่ว่างไม่พอสำหรับการส่งออก — ไม่มีการคัดลอกไฟล์ใด',
+    'settings.exportDone': 'ส่งออกเสร็จสิ้น',
     'common.keep': 'เก็บ',
     'common.delete': 'ลบ',
     'common.cancel': 'ยกเลิก',
@@ -350,6 +380,12 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'settings.removeDict': 'Verwijderen',
     'settings.deleteDictPrompt':
       'Dit woordenboek verwijderen? De database en eventuele resterende bronbestanden worden gewist; het komt na opnieuw laden niet terug.',
+    'settings.export': 'Woordenboeken exporteren',
+    'settings.exportFolder': 'Deze map gebruiken',
+    'settings.newFolder': 'Nieuwe map',
+    'settings.exportNoSpace':
+      'Onvoldoende vrije ruimte om te exporteren — er is niets gekopieerd.',
+    'settings.exportDone': 'Export voltooid',
     'common.keep': 'Behouden',
     'common.delete': 'Verwijderen',
     'common.cancel': 'Annuleren',
@@ -399,6 +435,12 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'settings.removeDict': 'Entfernen',
     'settings.deleteDictPrompt':
       'Dieses Wörterbuch entfernen? Seine Datenbank und etwaige übrige Quelldateien werden gelöscht; es erscheint beim Neuladen nicht wieder.',
+    'settings.export': 'Wörterbücher exportieren',
+    'settings.exportFolder': 'Diesen Ordner verwenden',
+    'settings.newFolder': 'Neuer Ordner',
+    'settings.exportNoSpace':
+      'Nicht genug freier Speicher zum Exportieren — es wurde nichts kopiert.',
+    'settings.exportDone': 'Export abgeschlossen',
     'common.keep': 'Behalten',
     'common.delete': 'Löschen',
     'common.cancel': 'Abbrechen',

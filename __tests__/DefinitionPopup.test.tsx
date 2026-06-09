@@ -39,7 +39,7 @@ import {
 } from '../src/ui/popupController';
 import type {DefinitionFormat, LookupResult} from '../src/core/lookup';
 import type {ThesaurusResult} from '../src/core/dict/sqlite/thesaurusLookup';
-import type {DictPref} from '../src/core/dict/sqlite/settings';
+import type {DbFile, DictPref} from '../src/core/dict/sqlite/settings';
 
 import {copyToClipboard} from '../src/native/clipboard';
 import {htmlToPlainText} from '../src/ui/htmlToPlainText';
@@ -2104,5 +2104,318 @@ describe('DefinitionPopup — remove imported dict (F7)', () => {
       await Promise.resolve();
     });
     expect(collectText(tree)).toContain('hello');
+  });
+});
+
+// --- DB export section (F5) ----------------------------------------
+
+const MYSTYLE = '/storage/emulated/0/MyStyle';
+
+type ExportSummaryShape = {
+  copied: string[];
+  failed: {file: string; reason: string}[];
+  targetDir: string;
+};
+
+// PopupActions carrying the F3 list + the F5 export ports: a folder
+// lister, a createFolder spy, an exportDbs spy, and listExportableDbs.
+// All four export ports are optional on PopupActions; the section renders
+// only when exportDbs is present.
+const exportActions = (
+  exportDbs: PopupActions['exportDbs'] = async (targetDir) => ({
+    copied: ['base.db', 'user.db'],
+    failed: [],
+    targetDir,
+  }),
+  listFolders: PopupActions['listFolders'] = async () => [`${MYSTYLE}/SnDict`],
+  createFolder: PopupActions['createFolder'] = async () => true,
+  listExportableDbs: PopupActions['listExportableDbs'] = async () =>
+    [
+      {label: 'WordNet', filename: 'base.db'},
+      {label: 'User', filename: 'user.db'},
+    ] as DbFile[],
+): PopupActions => ({
+  lookupThesaurus: async () => ({lang: 'en', omw: {synonyms: [], antonyms: []}}),
+  addUserEntry: async () => undefined,
+  relookup: async () => undefined,
+  listDictPrefs: async () => [],
+  setDictPrefs: async () => undefined,
+  getKeepSources: async () => true,
+  setKeepSources: async () => undefined,
+  listExportableDbs,
+  listFolders,
+  createFolder,
+  exportDbs,
+});
+
+describe('DefinitionPopup — DB export (F5)', () => {
+  test('the export section renders its title + the chooser root path', async () => {
+    setPopupActions(exportActions());
+    const tree = renderPopup();
+    await openSettings(tree);
+    const text = collectText(tree);
+    expect(text).toContain('Export dictionaries');
+    // The chooser opens at the MyStyle root.
+    expect(text).toContain(MYSTYLE);
+  });
+
+  test('the chooser lists subfolders and descends on tap (F5-FR2)', async () => {
+    setPopupActions(exportActions(undefined, async () => [`${MYSTYLE}/SnDict`]));
+    const tree = renderPopup();
+    await openSettings(tree);
+    // The SnDict subfolder is listed; tapping it descends into it.
+    await act(async () => {
+      findByLabel(tree, 'Use this folder: SnDict')[0].props.onPress();
+      await flush();
+    });
+    // Current path is now MyStyle/SnDict.
+    expect(collectText(tree)).toContain(`${MYSTYLE}/SnDict`);
+  });
+
+  test('the section is absent when the export ports are not wired', async () => {
+    // dictManagerActions omits the F5 ports -> the section renders nothing.
+    setPopupActions(dictManagerActions([dictPref('User', true, 0)]));
+    const tree = renderPopup();
+    await openSettings(tree);
+    expect(collectText(tree)).not.toContain('Export dictionaries');
+  });
+
+  test('Export calls exportDbs with the current folder and shows the summary (F5-FR5)', async () => {
+    const exportSpy = jest.fn(async (targetDir: string) => ({
+      copied: ['base.db', 'user.db', 'dune.en.db'],
+      failed: [],
+      targetDir,
+    }));
+    setPopupActions(exportActions(exportSpy));
+    const tree = renderPopup();
+    await openSettings(tree);
+    await act(async () => {
+      findByLabel(tree, 'Export dictionaries')[0].props.onPress();
+      await flush();
+    });
+    // Exported to the root folder; the summary shows the copied count.
+    expect(exportSpy).toHaveBeenCalledWith(MYSTYLE);
+    const text = collectText(tree);
+    expect(text).toContain('Export complete');
+    expect(text).toContain(MYSTYLE);
+  });
+
+  test('a partial-failure summary lists the failed file (F5-AC4)', async () => {
+    const exportSpy = jest.fn(async (targetDir: string) => ({
+      copied: ['base.db'],
+      failed: [{file: 'user.db', reason: 'disk error'}],
+      targetDir,
+    }));
+    setPopupActions(exportActions(exportSpy));
+    const tree = renderPopup();
+    await openSettings(tree);
+    await act(async () => {
+      findByLabel(tree, 'Export dictionaries')[0].props.onPress();
+      await flush();
+    });
+    expect(collectText(tree)).toContain('user.db');
+  });
+
+  test('an export rejection (no-space / plugin-dir guard) surfaces its reason (F5-AC2/AC5)', async () => {
+    const exportSpy = jest.fn(async () => {
+      throw new Error('Not enough free space to export — nothing was copied.');
+    });
+    setPopupActions(exportActions(exportSpy as PopupActions['exportDbs']));
+    const tree = renderPopup();
+    await openSettings(tree);
+    await act(async () => {
+      findByLabel(tree, 'Export dictionaries')[0].props.onPress();
+      await flush();
+    });
+    expect(collectText(tree)).toContain('Not enough free space');
+  });
+
+  test('New folder creates a named child and descends into it (F5-AC3)', async () => {
+    const createSpy = jest.fn(async () => true);
+    const listSpy = jest.fn(async () => [] as string[]);
+    setPopupActions(exportActions(undefined, listSpy, createSpy));
+    const tree = renderPopup();
+    await openSettings(tree);
+    // Type a folder name into the New-folder input, then tap "+".
+    await act(async () => {
+      findByLabel(tree, 'New folder')[0].props.onChangeText('backup');
+      await flush();
+    });
+    await act(async () => {
+      // The "+" Pressable is the 2nd New-folder-labelled node (after input).
+      findByLabel(tree, 'New folder')[1].props.onPress();
+      await flush();
+    });
+    expect(createSpy).toHaveBeenCalledWith(`${MYSTYLE}/backup`);
+    // Descended into the new folder (current path updated).
+    expect(collectText(tree)).toContain(`${MYSTYLE}/backup`);
+  });
+
+  test('New folder with a blank name is a no-op', async () => {
+    const createSpy = jest.fn(async () => true);
+    setPopupActions(exportActions(undefined, undefined, createSpy));
+    const tree = renderPopup();
+    await openSettings(tree);
+    await act(async () => {
+      findByLabel(tree, 'New folder')[1].props.onPress();
+      await flush();
+    });
+    expect(createSpy).not.toHaveBeenCalled();
+  });
+
+  test('Up navigates back to the parent after descending', async () => {
+    setPopupActions(exportActions(undefined, async () => [`${MYSTYLE}/SnDict`]));
+    const tree = renderPopup();
+    await openSettings(tree);
+    await act(async () => {
+      findByLabel(tree, 'Use this folder: SnDict')[0].props.onPress();
+      await flush();
+    });
+    // Up row appears below root; tap it to go back to MyStyle.
+    await act(async () => {
+      findByLabel(tree, `Move up: ${MYSTYLE}/SnDict`)[0].props.onPress();
+      await flush();
+    });
+    // Back at the root: the Up row is gone (atRoot hides it).
+    expect(findByLabel(tree, `Move up: ${MYSTYLE}`)).toHaveLength(0);
+  });
+
+  test('a listFolders rejection yields an empty chooser (no crash)', async () => {
+    setPopupActions(
+      exportActions(undefined, async () => {
+        throw new Error('listFiles blew up');
+      }),
+    );
+    const tree = renderPopup();
+    await openSettings(tree);
+    // The section still renders (title + root path), just with no rows.
+    expect(collectText(tree)).toContain('Export dictionaries');
+    expect(collectText(tree)).toContain(MYSTYLE);
+  });
+
+  test('the chooser has no rows when listFolders is not wired', async () => {
+    // exportDbs present (section renders) but listFolders absent -> the
+    // loadFolders short-circuit sets an empty list.
+    const noListFolders = exportActions();
+    delete noListFolders.listFolders;
+    setPopupActions(noListFolders);
+    const tree = renderPopup();
+    await openSettings(tree);
+    expect(collectText(tree)).toContain('Export dictionaries');
+    // No SnDict subfolder row (listFolders never ran).
+    expect(findByLabel(tree, 'Use this folder: SnDict')).toHaveLength(0);
+  });
+
+  test('a createFolder resolving false does NOT descend (stays at root)', async () => {
+    const createSpy = jest.fn(async () => false);
+    setPopupActions(exportActions(undefined, async () => [], createSpy));
+    const tree = renderPopup();
+    await openSettings(tree);
+    await act(async () => {
+      findByLabel(tree, 'New folder')[0].props.onChangeText('backup');
+      await flush();
+    });
+    await act(async () => {
+      findByLabel(tree, 'New folder')[1].props.onPress();
+      await flush();
+    });
+    expect(createSpy).toHaveBeenCalledWith(`${MYSTYLE}/backup`);
+    // Did NOT descend — still at the MyStyle root.
+    expect(collectText(tree)).not.toContain(`${MYSTYLE}/backup`);
+  });
+
+  test('a createFolder rejection is swallowed (no crash, name retained)', async () => {
+    const createSpy = jest.fn(async () => {
+      throw new Error('mkdir EACCES');
+    });
+    setPopupActions(exportActions(undefined, async () => [], createSpy));
+    const tree = renderPopup();
+    await openSettings(tree);
+    await act(async () => {
+      findByLabel(tree, 'New folder')[0].props.onChangeText('backup');
+      await flush();
+    });
+    await act(async () => {
+      findByLabel(tree, 'New folder')[1].props.onPress();
+      await flush();
+    });
+    // No crash; still on the export section.
+    expect(collectText(tree)).toContain('Export dictionaries');
+  });
+
+  test('New folder is a no-op when the createFolder port is absent', async () => {
+    const noCreate = exportActions();
+    delete noCreate.createFolder;
+    setPopupActions(noCreate);
+    const tree = renderPopup();
+    await openSettings(tree);
+    await act(async () => {
+      findByLabel(tree, 'New folder')[0].props.onChangeText('backup');
+      await flush();
+    });
+    await act(async () => {
+      findByLabel(tree, 'New folder')[1].props.onPress();
+      await flush();
+    });
+    // No descend, no crash.
+    expect(collectText(tree)).not.toContain(`${MYSTYLE}/backup`);
+  });
+
+  test('unmount before the export resolves does not setState (cancel guard)', async () => {
+    // Defer exportDbs so the panel can unmount (Back) while it is pending —
+    // the cancelled guard must skip the summary setState (no crash).
+    let releaseExport!: (s: ExportSummaryShape) => void;
+    const exportSpy: PopupActions['exportDbs'] = () =>
+      new Promise(res => {
+        releaseExport = res;
+      });
+    setPopupActions(exportActions(exportSpy));
+    const tree = renderPopup();
+    await openSettings(tree);
+    await act(async () => {
+      findByLabel(tree, 'Export dictionaries')[0].props.onPress();
+      await flush();
+    });
+    // Back (unmount the panel) before the export resolves.
+    await act(async () => pressLabel(tree, 'Back'));
+    // Resolve AFTER unmount — the cancelled guard means no setState.
+    await act(async () => {
+      releaseExport({copied: ['base.db'], failed: [], targetDir: MYSTYLE});
+      await Promise.resolve();
+    });
+    // The prior result is back; no export summary leaked into it.
+    expect(collectText(tree)).toContain('hello');
+  });
+
+  test('unmount before an export REJECTION resolves does not setState', async () => {
+    // The catch path's cancelled guard: defer a rejecting export, unmount,
+    // then reject — no setState-after-unmount.
+    let rejectExport!: (e: Error) => void;
+    const exportSpy: PopupActions['exportDbs'] = () =>
+      new Promise((_res, rej) => {
+        rejectExport = rej;
+      });
+    setPopupActions(exportActions(exportSpy));
+    const tree = renderPopup();
+    await openSettings(tree);
+    await act(async () => {
+      findByLabel(tree, 'Export dictionaries')[0].props.onPress();
+      await flush();
+    });
+    await act(async () => pressLabel(tree, 'Back'));
+    await act(async () => {
+      rejectExport(new Error('NO_SPACE'));
+      await Promise.resolve();
+    });
+    expect(collectText(tree)).toContain('hello');
+  });
+
+  test('a listed folder with no slash renders its bare name (basename edge)', async () => {
+    // A listFiles entry that is a bare segment (no slash) exercises the
+    // basename slash<0 fallback.
+    setPopupActions(exportActions(undefined, async () => ['solo']));
+    const tree = renderPopup();
+    await openSettings(tree);
+    expect(findByLabel(tree, 'Use this folder: solo')).toHaveLength(1);
   });
 });

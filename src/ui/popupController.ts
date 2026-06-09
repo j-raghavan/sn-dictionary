@@ -1,6 +1,11 @@
 import type {LookupResult} from '../core/lookup';
 import type {ThesaurusResult} from '../core/dict/sqlite/thesaurusLookup';
-import type {DeleteResult, DictPref} from '../core/dict/sqlite/settings';
+import type {
+  DbFile,
+  DeleteResult,
+  DictPref,
+  ExportSummary,
+} from '../core/dict/sqlite/settings';
 
 // Bridge between async handlers (which don't render React) and the
 // popup component (which does). A handler calls one of the show*()
@@ -90,6 +95,20 @@ export type PopupActions = {
   // satisfy PopupActions; the panel guards on their presence.
   confirmDeleteDict?(name: string): Promise<boolean>;
   deleteImportedDict?(prefKey: string): Promise<DeleteResult>;
+  // F5 — DB export. The panel's Export section lists the DBs to copy
+  // (`listExportableDbs`), drives the in-panel folder chooser
+  // (`listFolders` over the type-tagged FileUtils, `createFolder` over
+  // makeDir), and on confirm calls `exportDbs(target)` which orchestrates
+  // the space pre-check, plugin-dir guard, user.db checkpoint, and the
+  // per-file copy off-device (the actual NativeFileUtils calls live in
+  // index.js). All OPTIONAL so the F3/F4/F7 fakeActions still satisfy
+  // PopupActions; the panel guards on their presence. `exportDbs` REJECTS
+  // (with a localised reason) on the plugin-dir guard / no-space abort —
+  // the panel surfaces that as the export-failure summary.
+  listExportableDbs?(): Promise<DbFile[]>;
+  listFolders?(parent: string): Promise<string[]>;
+  createFolder?(path: string): Promise<boolean>;
+  exportDbs?(targetDir: string): Promise<ExportSummary>;
 };
 
 let popupActions: PopupActions | null = null;
