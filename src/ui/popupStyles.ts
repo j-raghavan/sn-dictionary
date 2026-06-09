@@ -263,6 +263,34 @@ export const popupStyles = StyleSheet.create({
     fontSize: 16,
     color: '#000000',
   },
+  // Save + Back sit together on the right of the header.
+  settingsHeaderActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  // Save: a filled (black) button when there are unsaved edits, greyed/
+  // outlined when clean or mid-save — so "enabled only when changed" reads at
+  // a glance on e-ink. Sits just left of Back (marginRight gap).
+  settingsSaveButton: {
+    paddingVertical: 8,
+    paddingHorizontal: 20,
+    borderWidth: 1,
+    borderColor: '#000000',
+    borderRadius: 4,
+    backgroundColor: '#000000',
+    marginRight: 10,
+  },
+  settingsSaveButtonDisabled: {
+    backgroundColor: '#FFFFFF',
+    borderColor: '#AAAAAA',
+  },
+  settingsSaveLabel: {
+    fontSize: 16,
+    color: '#FFFFFF',
+  },
+  settingsSaveLabelDisabled: {
+    color: '#AAAAAA',
+  },
   // Placeholder body copy until F4/F5/F7 fill the rest of the panel in.
   settingsPlaceholder: {
     marginTop: 16,

@@ -18,6 +18,12 @@ export default function SettingsPanel(_props: {
   resume?: ResultSnapshot;
 }): React.JSX.Element {
   const [prefs, setPrefs] = React.useState<DictPref[]>([]);
+  // Dictionary enable/disable/reorder edits are staged LOCALLY and only
+  // written when the user taps Save (explicit, single transaction, with a
+  // confirmation) — not auto-persisted on every toggle. `dirty` gates the
+  // Save button; cleared on (re)load and on a successful save.
+  const [dirty, setDirty] = React.useState<boolean>(false);
+  const [saving, setSaving] = React.useState<boolean>(false);
   // F4: keep-source-files toggle. Defaults to true (keep) until the engine
   // resolves the persisted flag — matching the engine default, so the
   // initial render never shows a misleading "delete" state.
@@ -34,6 +40,7 @@ export default function SettingsPanel(_props: {
       .then(loaded => {
         if (!cancelledRef.current) {
           setPrefs(loaded);
+          setDirty(false);
         }
       })
       .catch(() => {
@@ -58,6 +65,7 @@ export default function SettingsPanel(_props: {
       .then(loaded => {
         if (!cancelled) {
           setPrefs(loaded);
+          setDirty(false);
         }
       })
       .catch(() => {
@@ -108,18 +116,49 @@ export default function SettingsPanel(_props: {
       });
   };
 
-  // Persist a whole reordered/toggled set (renumbering sortOrder to the
-  // array index so it round-trips deterministically) and optimistically
-  // reflect it locally. setDictPrefs also recomputes the live `sources`
-  // array, so the next lookup honours the change with no reload.
+  // Stage a reordered/toggled set LOCALLY (renumbering sortOrder to the array
+  // index so it round-trips deterministically) and mark the panel dirty. The
+  // write happens on Save — not here — so a mis-tap is undone by re-toggling
+  // before saving, and the persist is one explicit, confirmable transaction.
   const commit = (next: DictPref[]): void => {
     const renumbered = next.map((pref, index) => ({...pref, sortOrder: index}));
     setPrefs(renumbered);
-    getPopupActions()
-      ?.setDictPrefs(renumbered)
-      .catch(() => {
-        // No rethrow — the optimistic UI stays; the engine logs the write
-        // failure (degraded user.db just no-ops the persist).
+    setDirty(true);
+  };
+
+  // Persist the staged dict prefs on an explicit Save: one setDictPrefs call
+  // (the engine recomputes the live `sources`), then clear dirty + confirm via
+  // the notify dialog. A failure surfaces the reason and KEEPS dirty so the
+  // user can retry. Guarded so a double-tap can't fire two overlapping writes.
+  const save = (): void => {
+    if (saving || !dirty) {
+      return;
+    }
+    const actions = getPopupActions();
+    const persist = actions?.setDictPrefs;
+    if (!persist) {
+      return;
+    }
+    setSaving(true);
+    persist(prefs)
+      .then(() => {
+        if (cancelledRef.current) {
+          return;
+        }
+        setDirty(false);
+        actions?.notify?.(t('settings.saved')).catch(() => {});
+      })
+      .catch((e: unknown) => {
+        if (!cancelledRef.current) {
+          actions
+            ?.notify?.(`${t('settings.saveFailed')}: ${(e as Error).message}`)
+            .catch(() => {});
+        }
+      })
+      .finally(() => {
+        if (!cancelledRef.current) {
+          setSaving(false);
+        }
       });
   };
 
@@ -161,13 +200,37 @@ export default function SettingsPanel(_props: {
     <View style={styles.card}>
       <View style={styles.settingsHeaderRow}>
         <Text style={styles.settingsTitle}>{t('settings.title')}</Text>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={t('settings.back')}
-          onPress={() => closeSettings()}
-          style={styles.settingsBackButton}>
-          <Text style={styles.settingsBackLabel}>{t('settings.back')}</Text>
-        </Pressable>
+        <View style={styles.settingsHeaderActions}>
+          {/* Save: enabled only when there are unsaved edits (dirty). One
+              explicit write, with a "Saved" confirmation. */}
+          <Pressable
+            accessibilityRole="button"
+            accessibilityState={{disabled: !dirty || saving}}
+            accessibilityLabel={t('settings.save')}
+            disabled={!dirty || saving}
+            onPress={save}
+            style={
+              dirty && !saving
+                ? styles.settingsSaveButton
+                : [styles.settingsSaveButton, styles.settingsSaveButtonDisabled]
+            }>
+            <Text
+              style={
+                dirty && !saving
+                  ? styles.settingsSaveLabel
+                  : [styles.settingsSaveLabel, styles.settingsSaveLabelDisabled]
+              }>
+              {t('settings.save')}
+            </Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={t('settings.back')}
+            onPress={() => closeSettings()}
+            style={styles.settingsBackButton}>
+            <Text style={styles.settingsBackLabel}>{t('settings.back')}</Text>
+          </Pressable>
+        </View>
       </View>
 
       <ScrollView style={styles.settingsBody}>

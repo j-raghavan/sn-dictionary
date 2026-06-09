@@ -343,8 +343,30 @@ bootstrap(bootstrapPorts, logger)
       // F3 dictionary manager: the heavy logic (merge with the live
       // allSources + recompute the live `sources`) lives in the host-
       // tested handle; index.js just forwards.
-      listDictPrefs: () => handle.listDictPrefs(),
-      setDictPrefs: prefs => handle.setDictPrefs(prefs),
+      // [settings] diagnostics: confirm on-device whether the save fires +
+      // commits and what the next load reads back (the SQLite plugin only
+      // logs DB opens, not statements, so this is the only window into it).
+      listDictPrefs: () =>
+        handle.listDictPrefs().then(p => {
+          logger.log(
+            `[settings] load <- ${p.length}: ` +
+              p.map(x => `${x.name}=${x.enabled ? 'on' : 'off'}`).join(', '),
+          );
+          return p;
+        }),
+      setDictPrefs: prefs => {
+        logger.log(
+          `[settings] save -> ${prefs.length}: ` +
+            prefs.map(x => `${x.name}=${x.enabled ? 'on' : 'off'}`).join(', '),
+        );
+        return handle.setDictPrefs(prefs).then(
+          () => logger.log('[settings] save committed'),
+          e => {
+            logger.log(`[settings] save FAILED: ${e?.message ?? e}`);
+            throw e;
+          },
+        );
+      },
       // F4 opt-in delete toggle: read/write the keepSourcesAfterImport
       // app setting on the live user.db (default keep; null-db-safe).
       getKeepSources: () => getKeepSources(handle.userDb),

@@ -157,6 +157,9 @@ describe('t (popup string lookup)', () => {
       'settings.restorePrompt',
       'settings.restoreReopen',
       'settings.restoreSnapshotFailed',
+      'settings.save',
+      'settings.saveFailed',
+      'settings.saved',
       'settings.sources',
       'settings.title',
     ]);

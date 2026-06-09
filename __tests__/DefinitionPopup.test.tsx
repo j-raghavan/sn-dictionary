@@ -1657,14 +1657,80 @@ describe('DefinitionPopup — dictionary manager (F3)', () => {
     );
     const tree = renderPopup();
     await openSettings(tree);
-    // Toggle User off.
+    // Toggle User off — staged LOCALLY (off-state shown immediately), but
+    // nothing is persisted until Save.
     await act(async () => findByLabel(tree, 'Disable: User')[0].props.onPress());
+    expect(spy).not.toHaveBeenCalled();
+    // The row now offers Enable (off-state shown, not hidden).
+    expect(findByLabel(tree, 'Enable: User')).toHaveLength(1);
+    // Save persists the staged set in one write.
+    await act(async () => findByLabel(tree, 'Save')[0].props.onPress());
     expect(spy).toHaveBeenCalledTimes(1);
     const payload = spy.mock.calls[0][0] as DictPref[];
     expect(payload.find(p => p.name === 'User')?.enabled).toBe(false);
     // sortOrder is renumbered to the array index.
     expect(payload.map(p => p.sortOrder)).toEqual([0, 1]);
-    // The row now offers Enable (off-state shown, not hidden).
+  });
+
+  test('Save is disabled until an edit, enabled after, and confirms via notify', async () => {
+    const spy = jest.fn(async (_prefs: DictPref[]) => undefined);
+    const notify = jest.fn(async () => undefined);
+    setPopupActions({
+      ...dictManagerActions(
+        [dictPref('User', true, 0), dictPref('WordNet', true, 1)],
+        spy,
+      ),
+      notify,
+    });
+    const tree = renderPopup();
+    await openSettings(tree);
+    // No edits yet -> Save is disabled (a tap is a no-op, nothing persisted).
+    await act(async () => findByLabel(tree, 'Save')[0].props.onPress());
+    expect(spy).not.toHaveBeenCalled();
+    // Edit -> Save now persists + confirms.
+    await act(async () => findByLabel(tree, 'Disable: User')[0].props.onPress());
+    await act(async () => findByLabel(tree, 'Save')[0].props.onPress());
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(notify).toHaveBeenCalledWith(expect.stringContaining('saved'));
+    // After a successful save the panel is clean -> Save no-ops again.
+    await act(async () => findByLabel(tree, 'Save')[0].props.onPress());
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  test('a failed save surfaces saveFailed and STAYS dirty (retryable)', async () => {
+    const spy = jest.fn(async (_prefs: DictPref[]) => {
+      throw new Error('disk full');
+    });
+    const notify = jest.fn(async () => undefined);
+    setPopupActions({
+      ...dictManagerActions(
+        [dictPref('User', true, 0), dictPref('WordNet', true, 1)],
+        spy,
+      ),
+      notify,
+    });
+    const tree = renderPopup();
+    await openSettings(tree);
+    await act(async () => findByLabel(tree, 'Disable: User')[0].props.onPress());
+    await act(async () => findByLabel(tree, 'Save')[0].props.onPress());
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(notify).toHaveBeenCalledWith(expect.stringContaining("Couldn't save"));
+    // Still dirty after the failure -> a retry Save fires again.
+    await act(async () => findByLabel(tree, 'Save')[0].props.onPress());
+    expect(spy).toHaveBeenCalledTimes(2);
+  });
+
+  test('Save with no setDictPrefs port wired is a safe no-op (no crash)', async () => {
+    const {setDictPrefs: _omit, ...noPersist} = dictManagerActions([
+      dictPref('User', true, 0),
+      dictPref('WordNet', true, 1),
+    ]);
+    setPopupActions(noPersist as PopupActions);
+    const tree = renderPopup();
+    await openSettings(tree);
+    await act(async () => findByLabel(tree, 'Disable: User')[0].props.onPress());
+    // The missing-port guard returns early — no throw, edit stays staged.
+    await act(async () => findByLabel(tree, 'Save')[0].props.onPress());
     expect(findByLabel(tree, 'Enable: User')).toHaveLength(1);
   });
 
@@ -1683,6 +1749,7 @@ describe('DefinitionPopup — dictionary manager (F3)', () => {
     const tree = renderPopup();
     await openSettings(tree);
     await act(async () => findByLabel(tree, 'Move down: User')[0].props.onPress());
+    await act(async () => findByLabel(tree, 'Save')[0].props.onPress());
     const payload = spy.mock.calls[0][0] as DictPref[];
     expect(payload.map(p => p.name)).toEqual(['Dune', 'User', 'WordNet']);
     expect(payload.map(p => p.sortOrder)).toEqual([0, 1, 2]);
@@ -1702,8 +1769,9 @@ describe('DefinitionPopup — dictionary manager (F3)', () => {
     );
     const tree = renderPopup();
     await openSettings(tree);
-    // Move WordNet up twice -> [WordNet, User, Dune].
+    // Move WordNet up one -> [User, WordNet, Dune], then Save.
     await act(async () => findByLabel(tree, 'Move up: WordNet')[0].props.onPress());
+    await act(async () => findByLabel(tree, 'Save')[0].props.onPress());
     expect((spy.mock.calls[0][0] as DictPref[]).map(p => p.name)).toEqual([
       'User',
       'WordNet',

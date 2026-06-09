@@ -48,6 +48,9 @@ export type StringId =
   | 'settings.open'
   | 'settings.title'
   | 'settings.back'
+  | 'settings.save'
+  | 'settings.saved'
+  | 'settings.saveFailed'
   | 'settings.dictionaries'
   | 'settings.moveUp'
   | 'settings.moveDown'
@@ -107,6 +110,9 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'settings.open': 'Settings',
     'settings.title': 'Settings',
     'settings.back': 'Back',
+    'settings.save': 'Save',
+    'settings.saved': 'Settings saved',
+    'settings.saveFailed': "Couldn't save settings",
     'settings.dictionaries': 'Dictionaries',
     'settings.moveUp': 'Move up',
     'settings.moveDown': 'Move down',
@@ -167,6 +173,9 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'settings.open': '设置',
     'settings.title': '设置',
     'settings.back': '返回',
+    'settings.save': '保存',
+    'settings.saved': '设置已保存',
+    'settings.saveFailed': '无法保存设置',
     'settings.dictionaries': '词典',
     'settings.moveUp': '上移',
     'settings.moveDown': '下移',
@@ -223,6 +232,9 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'settings.open': '設定',
     'settings.title': '設定',
     'settings.back': '返回',
+    'settings.save': '儲存',
+    'settings.saved': '設定已儲存',
+    'settings.saveFailed': '無法儲存設定',
     'settings.dictionaries': '詞典',
     'settings.moveUp': '上移',
     'settings.moveDown': '下移',
@@ -279,6 +291,9 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'settings.open': '設定',
     'settings.title': '設定',
     'settings.back': '戻る',
+    'settings.save': '保存',
+    'settings.saved': '設定を保存しました',
+    'settings.saveFailed': '設定を保存できませんでした',
     'settings.dictionaries': '辞書',
     'settings.moveUp': '上へ',
     'settings.moveDown': '下へ',
@@ -338,6 +353,9 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'settings.open': 'การตั้งค่า',
     'settings.title': 'การตั้งค่า',
     'settings.back': 'ย้อนกลับ',
+    'settings.save': 'บันทึก',
+    'settings.saved': 'บันทึกการตั้งค่าแล้ว',
+    'settings.saveFailed': 'บันทึกการตั้งค่าไม่ได้',
     'settings.dictionaries': 'พจนานุกรม',
     'settings.moveUp': 'เลื่อนขึ้น',
     'settings.moveDown': 'เลื่อนลง',
@@ -397,6 +415,9 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'settings.open': 'Instellingen',
     'settings.title': 'Instellingen',
     'settings.back': 'Terug',
+    'settings.save': 'Opslaan',
+    'settings.saved': 'Instellingen opgeslagen',
+    'settings.saveFailed': 'Kan instellingen niet opslaan',
     'settings.dictionaries': 'Woordenboeken',
     'settings.moveUp': 'Omhoog',
     'settings.moveDown': 'Omlaag',
@@ -458,6 +479,9 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'settings.open': 'Einstellungen',
     'settings.title': 'Einstellungen',
     'settings.back': 'Zurück',
+    'settings.save': 'Speichern',
+    'settings.saved': 'Einstellungen gespeichert',
+    'settings.saveFailed': 'Einstellungen konnten nicht gespeichert werden',
     'settings.dictionaries': 'Wörterbücher',
     'settings.moveUp': 'Nach oben',
     'settings.moveDown': 'Nach unten',
