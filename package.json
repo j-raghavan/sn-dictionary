@@ -1,6 +1,6 @@
 {
   "name": "SnDict",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Tap or lasso a word on your Supernote and see its definition. Offline-first dictionary plugin with optional user-supplied dictionaries.",
   "private": true,
   "scripts": {
