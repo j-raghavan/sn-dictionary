@@ -531,16 +531,10 @@ bootstrap(bootstrapPorts, logger)
           },
           logger,
         ),
-      // Surface export/restore outcomes as a modal dialog (RattaDialog) — a
-      // result the user can't miss, unlike the inline summary that's easy to
-      // scroll past. Both buttons just dismiss it.
-      notify: msg =>
-        NativeUIUtils.showRattaDialog(
-          msg,
-          t('popup.close'),
-          t('popup.close'),
-          true,
-        ).then(() => undefined),
+      // No `notify` port: export/restore outcomes surface as the inline banner
+      // ExportSection renders. The native showRattaDialog is a TWO-button
+      // confirm, so using it for a one-action acknowledgement showed two
+      // identical "Close" buttons — the inline banner is the right surface.
     });
 
     logger.log(

@@ -122,10 +122,11 @@ export type PopupActions = {
   // wired engine) still satisfy PopupActions; the panel guards on presence.
   confirmRestore?(): Promise<boolean>;
   restoreDbs?(backupDir: string): Promise<RestoreSummary>;
-  // Show a result/notification to the user as a modal dialog (the native
-  // RattaDialog). Used by export/restore to surface their outcome — an inline
-  // summary line at the bottom of a scrolled panel is too easy to miss.
-  notify?(message: string): Promise<void>;
+  // (No `notify` port: the only native dialog is the two-button confirm, so a
+  // one-action acknowledgement showed two identical "Close" buttons. Results
+  // are surfaced inline instead — the Save status and the export/restore
+  // banner. Genuine two-choice confirmations use confirmDeleteDict /
+  // confirmRestore.)
 };
 
 let popupActions: PopupActions | null = null;

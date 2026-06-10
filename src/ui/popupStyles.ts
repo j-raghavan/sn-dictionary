@@ -468,11 +468,20 @@ export const popupStyles = StyleSheet.create({
     fontSize: 14,
     color: '#000000',
   },
-  // The post-export result summary line.
+  // The post-export/restore result — a prominent bordered banner directly
+  // below the action buttons (the can't-miss surface now that the modal is
+  // gone). Bold black text in a boxed surface so a result can't be mistaken
+  // for body chrome on a scrolled e-ink panel.
   exportSummary: {
     marginTop: 12,
-    fontSize: 14,
+    fontSize: 15,
+    fontWeight: '700',
     color: '#000000',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderWidth: 1.5,
+    borderColor: '#000000',
+    borderRadius: 4,
   },
   // Body-text size selector: three circular elements in a row,
   // ( − )( A )( + ). The outer two are Pressables; the middle is a
