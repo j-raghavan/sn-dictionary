@@ -15,7 +15,10 @@ import java.util.zip.GZIPInputStream
 // SQLite DB, ALL off the Hermes/JS thread. Logic mirrors the TS path
 // EXACTLY so natively-imported dicts are byte-identical to base.db:
 //   - .ifo  -> parseIfo.ts (sametypesequence, idxoffsetbits 32|64)
-//   - .dict -> dictReader (gzip inflate when .dz / 0x1f8b magic)
+//   - .dict -> dictReader (gzip inflate when .dz / 0x1f8b magic);
+//             each entry's slice -> splitDictEntry (strip sts-absent
+//             type byte + trailing NUL) + formatFromTypeChar (mirror
+//             dictEntry.ts) before decode (issue #28)
 //   - .idx  -> parseIdx.ts (word\0 + BE offset(u32|u64) + BE length(u32))
 //   - .syn  -> parseSyn.ts + buildDict merge (.idx first, then .syn,
 //              first-key-wins, normalizeKey-folded, out-of-range skipped)
@@ -49,7 +52,6 @@ object StarDictImporter {
     formatOverride: String?,
   ): Int {
     val ifo = parseIfo(File(ifoPath).readBytes())
-    val format = formatOverride ?: ifo.format
     val builtAt = builtAt(ifo)
 
     // .idx walk holds only words + offsets/lengths (no definitions).
@@ -70,7 +72,8 @@ object StarDictImporter {
         synPath = synPath,
         body = body,
         bodySize = size,
-        format = format,
+        sametypesequence = ifo.sametypesequence,
+        formatOverride = formatOverride,
         builtAt = builtAt,
       )
     } finally {
@@ -117,14 +120,16 @@ object StarDictImporter {
     }
   }
 
-  // Read `length` bytes at `offset` from the mmap'd body -> UTF-8 String.
-  // Bounds-checked (same guard as the prior sliceUtf8).
+  // Read `length` raw bytes at `offset` from the mmap'd body. Bounds-
+  // checked (same guard as before). Returns the RAW slice — the caller
+  // runs splitDictEntry to strip any sts-absent type prefix/NUL BEFORE
+  // decoding to UTF-8 (issue #28; mirrors dictEntry.ts).
   private fun readDef(
     body: MappedByteBuffer,
     bodySize: Long,
     offset: Long,
     length: Int,
-  ): String {
+  ): ByteArray {
     val end = offset + length
     if (offset < 0 || length < 0 || end > bodySize) {
       throw IndexOutOfBoundsException(
@@ -137,13 +142,45 @@ object StarDictImporter {
     val dup = body.duplicate()
     dup.position(offset.toInt())
     dup.get(buf, 0, length)
-    return String(buf, Charsets.UTF_8)
+    return buf
   }
+
+  // --- .dict entry split (mirror dictEntry.ts splitDictEntry EXACTLY) -
+
+  private data class SplitEntry(val payload: ByteArray, val typeChar: Char?)
+
+  // sts PRESENT  -> whole slice is the payload, typeChar null.
+  // sts ABSENT   -> raw[0] is the ASCII type char; the rest is the body
+  //                 minus exactly one trailing 0x00 when present.
+  // empty slice  -> {empty, null} (guard before indexing raw[0]).
+  // multi-char sts is out of scope: whole slice payload, typeChar null.
+  private fun splitDictEntry(sametypesequence: String?, raw: ByteArray): SplitEntry {
+    if (raw.isEmpty()) {
+      return SplitEntry(raw, null)
+    }
+    if (sametypesequence != null && sametypesequence.isNotEmpty()) {
+      return SplitEntry(raw, null)
+    }
+    val typeChar = (raw[0].toInt() and 0xff).toChar()
+    var end = raw.size
+    if (raw[end - 1].toInt() == 0) {
+      end -= 1
+    }
+    return SplitEntry(raw.copyOfRange(1, end), typeChar)
+  }
+
+  // Mirror dictEntry.ts formatFromTypeChar: 'h' -> html, else plain.
+  // NEVER 'wordnet'.
+  private fun formatFromTypeChar(typeChar: Char?): String =
+    if (typeChar == 'h') "html" else "plain"
 
   // --- .ifo (mirror parseIfo.ts) -------------------------------------
 
   private data class IfoMeta(
-    val format: String,
+    // The raw sametypesequence field, or null when absent (mirror
+    // parseIfo.ts IfoMeta.sametypesequence). Drives splitDictEntry +
+    // the per-entry format derivation — NOT a single dict-wide format.
+    val sametypesequence: String?,
     val idxoffsetbits: Int,
     val date: String?,
     val bookname: String?,
@@ -158,9 +195,6 @@ object StarDictImporter {
       val k = line.substring(0, eq).trim()
       if (k.isNotEmpty()) map[k] = line.substring(eq + 1)
     }
-    // sametypesequence -> format (matches formatFromSametypesequence).
-    val sts = map["sametypesequence"]
-    val format = if (sts == "h") "html" else "plain"
     // idxoffsetbits: default 32; only 32|64 allowed (mirror parseIfo).
     val rawBits = map["idxoffsetbits"]
     val bits = when {
@@ -171,7 +205,13 @@ object StarDictImporter {
         "parseIfo: idxoffsetbits must be 32 or 64, got \"$rawBits\"",
       )
     }
-    return IfoMeta(format, bits, map["date"], map["bookname"], map["wordcount"])
+    return IfoMeta(
+      map["sametypesequence"],
+      bits,
+      map["date"],
+      map["bookname"],
+      map["wordcount"],
+    )
   }
 
   // Deterministic built_at (mirror deterministicBuiltAt).
@@ -260,7 +300,12 @@ object StarDictImporter {
     synPath: String?,
     body: MappedByteBuffer,
     bodySize: Long,
-    format: String,
+    // The .ifo sametypesequence (null = absent). Drives splitDictEntry
+    // (strip the per-entry type byte + NUL) and the per-row format
+    // derivation. `formatOverride` (from the validated sidecar) wins
+    // over the derived format when set — precedence: override ?: derived.
+    sametypesequence: String?,
+    formatOverride: String?,
     builtAt: String,
   ): Int {
     // Start clean so reruns are deterministic.
@@ -283,15 +328,21 @@ object StarDictImporter {
           "INSERT INTO entries (key, word, definition, format) VALUES (?, ?, ?, ?)",
         )
         // .idx first (first-key-wins). Only one definition String is
-        // live per iteration (GC-eligible after executeInsert).
+        // live per iteration (GC-eligible after executeInsert). Each
+        // entry's raw .dict slice is split (strip sts-absent type byte +
+        // NUL) BEFORE decode, and its format derived per-entry from the
+        // type char unless the sidecar overrides it (mirror dictEntry.ts).
         for (e in idxEntries) {
           val key = NormalizeKey.fold(e.word)
           if (key.isNotEmpty() && seen.add(key)) {
-            insertRow(stmt, key, e.word, readDef(body, bodySize, e.offset, e.length), format)
+            val split = splitDictEntry(sametypesequence, readDef(body, bodySize, e.offset, e.length))
+            val rowFormat = formatOverride ?: formatFromTypeChar(split.typeChar)
+            insertRow(stmt, key, e.word, String(split.payload, Charsets.UTF_8), rowFormat)
           }
         }
         // .syn aliases -> canonical .idx entry (its headword + def),
-        // mirroring buildDict's merge; out-of-range index skipped.
+        // mirroring buildDict's merge; out-of-range index skipped. The
+        // body + format derive from the TARGET entry's slice.
         if (synPath != null) {
           val synFile = File(synPath)
           if (synFile.exists() && synFile.length() > 0) {
@@ -299,12 +350,17 @@ object StarDictImporter {
               val target = idxEntries.getOrNull(syn.originalWordIndex) ?: continue
               val key = NormalizeKey.fold(syn.word)
               if (key.isNotEmpty() && seen.add(key)) {
+                val split = splitDictEntry(
+                  sametypesequence,
+                  readDef(body, bodySize, target.offset, target.length),
+                )
+                val rowFormat = formatOverride ?: formatFromTypeChar(split.typeChar)
                 insertRow(
                   stmt,
                   key,
                   target.word,
-                  readDef(body, bodySize, target.offset, target.length),
-                  format,
+                  String(split.payload, Charsets.UTF_8),
+                  rowFormat,
                 )
               }
             }

@@ -9,6 +9,7 @@
 // meta absent, which provisioning reads as "reprovision".
 
 import {buildDict, type ParsedDict} from '../stardict/stardictDict';
+import {splitDictEntry} from '../stardict/dictEntry';
 import {decodeUtf8} from '../../../sdk/utf8';
 import type {DefinitionFormat} from '../../lookup';
 import type {SqliteDb} from './db';
@@ -48,7 +49,11 @@ export const entriesFromParsedDict = (parsed: ParsedDict): BaseDbRow[] => {
   const rows: BaseDbRow[] = [];
   for (const [key, entry] of parsed.index) {
     const slice = parsed.dictReader.slice(entry.offset, entry.length);
-    rows.push({key, word: entry.word, definition: decodeUtf8(slice)});
+    // Same split as lookupDict so the persisted body == the looked-up
+    // body (issue #28). No-op for sts-present dicts like WordNet, so
+    // base.db stays byte-identical.
+    const {payload} = splitDictEntry(parsed.meta.sametypesequence ?? null, slice);
+    rows.push({key, word: entry.word, definition: decodeUtf8(payload)});
   }
   return rows;
 };

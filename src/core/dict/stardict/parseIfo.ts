@@ -14,9 +14,11 @@ export type IfoMeta = {
   // 32 = 4-byte offsets in .idx (default); 64 = 8-byte for very large
   // dictionaries. Anything else is rejected as malformed.
   idxoffsetbits: 32 | 64;
-  // If present, all entries in .dict use this single type sequence and
-  // the .dict bytes for an entry are exactly its raw payload (no
-  // type prefix). The most common value is 'm' (pure UTF-8 text).
+  // If present, all entries share this single type sequence and the
+  // .dict bytes for an entry are exactly its raw payload. If ABSENT,
+  // each entry is `<type-char-byte><payload>` plus a 0x00 terminator
+  // except the last; splitDictEntry strips that metadata. Most common
+  // value is 'm' (pure UTF-8 text); 'h' is HTML.
   sametypesequence?: string;
   rawFields: Record<string, string>;
 };

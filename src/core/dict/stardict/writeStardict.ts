@@ -37,6 +37,17 @@ export type WriteOptions = {
   // UTF-8 text (default), 'h' = HTML, others are dict-specific.
   // The reader picks rendering based on this field.
   sametypesequence?: string;
+  // Emit the "sametypesequence-absent" .dict layout that StarDicts in
+  // the wild use when entries can carry mixed types: NO sametypesequence
+  // line in the .ifo, each entry's payload prefixed with a single ASCII
+  // type char byte (default 'm'), and a 0x00 terminator after every
+  // entry EXCEPT the last. Lets tests reproduce the issue-#28 layout the
+  // splitDictEntry helper must handle. The default (sts-present) path is
+  // unaffected and stays byte-identical.
+  omitSametypesequence?: boolean;
+  // Per-word type char used in the omit-sametypesequence layout. Words
+  // not listed default to 'm'. Ignored when omitSametypesequence is off.
+  perEntryType?: Record<string, string>;
 };
 
 export const writeStarDict = (
@@ -45,10 +56,12 @@ export const writeStarDict = (
 ): StarDictBytes => {
   // .idx is sorted by case-sensitive byte order in the StarDict spec.
   const sortedWords = Object.keys(entries).sort();
+  const omitSts = options.omitSametypesequence === true;
   const dictParts: Uint8Array[] = [];
   const idxBuilder: number[] = [];
   let offset = 0;
-  for (const word of sortedWords) {
+  for (let w = 0; w < sortedWords.length; w++) {
+    const word = sortedWords[w];
     const def = entries[word];
     const defBytes = encodeUtf8(def);
     const wordBytes = encodeUtf8(word);
@@ -56,10 +69,26 @@ export const writeStarDict = (
       idxBuilder.push(b);
     }
     idxBuilder.push(0);
+    // sts-absent layout: prefix a single type-char byte, then append a
+    // 0x00 terminator after every entry EXCEPT the last (mirrors the
+    // real-world StarDicts splitDictEntry must parse). The .idx length
+    // covers the prefix + payload + terminator so a reader slices the
+    // whole record. sts-present layout is byte-identical to before.
+    let entryBytes = defBytes;
+    if (omitSts) {
+      const typeChar = options.perEntryType?.[word] ?? 'm';
+      const prefix = encodeUtf8(typeChar);
+      const isLast = w === sortedWords.length - 1;
+      const trailer = isLast ? 0 : 1;
+      entryBytes = new Uint8Array(prefix.length + defBytes.length + trailer);
+      entryBytes.set(prefix, 0);
+      entryBytes.set(defBytes, prefix.length);
+      // Trailing byte is left as the zero-initialized 0x00 when present.
+    }
     writeU32BE(idxBuilder, offset);
-    writeU32BE(idxBuilder, defBytes.length);
-    dictParts.push(defBytes);
-    offset += defBytes.length;
+    writeU32BE(idxBuilder, entryBytes.length);
+    dictParts.push(entryBytes);
+    offset += entryBytes.length;
   }
   const totalDict = dictParts.reduce((s, p) => s + p.length, 0);
   const rawDict = new Uint8Array(totalDict);
@@ -77,7 +106,9 @@ export const writeStarDict = (
     `wordcount=${sortedWords.length}\n` +
     `idxfilesize=${idx.length}\n` +
     'idxoffsetbits=32\n' +
-    `sametypesequence=${options.sametypesequence ?? 'm'}\n`;
+    // sts-absent layout omits the sametypesequence line entirely (the
+    // type char lives per-entry in the .dict). Default keeps the line.
+    (omitSts ? '' : `sametypesequence=${options.sametypesequence ?? 'm'}\n`);
   const ifo = encodeUtf8(ifoText);
   return {ifo, idx, dict};
 };
