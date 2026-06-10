@@ -241,9 +241,20 @@ describe('importStardict — happy path', () => {
     // SIDECAR sets only name + language (no `format`). Forcing 'plain' here
     // would shadow an HTML StarDict's own sametypesequence=h and render its
     // <i>/<ol>/<li> markup as literal text (the fr-en-strdict bug).
-    const h = await makeHarness();
+    // Drive a sts='h' fixture so we assert BOTH that no JS override is
+    // forwarded AND that the derived row format reaches the slug DB as
+    // 'html' (not just that the override is undefined).
+    const h = await makeHarness({
+      nativeRawEntries: {
+        sts: 'h',
+        entries: [{key: 'rich', word: 'rich', raw: new TextEncoder().encode('<i>x</i>')}],
+      },
+    });
     await importStardict(h.ports);
     expect(h.runNativeImport.mock.calls[0][0].format).toBeUndefined();
+    const slug = h.slugFiles.get('my-dict.en.db')!;
+    const rich = await slug.query(SELECT_ENTRY_BY_KEY, ['rich']);
+    expect(rich[0]).toMatchObject({definition: '<i>x</i>', format: 'html'});
   });
 
   it('forwards the optional .syn path to the native import', async () => {
@@ -307,6 +318,40 @@ describe('importStardict — sametypesequence-absent body/format (issue #28)', (
     expect(rich[0]).toMatchObject({definition: '<b>bold</b>', format: 'html'});
     const flat = await slug.query(SELECT_ENTRY_BY_KEY, ['flat']);
     expect(flat[0]).toMatchObject({definition: 'plain text', format: 'plain'});
+  });
+
+  it("sts-PRESENT 'h' with NO sidecar format: rows are format='html' and bodies are the WHOLE slice (PR #31 regression guard)", async () => {
+    // sts is PRESENT -> NO per-entry type prefix and NO terminator; the
+    // body IS the whole slice. With no sidecar override the row format
+    // must STILL derive from sts[0]='h' (the v1.3.0 .ifo-level HTML
+    // behaviour) — regressing this would render <i>/<ol>/<li> as literal
+    // text. This is the device-bug guard the suite was missing.
+    const h = await makeHarness({
+      // SIDECAR (default) omits `format`, so no override reaches native.
+      nativeRawEntries: {
+        sts: 'h',
+        entries: [
+          {key: 'rich', word: 'rich', raw: enc('<b>bold</b>')},
+          {key: 'list', word: 'list', raw: enc('<ol><li>a</li></ol>')},
+        ],
+      },
+    });
+    // No sidecar override is forwarded to native (the .ifo drives format).
+    await importStardict(h.ports);
+    expect(h.runNativeImport.mock.calls[0][0].format).toBeUndefined();
+    const slug = h.slugFiles.get('my-dict.en.db')!;
+    const rich = await slug.query(SELECT_ENTRY_BY_KEY, ['rich']);
+    expect(rich[0]).toEqual({
+      word: 'rich',
+      definition: '<b>bold</b>', // whole slice, NOT stripped
+      format: 'html',
+      phonetic: null,
+    });
+    const list = await slug.query(SELECT_ENTRY_BY_KEY, ['list']);
+    expect(list[0]).toMatchObject({
+      definition: '<ol><li>a</li></ol>',
+      format: 'html',
+    });
   });
 
   it('sidecar format override wins over the per-entry type char', async () => {

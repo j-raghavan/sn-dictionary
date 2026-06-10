@@ -15,11 +15,13 @@ const enc = (s: string): Uint8Array => new TextEncoder().encode(s);
 const dec = (b: Uint8Array): string => new TextDecoder().decode(b);
 
 describe('splitDictEntry', () => {
-  test('sametypesequence PRESENT: whole slice is the payload, no type char', () => {
+  test('sametypesequence PRESENT: whole slice is the payload; typeChar IS sts[0]', () => {
     const raw = enc('a fruit');
     const {payload, typeChar} = splitDictEntry('m', raw);
     expect(dec(payload)).toBe('a fruit');
-    expect(typeChar).toBeNull();
+    // typeChar derives from sts[0] (not null), so the format derivation
+    // call site honours the .ifo-level type even with no sidecar override.
+    expect(typeChar).toBe('m');
   });
 
   test('sametypesequence PRESENT preserves a leading char that is NOT a type prefix', () => {
@@ -73,11 +75,31 @@ describe('splitDictEntry', () => {
   // CASE C: multi-char sts is out of scope for field-splitting; the
   // whole slice is the payload and the format derives from sts[0]. Must
   // not crash.
-  test('CASE C: multi-char sts -> whole slice payload, no crash, typeChar null', () => {
+  test('CASE C: multi-char sts -> whole slice payload, no crash, typeChar = sts[0]', () => {
     const raw = enc('xy body');
-    const {payload, typeChar} = splitDictEntry('hm', raw);
+    const {payload, typeChar} = splitDictEntry('mh', raw);
     expect(dec(payload)).toBe('xy body');
-    expect(typeChar).toBeNull();
+    // Field-splitting is out of scope, but the format still derives from
+    // the FIRST char of the sequence.
+    expect(typeChar).toBe('m');
+    expect(formatFromTypeChar(typeChar)).toBe('plain');
+  });
+
+  // PR #31 regression guard: an .ifo-level sametypesequence must drive
+  // the render format (no per-entry prefix, no sidecar override).
+  test("sts present 'h' -> typeChar 'h' -> format html (v1.3.0 HTML behaviour)", () => {
+    const raw = enc('<b>bold body</b>');
+    const {payload, typeChar} = splitDictEntry('h', raw);
+    expect(dec(payload)).toBe('<b>bold body</b>'); // whole slice, unstripped
+    expect(typeChar).toBe('h');
+    expect(formatFromTypeChar(typeChar)).toBe('html');
+  });
+
+  test("sts present 'm' -> typeChar 'm' -> format plain", () => {
+    const raw = enc('plain body');
+    const {typeChar} = splitDictEntry('m', raw);
+    expect(typeChar).toBe('m');
+    expect(formatFromTypeChar(typeChar)).toBe('plain');
   });
 
   test('sts-absent type byte is ASCII (single byte) even before a multibyte body', () => {

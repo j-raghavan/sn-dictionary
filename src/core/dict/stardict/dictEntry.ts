@@ -23,9 +23,12 @@ export type SplitDictEntry = {
   // The body bytes, with any sts-absent type prefix and one trailing
   // 0x00 removed. Decode this (UTF-8) to get the definition string.
   payload: Uint8Array;
-  // The single ASCII type char read from an sts-ABSENT entry (e.g. 'm',
-  // 'h'), or null when sts is present, the slice is empty, or sts is
-  // multi-char (field-splitting is out of scope — see CASE C).
+  // The single ASCII type char that drives the render format: the
+  // per-entry prefix byte for an sts-ABSENT entry, or sts[0] when
+  // sametypesequence is present (incl. multi-char sts — CASE C — where
+  // field-splitting is out of scope but the format still derives from
+  // the first char). null only for an empty slice. formatFromTypeChar
+  // is the single derivation point.
   typeChar: string | null;
 };
 
@@ -39,11 +42,13 @@ export const splitDictEntry = (
     return {payload: raw, typeChar: null};
   }
   // sts PRESENT: the whole slice is the payload regardless of how many
-  // type chars the field declares. Multi-char field-splitting is out of
-  // scope (CASE C) — we still return the whole slice and never derive a
-  // typeChar from it (format comes from sts[0] at the call site).
+  // type chars the field declares, and the type char IS sts[0] — so an
+  // .ifo-level sametypesequence=h dict renders as HTML even with no
+  // per-entry prefix and no sidecar override. Multi-char field-splitting
+  // (CASE C) is still out of scope: the payload stays the whole slice,
+  // but the format derives from sts[0].
   if (sametypesequence !== null && sametypesequence.length > 0) {
-    return {payload: raw, typeChar: null};
+    return {payload: raw, typeChar: sametypesequence[0]};
   }
   // sts ABSENT: first byte is the ASCII type char; the rest is the body,
   // minus exactly one trailing 0x00 when present (the inter-entry

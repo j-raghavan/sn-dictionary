@@ -149,17 +149,20 @@ object StarDictImporter {
 
   private data class SplitEntry(val payload: ByteArray, val typeChar: Char?)
 
-  // sts PRESENT  -> whole slice is the payload, typeChar null.
+  // sts PRESENT  -> whole slice is the payload; typeChar = sts[0] so an
+  //                 .ifo-level sametypesequence=h dict renders HTML even
+  //                 with no per-entry prefix / no sidecar override.
+  //                 multi-char sts (CASE C) still uses sts[0] for format;
+  //                 field-splitting is out of scope.
   // sts ABSENT   -> raw[0] is the ASCII type char; the rest is the body
   //                 minus exactly one trailing 0x00 when present.
   // empty slice  -> {empty, null} (guard before indexing raw[0]).
-  // multi-char sts is out of scope: whole slice payload, typeChar null.
   private fun splitDictEntry(sametypesequence: String?, raw: ByteArray): SplitEntry {
     if (raw.isEmpty()) {
       return SplitEntry(raw, null)
     }
     if (sametypesequence != null && sametypesequence.isNotEmpty()) {
-      return SplitEntry(raw, null)
+      return SplitEntry(raw, sametypesequence.firstOrNull())
     }
     val typeChar = (raw[0].toInt() and 0xff).toChar()
     var end = raw.size
