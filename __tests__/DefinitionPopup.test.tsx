@@ -1674,29 +1674,25 @@ describe('DefinitionPopup — dictionary manager (F3)', () => {
 
   test('Save is disabled until an edit, enabled after, and confirms INLINE (no modal)', async () => {
     const spy = jest.fn(async (_prefs: DictPref[]) => undefined);
-    // notify must NOT be used for the save acknowledgement — the old code reused
-    // the two-button confirm dialog as a notification (two "Close" buttons).
-    const notify = jest.fn(async () => undefined);
-    setPopupActions({
-      ...dictManagerActions(
+    setPopupActions(
+      dictManagerActions(
         [dictPref('User', true, 0), dictPref('WordNet', true, 1)],
         spy,
       ),
-      notify,
-    });
+    );
     const tree = renderPopup();
     await openSettings(tree);
     // No edits yet -> Save is disabled (a tap is a no-op, nothing persisted).
     await act(async () => findByLabel(tree, 'Save')[0].props.onPress());
     expect(spy).not.toHaveBeenCalled();
     expect(collectText(tree)).not.toContain('Settings saved');
-    // Edit -> Save now persists + confirms inline.
+    // Edit -> Save now persists + confirms inline (NOT via a modal dialog —
+    // the old code reused the two-button confirm, showing two "Close" buttons).
     await act(async () => findByLabel(tree, 'Disable: User')[0].props.onPress());
     await act(async () => findByLabel(tree, 'Save')[0].props.onPress());
     expect(spy).toHaveBeenCalledTimes(1);
-    // Inline acknowledgement, NOT a modal dialog.
+    // Inline acknowledgement.
     expect(collectText(tree)).toContain('Settings saved');
-    expect(notify).not.toHaveBeenCalled();
     // After a successful save the panel is clean -> Save no-ops again.
     await act(async () => findByLabel(tree, 'Save')[0].props.onPress());
     expect(spy).toHaveBeenCalledTimes(1);
@@ -1709,21 +1705,18 @@ describe('DefinitionPopup — dictionary manager (F3)', () => {
     const spy = jest.fn(async (_prefs: DictPref[]) => {
       throw new Error('disk full');
     });
-    const notify = jest.fn(async () => undefined);
-    setPopupActions({
-      ...dictManagerActions(
+    setPopupActions(
+      dictManagerActions(
         [dictPref('User', true, 0), dictPref('WordNet', true, 1)],
         spy,
       ),
-      notify,
-    });
+    );
     const tree = renderPopup();
     await openSettings(tree);
     await act(async () => findByLabel(tree, 'Disable: User')[0].props.onPress());
     await act(async () => findByLabel(tree, 'Save')[0].props.onPress());
     expect(spy).toHaveBeenCalledTimes(1);
     expect(collectText(tree)).toContain("Couldn't save settings");
-    expect(notify).not.toHaveBeenCalled();
     // Still dirty after the failure -> a retry Save fires again.
     await act(async () => findByLabel(tree, 'Save')[0].props.onPress());
     expect(spy).toHaveBeenCalledTimes(2);
@@ -2286,7 +2279,6 @@ const exportActions = (
       {label: 'WordNet', filename: 'base.db'},
       {label: 'User', filename: 'user.db'},
     ] as DbFile[],
-  notify: PopupActions['notify'] = async () => undefined,
 ): PopupActions => ({
   lookupThesaurus: async () => ({lang: 'en', omw: {synonyms: [], antonyms: []}}),
   addUserEntry: async () => undefined,
@@ -2299,7 +2291,6 @@ const exportActions = (
   listFolders,
   createFolder,
   exportDbs,
-  notify,
 });
 
 describe('DefinitionPopup — DB export (F5)', () => {
@@ -2354,22 +2345,25 @@ describe('DefinitionPopup — DB export (F5)', () => {
     expect(text).toContain(MYSTYLE);
   });
 
-  test('the export result is ALSO surfaced via notify (a modal the user cannot miss)', async () => {
-    const notifySpy = jest.fn(async () => undefined);
-    setPopupActions(
-      exportActions(undefined, undefined, undefined, undefined, notifySpy),
-    );
+  test('the export result is surfaced as a prominent inline alert banner (no modal)', async () => {
+    setPopupActions(exportActions());
     const tree = renderPopup();
     await openSettings(tree);
     await act(async () => {
       findByLabel(tree, 'Export dictionaries')[0].props.onPress();
       await flush();
     });
-    // The same result string handed to the inline summary is also pushed to
-    // the dialog — so a successful export can't look like nothing happened.
-    expect(notifySpy).toHaveBeenCalledWith(
-      expect.stringContaining('Export complete'),
+    // The result renders inline with role=alert (the can't-miss banner that
+    // replaced the two-"Close"-button modal) — there is no notify/dialog port.
+    const alerts = tree.root.findAll(
+      n => n.props.accessibilityRole === 'alert',
     );
+    const alertText = alerts
+      .map(n => (Array.isArray(n.props.children)
+        ? n.props.children.join('')
+        : String(n.props.children)))
+      .join(' | ');
+    expect(alertText).toContain('Export complete');
   });
 
   test('a partial-failure summary lists the failed file (F5-AC4)', async () => {

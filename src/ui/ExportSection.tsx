@@ -130,13 +130,14 @@ export default function ExportSection(props: {
       });
   };
 
-  // Show a result BOTH inline (persistent) AND as a modal dialog (notify) so
-  // the user can't miss it — an inline summary at the bottom of a scrolled
-  // panel was easy to overlook (the export looked dead though it had run). The
-  // dialog is best-effort (a missing notify port just leaves the inline text).
+  // Show the export/restore result inline, as a prominent bordered banner
+  // directly below the action buttons the user just tapped. This used to ALSO
+  // fire a modal (`notify`), but the only native dialog is the two-button
+  // confirm — so a one-action acknowledgement surfaced TWO identical "Close"
+  // buttons. Dropped: the banner (accessibilityRole="alert", right under the
+  // buttons) is the can't-miss surface, matching the inline Save status.
   const report = (msg: string): void => {
     setSummary(msg);
-    actions?.notify?.(msg).catch(() => {});
   };
 
   // Export every DB into the current folder. exportDbs orchestrates the
@@ -281,7 +282,7 @@ export default function ExportSection(props: {
       </View>
 
       {summary !== null ? (
-        <Text accessibilityRole="text" style={styles.exportSummary}>
+        <Text accessibilityRole="alert" style={styles.exportSummary}>
           {summary}
         </Text>
       ) : null}
