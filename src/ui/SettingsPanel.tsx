@@ -24,6 +24,22 @@ export default function SettingsPanel(_props: {
   // Save button; cleared on (re)load and on a successful save.
   const [dirty, setDirty] = React.useState<boolean>(false);
   const [saving, setSaving] = React.useState<boolean>(false);
+  // Inline save outcome shown next to the Save button — a 'Settings saved' /
+  // 'Couldn't save settings' line, NOT a modal. The old confirmation reused the
+  // native two-button RattaDialog as a notification, so it surfaced TWO
+  // identical "Close" buttons for a single-action acknowledgement. An inline
+  // status is the right shape (one action: read it), and it's host-testable
+  // (no native overlay). Cleared the instant the user stages another edit.
+  const [saveStatus, setSaveStatus] = React.useState<'saved' | 'failed' | null>(
+    null,
+  );
+  // F7-AC3: after a Remove, the engine reports whether the on-disk source files
+  // could also be deleted (`removed.sources`). When they couldn't, the dict can
+  // re-import itself on the next reload — the user MUST be told, or a dict they
+  // "removed" silently returns. Surfaced as an inline banner (not a modal),
+  // cleared on the next edit/delete.
+  const [sourcesLeftWarning, setSourcesLeftWarning] =
+    React.useState<boolean>(false);
   // F4: keep-source-files toggle. Defaults to true (keep) until the engine
   // resolves the persisted flag — matching the engine default, so the
   // initial render never shows a misleading "delete" state.
@@ -102,12 +118,22 @@ export default function SettingsPanel(_props: {
       return;
     }
     const {confirmDeleteDict, deleteImportedDict} = actions;
+    // A new delete attempt clears any prior warning so it reflects THIS result.
+    setSourcesLeftWarning(false);
     confirmDeleteDict(pref.name)
       .then(confirmed => {
         if (!confirmed) {
           return;
         }
-        return deleteImportedDict(pref.prefKey).then(() => {
+        return deleteImportedDict(pref.prefKey).then(result => {
+          // F7-AC3: warn ONLY when the source files were found but couldn't be
+          // deleted (`sourcesAtRisk`) — the dict can re-import on reload. NOT on
+          // `removed.sources === false` alone, which is also the benign
+          // "nothing on disk to delete" case (keep=false import) and must not
+          // warn.
+          if (!cancelledRef.current && result.sourcesAtRisk) {
+            setSourcesLeftWarning(true);
+          }
           refreshList();
         });
       })
@@ -124,12 +150,17 @@ export default function SettingsPanel(_props: {
     const renumbered = next.map((pref, index) => ({...pref, sortOrder: index}));
     setPrefs(renumbered);
     setDirty(true);
+    // A fresh edit invalidates the previous save outcome — drop the inline
+    // status so a stale "Settings saved" never lingers over unsaved changes.
+    setSaveStatus(null);
+    setSourcesLeftWarning(false);
   };
 
   // Persist the staged dict prefs on an explicit Save: one setDictPrefs call
-  // (the engine recomputes the live `sources`), then clear dirty + confirm via
-  // the notify dialog. A failure surfaces the reason and KEEPS dirty so the
-  // user can retry. Guarded so a double-tap can't fire two overlapping writes.
+  // (the engine recomputes the live `sources`), then clear dirty + show the
+  // inline "saved" status. A failure surfaces the inline "couldn't save" status
+  // and KEEPS dirty so the user can retry (the engine logs the detailed reason).
+  // Guarded so a double-tap can't fire two overlapping writes.
   const save = (): void => {
     if (saving || !dirty) {
       return;
@@ -146,13 +177,11 @@ export default function SettingsPanel(_props: {
           return;
         }
         setDirty(false);
-        actions?.notify?.(t('settings.saved')).catch(() => {});
+        setSaveStatus('saved');
       })
-      .catch((e: unknown) => {
+      .catch(() => {
         if (!cancelledRef.current) {
-          actions
-            ?.notify?.(`${t('settings.saveFailed')}: ${(e as Error).message}`)
-            .catch(() => {});
+          setSaveStatus('failed');
         }
       })
       .finally(() => {
@@ -201,8 +230,24 @@ export default function SettingsPanel(_props: {
       <View style={styles.settingsHeaderRow}>
         <Text style={styles.settingsTitle}>{t('settings.title')}</Text>
         <View style={styles.settingsHeaderActions}>
+          {/* Inline save outcome — an acknowledgement the user reads, not a
+              modal to dismiss. Sits just left of Save; cleared on the next
+              edit. */}
+          {saveStatus ? (
+            <Text
+              accessibilityRole="alert"
+              style={
+                saveStatus === 'saved'
+                  ? styles.settingsSaveStatus
+                  : [styles.settingsSaveStatus, styles.settingsSaveStatusError]
+              }>
+              {saveStatus === 'saved'
+                ? t('settings.saved')
+                : t('settings.saveFailed')}
+            </Text>
+          ) : null}
           {/* Save: enabled only when there are unsaved edits (dirty). One
-              explicit write, with a "Saved" confirmation. */}
+              explicit write, with an inline "Saved" confirmation. */}
           <Pressable
             accessibilityRole="button"
             accessibilityState={{disabled: !dirty || saving}}
@@ -240,6 +285,13 @@ export default function SettingsPanel(_props: {
         <Text style={styles.settingsSectionTitle}>
           {t('settings.dictionaries')}
         </Text>
+        {/* F7-AC3: a removed dict whose source files couldn't be deleted may
+            re-import on reload — warn so its return isn't a surprise. */}
+        {sourcesLeftWarning ? (
+          <Text accessibilityRole="alert" style={styles.settingsWarning}>
+            {t('settings.deleteSourcesLeft')}
+          </Text>
+        ) : null}
         {prefs.map((pref, index) => (
           <View key={pref.prefKey} style={styles.dictRow}>
             <Pressable

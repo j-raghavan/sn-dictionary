@@ -1672,8 +1672,10 @@ describe('DefinitionPopup — dictionary manager (F3)', () => {
     expect(payload.map(p => p.sortOrder)).toEqual([0, 1]);
   });
 
-  test('Save is disabled until an edit, enabled after, and confirms via notify', async () => {
+  test('Save is disabled until an edit, enabled after, and confirms INLINE (no modal)', async () => {
     const spy = jest.fn(async (_prefs: DictPref[]) => undefined);
+    // notify must NOT be used for the save acknowledgement — the old code reused
+    // the two-button confirm dialog as a notification (two "Close" buttons).
     const notify = jest.fn(async () => undefined);
     setPopupActions({
       ...dictManagerActions(
@@ -1687,17 +1689,23 @@ describe('DefinitionPopup — dictionary manager (F3)', () => {
     // No edits yet -> Save is disabled (a tap is a no-op, nothing persisted).
     await act(async () => findByLabel(tree, 'Save')[0].props.onPress());
     expect(spy).not.toHaveBeenCalled();
-    // Edit -> Save now persists + confirms.
+    expect(collectText(tree)).not.toContain('Settings saved');
+    // Edit -> Save now persists + confirms inline.
     await act(async () => findByLabel(tree, 'Disable: User')[0].props.onPress());
     await act(async () => findByLabel(tree, 'Save')[0].props.onPress());
     expect(spy).toHaveBeenCalledTimes(1);
-    expect(notify).toHaveBeenCalledWith(expect.stringContaining('saved'));
+    // Inline acknowledgement, NOT a modal dialog.
+    expect(collectText(tree)).toContain('Settings saved');
+    expect(notify).not.toHaveBeenCalled();
     // After a successful save the panel is clean -> Save no-ops again.
     await act(async () => findByLabel(tree, 'Save')[0].props.onPress());
     expect(spy).toHaveBeenCalledTimes(1);
+    // Staging another edit clears the stale "saved" status.
+    await act(async () => findByLabel(tree, 'Enable: User')[0].props.onPress());
+    expect(collectText(tree)).not.toContain('Settings saved');
   });
 
-  test('a failed save surfaces saveFailed and STAYS dirty (retryable)', async () => {
+  test('a failed save surfaces saveFailed INLINE and STAYS dirty (retryable)', async () => {
     const spy = jest.fn(async (_prefs: DictPref[]) => {
       throw new Error('disk full');
     });
@@ -1714,17 +1722,19 @@ describe('DefinitionPopup — dictionary manager (F3)', () => {
     await act(async () => findByLabel(tree, 'Disable: User')[0].props.onPress());
     await act(async () => findByLabel(tree, 'Save')[0].props.onPress());
     expect(spy).toHaveBeenCalledTimes(1);
-    expect(notify).toHaveBeenCalledWith(expect.stringContaining("Couldn't save"));
+    expect(collectText(tree)).toContain("Couldn't save settings");
+    expect(notify).not.toHaveBeenCalled();
     // Still dirty after the failure -> a retry Save fires again.
     await act(async () => findByLabel(tree, 'Save')[0].props.onPress());
     expect(spy).toHaveBeenCalledTimes(2);
   });
 
   test('Save with no setDictPrefs port wired is a safe no-op (no crash)', async () => {
-    const {setDictPrefs: _omit, ...noPersist} = dictManagerActions([
+    const noPersist = dictManagerActions([
       dictPref('User', true, 0),
       dictPref('WordNet', true, 1),
     ]);
+    delete (noPersist as Partial<PopupActions>).setDictPrefs;
     setPopupActions(noPersist as PopupActions);
     const tree = renderPopup();
     await openSettings(tree);
@@ -2020,6 +2030,7 @@ describe('DefinitionPopup — keep-sources toggle (F4)', () => {
 const okDelete = {
   ok: true as const,
   removed: {slugDb: true, audit: true, pref: true, sources: true},
+  sourcesAtRisk: false,
 };
 
 // PopupActions with the F3 list + the F7 delete seam: a confirm port (resolves
@@ -2169,6 +2180,82 @@ describe('DefinitionPopup — remove imported dict (F7)', () => {
       await Promise.resolve();
     });
     expect(collectText(tree)).toContain('hello');
+  });
+
+  test('a partial delete (source files survived) warns the user (F7-AC3)', async () => {
+    const partial = {
+      ok: true as const,
+      removed: {slugDb: true, audit: true, pref: true, sources: false},
+      sourcesAtRisk: true,
+    };
+    const lists = [
+      [dictPref('User', true, 0), dictPref('Dune', true, 1, true), dictPref('WordNet', true, 2)],
+      [dictPref('User', true, 0), dictPref('WordNet', true, 1)],
+    ];
+    let call = 0;
+    setPopupActions(
+      deleteActions(lists[0], async () => true, async () => partial, async () =>
+        lists[Math.min(call++, 1)],
+      ),
+    );
+    const tree = renderPopup();
+    await openSettings(tree);
+    await act(async () => {
+      findByLabel(tree, 'Remove: Dune')[0].props.onPress();
+      await flush();
+    });
+    // The removed row is gone, but the user is warned it may re-import on reload.
+    expect(findByLabel(tree, 'Remove: Dune')).toHaveLength(0);
+    expect(collectText(tree)).toContain('may reappear');
+  });
+
+  test('removed.sources=false but NOT at risk (keep=false import) shows NO warning', async () => {
+    // The source files were never on disk to delete (a keep=false import), so
+    // the engine reports removed.sources:false WITHOUT sourcesAtRisk — no
+    // resurrection risk, so the panel must NOT warn (the false-positive fix).
+    const benign = {
+      ok: true as const,
+      removed: {slugDb: true, audit: true, pref: true, sources: false},
+      sourcesAtRisk: false,
+    };
+    const lists = [
+      [dictPref('User', true, 0), dictPref('Dune', true, 1, true), dictPref('WordNet', true, 2)],
+      [dictPref('User', true, 0), dictPref('WordNet', true, 1)],
+    ];
+    let call = 0;
+    setPopupActions(
+      deleteActions(lists[0], async () => true, async () => benign, async () =>
+        lists[Math.min(call++, 1)],
+      ),
+    );
+    const tree = renderPopup();
+    await openSettings(tree);
+    await act(async () => {
+      findByLabel(tree, 'Remove: Dune')[0].props.onPress();
+      await flush();
+    });
+    expect(findByLabel(tree, 'Remove: Dune')).toHaveLength(0);
+    expect(collectText(tree)).not.toContain('may reappear');
+  });
+
+  test('a clean delete (source files removed) shows NO warning', async () => {
+    const lists = [
+      [dictPref('User', true, 0), dictPref('Dune', true, 1, true), dictPref('WordNet', true, 2)],
+      [dictPref('User', true, 0), dictPref('WordNet', true, 1)],
+    ];
+    let call = 0;
+    setPopupActions(
+      deleteActions(lists[0], async () => true, async () => okDelete, async () =>
+        lists[Math.min(call++, 1)],
+      ),
+    );
+    const tree = renderPopup();
+    await openSettings(tree);
+    await act(async () => {
+      findByLabel(tree, 'Remove: Dune')[0].props.onPress();
+      await flush();
+    });
+    expect(collectText(tree)).not.toContain('may reappear');
   });
 });
 

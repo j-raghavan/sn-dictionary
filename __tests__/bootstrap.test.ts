@@ -29,6 +29,26 @@ import type {SqliteDb} from '../src/core/dict/sqlite/db';
 import type {ImportJobDescriptor} from '../src/core/dict/userDictDiscovery';
 import type {RunImportPorts} from '../src/core/dict/sqlite/runImport';
 
+// --- identityKey (dict_prefs primary key) ---------------------------
+
+describe('identityKey — dict_prefs primary key', () => {
+  // DEVICE REGRESSION: the separator MUST NOT be NUL. on-device
+  // react-native-sqlite-storage stores TEXT with C-string semantics, so an
+  // embedded NUL truncated the persisted pref_key at the separator ("Dune und"
+  // -> "Dune"); the live key never matched back and every imported dict's saved
+  // enable/order silently reverted on reopen. Host SQLite (better-sqlite3)
+  // tolerates embedded NULs, so ONLY this explicit assertion catches a
+  // reintroduction — a round-trip test would pass on the host and still ship the
+  // bug.
+  it('never embeds a NUL byte (would truncate the key in on-device SQLite)', () => {
+    expect(identityKey('Dune', 'en')).not.toContain('\u0000');
+  });
+
+  it('keeps distinct (name, lang) pairs distinct (no separator collision)', () => {
+    expect(identityKey('ab', 'c')).not.toBe(identityKey('a', 'bc'));
+  });
+});
+
 // --- reconcileImports (pure) ---------------------------------------
 
 const descriptor = (name: string, lang: string): ImportJobDescriptor => ({
@@ -870,7 +890,7 @@ describe('bootstrap — F3 dictionary manager (allSources + prefs)', () => {
         await setDictPrefs(db, [
           prefRow('User', 'User', true, 0),
           {
-            prefKey: 'Dune\u0000en',
+            prefKey: identityKey('Dune', 'en'),
             name: 'Dune',
             enabled: false,
             sortOrder: 1,
@@ -903,7 +923,7 @@ describe('bootstrap — F3 dictionary manager (allSources + prefs)', () => {
           prefRow('WordNet', 'WordNet', true, 0),
           prefRow('User', 'User', true, 1),
           {
-            prefKey: 'Dune\u0000en',
+            prefKey: identityKey('Dune', 'en'),
             name: 'Dune',
             enabled: true,
             sortOrder: 2,
@@ -964,7 +984,7 @@ describe('bootstrap — F3 dictionary manager (allSources + prefs)', () => {
       prefsSeed: async db => {
         await setDictPrefs(db, [
           {
-            prefKey: 'Dune\u0000en',
+            prefKey: identityKey('Dune', 'en'),
             name: 'Dune',
             enabled: false,
             sortOrder: 0,
@@ -995,7 +1015,7 @@ describe('bootstrap — F3 dictionary manager (allSources + prefs)', () => {
     await handle.setDictPrefs([
       prefRow('User', 'User', true, 0),
       {
-        prefKey: 'Dune\u0000en',
+        prefKey: identityKey('Dune', 'en'),
         name: 'Dune',
         enabled: false,
         sortOrder: 1,
@@ -1014,7 +1034,7 @@ describe('bootstrap — F3 dictionary manager (allSources + prefs)', () => {
     await handle.setDictPrefs([
       prefRow('User', 'User', true, 0),
       {
-        prefKey: 'Dune\u0000en',
+        prefKey: identityKey('Dune', 'en'),
         name: 'Dune',
         enabled: true,
         sortOrder: 1,
@@ -1239,6 +1259,7 @@ describe('bootstrap — F7 deleteImportedDict (full removal, AC1)', () => {
     expect(res).toEqual({
       ok: true,
       removed: {slugDb: true, audit: true, pref: false, sources: true},
+      sourcesAtRisk: false,
     });
     // Gone from BOTH the live sources and the full registry.
     expect(handle.sources.map(s => s.name)).toEqual(['User', 'WordNet']);
@@ -1490,7 +1511,11 @@ describe('bootstrap — F7 source set not removable (AC3)', () => {
     expect(res.ok).toBe(true);
     expect(handle.sources.map(s => s.name)).toEqual(['User', 'WordNet']);
     // ...but the leftover source set could not be removed -> warn the user.
+    // A descriptor matched AND a file survived, so this is a real resurrection
+    // risk: sourcesAtRisk is the signal the UI warns on (distinct from
+    // removed.sources===false, which is also the benign no-descriptor case).
     expect(res.removed.sources).toBe(false);
+    expect(res.sourcesAtRisk).toBe(true);
     expect(warn).toHaveBeenCalledWith(
       expect.stringContaining('may reappear on reload'),
     );
@@ -1583,6 +1608,8 @@ describe('bootstrap — F7 idempotent / partial delete (AC5/FR5/EC10)', () => {
     expect(res.removed.slugDb).toBe(false);
     expect(res.removed.sources).toBe(false);
     expect(res.removed.audit).toBe(true);
+    // No delete was attempted, so there's no resurrection risk -> no UI warning.
+    expect(res.sourcesAtRisk).toBe(false);
     // Still removed from the runtime registries.
     expect(handle.sources.map(s => s.name)).toEqual(['User', 'WordNet']);
   });
@@ -1759,6 +1786,10 @@ describe('bootstrap — F7 x F3 cross-feature delete', () => {
     // No descriptor to remove -> removed.sources false, but that is SUCCESS.
     expect(res.ok).toBe(true);
     expect(res.removed.sources).toBe(false);
+    // Critically: NO descriptor on disk means no resurrection risk, so the UI
+    // must NOT warn — sourcesAtRisk stays false even though removed.sources is
+    // false (the false-positive the warning condition guards against).
+    expect(res.sourcesAtRisk).toBe(false);
     expect(res.removed.audit).toBe(true);
     expect(res.removed.slugDb).toBe(true);
     expect(await findImportByNameLang(h.userDb, 'Fresh', 'en')).toBeNull();

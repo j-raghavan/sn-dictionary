@@ -19,7 +19,11 @@ const PLUGIN_DIR = 'plugins/sndictdfltbasev1/';
 
 // A baseline set: base.db, user.db, one imported slug — all under the
 // plugin dir. The reasons object the orchestration throws on abort.
-const reasons = {pluginDir: PLUGIN_DIR, noSpace: 'NO_SPACE'};
+const reasons = {
+  pluginDir: PLUGIN_DIR,
+  pluginDirMessage: 'PLUGIN_DIR_GUARD',
+  noSpace: 'NO_SPACE',
+};
 
 const dbSet = (): ExportableDb[] => [
   {label: 'WordNet', filename: 'base.db', srcPath: `${PLUGIN_DIR}base.db`},
@@ -118,7 +122,7 @@ describe('exportDbs — plugin-dir guard (F5-FR4 / F5-AC5)', () => {
     const listDbs = jest.fn(async () => dbSet());
     await expect(
       exportDbs(PLUGIN_DIR, happyPorts({copyFile, listDbs}), reasons),
-    ).rejects.toThrow(PLUGIN_DIR);
+    ).rejects.toThrow('PLUGIN_DIR_GUARD');
     // Guard fires BEFORE any I/O — not even listDbs ran.
     expect(listDbs).not.toHaveBeenCalled();
     expect(copyFile).not.toHaveBeenCalled();
@@ -128,7 +132,7 @@ describe('exportDbs — plugin-dir guard (F5-FR4 / F5-AC5)', () => {
     const copyFile = jest.fn(async () => true);
     await expect(
       exportDbs(`${PLUGIN_DIR}sub/backup`, happyPorts({copyFile}), reasons),
-    ).rejects.toThrow(PLUGIN_DIR);
+    ).rejects.toThrow('PLUGIN_DIR_GUARD');
     expect(copyFile).not.toHaveBeenCalled();
   });
 });

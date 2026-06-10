@@ -14,8 +14,11 @@ export const popupStyles = StyleSheet.create({
     padding: 24,
   },
   card: {
-    minWidth: 480,
-    maxWidth: 640,
+    // FIXED width (not min/max) so the popup is the SAME size on every tab and
+    // state. With a min/max range the card sized to its content, so switching
+    // Definition <-> Thesaurus (long body vs short synonym list) visibly
+    // grew/shrank the window. A fixed width pins it; the body scrolls within.
+    width: 640,
     maxHeight: 520,
     backgroundColor: '#ffffff',
     borderRadius: 8,
@@ -267,6 +270,24 @@ export const popupStyles = StyleSheet.create({
   settingsHeaderActions: {
     flexDirection: 'row',
     alignItems: 'center',
+  },
+  // Inline save outcome shown left of the Save button — italic grey so it
+  // reads as a status, not an action (mirrors the popup's copyStatus). Replaces
+  // the old two-"Close"-button RattaDialog confirmation. marginRight separates
+  // it from Save; flexShrink lets it yield before the buttons on a narrow card.
+  settingsSaveStatus: {
+    fontSize: 14,
+    color: '#555555',
+    fontStyle: 'italic',
+    flexShrink: 1,
+    marginRight: 12,
+  },
+  // The failure variant keeps the same footprint but in solid black so a
+  // "Couldn't save settings" reads as a problem the user must act on.
+  settingsSaveStatusError: {
+    color: '#000000',
+    fontStyle: 'normal',
+    fontWeight: '700',
   },
   // Save: a filled (black) button when there are unsaved edits, greyed/
   // outlined when clean or mid-save — so "enabled only when changed" reads at

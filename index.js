@@ -388,10 +388,12 @@ bootstrap(bootstrapPorts, logger)
       // F7 delete an imported dict: the confirm dialog is a native overlay
       // (device-only), so it lives here as the host-mockable port the panel
       // calls; only the Delete button (showRattaDialog -> true) proceeds.
-      // The delete itself runs through the host-tested RuntimeHandle.
-      confirmDeleteDict: () =>
+      // The delete itself runs through the host-tested RuntimeHandle. The dict
+      // `name` (a proper noun — not re-translated) heads the localized prompt
+      // so the user sees WHICH dictionary they're about to remove.
+      confirmDeleteDict: name =>
         NativeUIUtils.showRattaDialog(
-          t('settings.deleteDictPrompt'),
+          `${name}\n\n${t('settings.deleteDictPrompt')}`,
           t('common.cancel'),
           t('common.delete'),
           false,
@@ -453,6 +455,7 @@ bootstrap(bootstrapPorts, logger)
           },
           {
             pluginDir: PLUGIN_LOCATION,
+            pluginDirMessage: t('settings.exportPluginDir'),
             noSpace: t('settings.exportNoSpace'),
           },
           logger,

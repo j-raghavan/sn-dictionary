@@ -1,6 +1,6 @@
 # Dictionary Plugin for Supernote
 
-![Tests](https://img.shields.io/badge/tests-828%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-1118%20passed-brightgreen)
 ![Coverage](https://img.shields.io/badge/coverage-99%25%20lines%20%2F%2098%25%20branches-brightgreen)
 ![Lint](https://img.shields.io/badge/lint-passing-brightgreen)
 ![Platform](https://img.shields.io/badge/platform-Supernote-blue)
@@ -15,7 +15,7 @@ A Supernote plugin that adds offline English-word lookup to handwritten notes an
 - **Real WordNet content + thesaurus.** 149,535 Princeton WordNet 2.x definitions (BSD-style license) plus an English synonym/antonym thesaurus from Open English WordNet 2023 (CC BY 4.0) and the Moby Thesaurus (public domain), built into a single prebuilt SQLite `base.db` that ships inside the `.snplg` and is opened on-device by the native SQLite engine. No network at runtime; lookup is one indexed `SELECT` (no per-reload parse).
 - **OCR-aware.** When you lasso handwriting, the plugin runs the firmware's stroke recogniser (`recognizeElements`) before the lookup, so the popup shows what was *recognised* alongside the matching definition. Saved-and-reloaded handwriting (`trailLink`) and recognised titles (`title`) are covered by the same path — not just freshly-drawn strokes.
 - **Structured popup.** Each WordNet sense renders as its own block: a part-of-speech badge (*noun* / *verb* / *adjective* / *adverb*), a numbered sense, the definition, italicised example sentences in curly quotes, and a `Synonyms:` line. Senses are visually separated so multi-sense entries (e.g. "AI" — Army Intelligence vs. artificial intelligence vs. three-toed sloth vs. artificial insemination) are scannable at a glance.
-- **Bilingual UI chrome.** The plugin name on the plugin manager card, the **Lookup** toolbar label, and every popup label (`Synonyms:`, `OCR:`, `No definition found for…`, `Close`) localise into Simplified Chinese, Traditional Chinese, Japanese, Thai, and Dutch based on the device's system locale. The dictionary content stays English; the surrounding chrome doesn't.
+- **Bilingual UI chrome.** The plugin name on the plugin manager card, the **Lookup** toolbar label, and every popup label (`Synonyms:`, `OCR:`, `No definition found for…`, `Close`) localise into Simplified Chinese, Traditional Chinese, Japanese, Thai, Dutch, and German based on the device's system locale. The dictionary content stays English; the surrounding chrome doesn't.
 - **Case- and whitespace-insensitive.** "Anatomy", "anatomy", and "  ANATOMY  " all hit the same entry.
 - **Bring-your-own dictionary** *(shipped)* — drop a **StarDict** folder or a **CSV** file into `MyStyle/SnDict/` and the plugin imports it into its own SQLite DB at startup (native, off-thread; **source files are kept by default** — a Settings toggle / first-run prompt lets you opt in to deleting them after a verified import). User dictionaries precede the base on lookup, so your terms shadow generic ones, and a `meta.json` sidecar can name the dict, set its language, and (for CSV) map columns including an optional phonetic field. A separate prebuilt custom `.snplg` via an in-browser converter (Prong B) may still come later.
 
@@ -65,6 +65,15 @@ By design, **the plugin is pure read** — it never modifies the page, never del
 5. Read the definition. Tap **Close** when done.
 
 Lookup is ready in well under a second after the plugin process spins up — the native SQLite engine just opens the prebuilt `base.db` (no parse, no in-memory index build), and every lookup is a single indexed `SELECT`. (Measured ~250 ms to Lookup-ready on a note re-open; ADR-0007.)
+
+## Settings
+
+Tap the **gear (⚙)** in the top-right of any lookup popup to open Settings. Edits are staged locally and only written when you tap **Save** (a "Settings saved" line confirms); **Back** returns to the definition.
+
+- **Dictionaries** — every active source (the bundled WordNet, your saved words, and each imported dict) shows with a checkbox. Tap a row to enable/disable it; disabled sources are skipped on lookup (turning them all off warns you). With two or more dictionaries the **↑ / ↓** arrows reorder precedence — results appear in this order, so move the dictionary you want first to the top. An imported dictionary also has a **Remove** button: it confirms (naming the dictionary), then deletes its database and any leftover source files. If a source file can't be deleted, you're warned the dict may reappear on the next reload.
+- **Import sources** — the **Keep source files after import** toggle decides whether the files you dropped in `MyStyle/SnDict/` are kept after the dictionary is built, or deleted once the import is verified (default: keep). The same choice is offered once, the first time you import.
+- **Backup** — **Export** copies the bundled `base.db`, your `user.db` (saved words + settings), and every imported dictionary to a folder you choose under `MyStyle/`. **Restore** copies those DBs back over the live ones — reopen the plugin afterwards to finish. `base.db` is included in an export but is never overwritten on restore (it ships with the plugin).
+- **Copy** — in the definition popup, the **Copy** button puts the headword plus the current tab's text (definition or thesaurus) on the device's system clipboard for pasting into other apps. Pasting into handwritten notes isn't supported — the firmware's note-element clipboard isn't exposed to plugins.
 
 ## Adding your own dictionary
 
@@ -275,7 +284,7 @@ npm install
 npm test
 ```
 
-Covers 175 unit tests across 20 suites: the StarDict reader (`.ifo` parser, `.idx` parser, dictzip decompression, orchestrator, lazy-init lookup), the synthetic StarDict writer used by tests and the placeholder dict, the WordNet entry formatter (3 sense-line shapes, multi-POS entries, synonyms wrapping across lines, examples, defensive paths), the on-device pipeline handlers (NOTE lasso branching on `trailNum` / `trailLinkNum` / `titleNum`, DOC selection, reentrancy guard, busy/empty/crash paths), the bilingual UI chrome (locale resolution, hyphen/region fallbacks, missing/throwing `Intl`, defensive string-id fallback), the popup component (visible/hidden states, found/not-found rendering, parsed-WordNet vs raw-text fallback, Close button → `PluginManager.closePluginView`), and the small SDK utility modules (UTF-8 codec with platform fast-path + manual fallback, base64 decoder with the same shape, reentrancy guard, `safeClosePluginView`, `unwrap`).
+Covers 1,118 unit tests across 58 suites (gate: 97 %+ coverage), run against an in-memory `better-sqlite3` adapter that stands in for the on-device SQLite engine. Broadly: the **SQLite engine** (parameterized lookup, schema/migrations, multi-dict fan-out, the dictionary source), **import** (StarDict `.ifo`/`.idx`/`.syn` reader + dictzip, CSV/RFC-4180 parsing, the shared `runImport` verify→commit→audit spine), the **bootstrap composition root** (provisioning, reconcile, detached imports, the F3 dictionary manager, F7 delete with `sourcesAtRisk`), **settings persistence** (dict prefs, keep-sources, app settings), **export/restore** (the plugin-dir guard, space pre-check, per-file copy, the snapshot/close-writable restore flow), the **thesaurus** (lazy fetch + assembly), the **popup component** (lookup/settings/thesaurus tabs, found/not-found, add-word, copy), **HTML rendering** (`htmlParser` → spans / plain text), the **multilingual UI chrome** across all seven locales, the on-device adapter contracts (`rnSqliteDb` transaction/checkpoint semantics, `identityKey` never embedding a NUL), and the small SDK utility modules. The device-only native modules (coverage-excluded) are mirrored by these host adapters against the same ports.
 
 Coverage thresholds are enforced in `jest.config.js` at **97%** statements / branches / functions / lines globally. Current measured coverage is **100% statements / 97.76% branches / 100% functions / 100% lines** across `src/`.
 

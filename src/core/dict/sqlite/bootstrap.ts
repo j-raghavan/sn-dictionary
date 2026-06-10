@@ -78,8 +78,22 @@ export type ReconcileOpts = {
   slugHealthy: Set<string>;
 };
 
+// Composite (name, lang) identity, used as the dict_prefs PRIMARY KEY for
+// imported sources. The separator must be a byte that can't occur in a real
+// dict name or language code (so "ab"+"c" never collides with "a"+"bc") AND
+// must survive being stored as SQLite TEXT through the native bridge. NUL
+// (\u0000) satisfies the first but FAILS the second: on-device,
+// react-native-sqlite-storage stores TEXT with C-string semantics, so an
+// embedded NUL TRUNCATES the value at the separator — "Dune\u0000und" was
+// persisted as just "Dune". The live source recomputes the FULL key on the
+// next open, so the truncated stored row never matches back, mergeDictPrefs
+// falls through to its enabled-by-default branch, and every imported dict's
+// saved enable/order silently reverts on reopen (the "settings not saved" bug
+// — confirmed in the on-device [settings] logs, themselves cut off at the NUL).
+// \u001f (ASCII Unit Separator) is just as absent from names/lang codes but is
+// an ordinary byte that round-trips through TEXT untouched.
 export const identityKey = (name: string, lang: string): string =>
-  `${name}\u0000${lang}`;
+  `${name}\u001f${lang}`;
 
 // dict_prefs primary key for a source (resolution #6 / F3): an IMPORTED
 // dict keys on its audit identity (identityKey(name,lang)) so two dicts
@@ -741,6 +755,10 @@ export const bootstrap = async (
     prefKey: string,
   ): Promise<DeleteResult> => {
     const removed = {slugDb: false, audit: false, pref: false, sources: false};
+    // F7-AC3: set true ONLY when a source descriptor matched on disk but a file
+    // couldn't be deleted (resurrection risk → warn). Stays false when there
+    // was nothing on disk to delete (keep=false / already gone) — benign.
+    let sourcesAtRisk = false;
 
     // Resolve the prefKey to a LIVE source (if still present) + its imported
     // record. A key that matches a registered source whose identity is NOT
@@ -754,6 +772,7 @@ export const bootstrap = async (
           return {
             ok: false,
             removed,
+            sourcesAtRisk,
             reason: `"${source.name}" is the base or user dictionary and cannot be removed`,
           };
         }
@@ -788,7 +807,7 @@ export const bootstrap = async (
     if (name === null) {
       const prefDel = await removeDictPref(userDb, prefKey, logger);
       removed.pref = prefDel.changes > 0;
-      return {ok: true, removed};
+      return {ok: true, removed, sourcesAtRisk};
     }
 
     // (1) SPLICE OUT of the live runtime BEFORE any close/delete (EC9).
@@ -885,7 +904,10 @@ export const bootstrap = async (
         }
         // sources removed only if every data/sidecar file went (a leftover
         // data file would let discovery re-import — F7-AC3 warns the user).
+        // A descriptor WAS found, so a partial failure here is a real
+        // resurrection risk (unlike the no-descriptor branch below).
         removed.sources = allOk;
+        sourcesAtRisk = !allOk;
       }
     }
 
@@ -903,7 +925,7 @@ export const bootstrap = async (
     const prefDel = await removeDictPref(userDb, prefKey, logger);
     removed.pref = prefDel.changes > 0;
 
-    return {ok: true, removed};
+    return {ok: true, removed, sourcesAtRisk};
   };
 
   // F8 — close the WRITABLE handles (user.db + every eager-opened imported

@@ -113,13 +113,17 @@ export const toDbFiles = (dbs: ExportableDb[]): DbFile[] =>
 export const exportDbs = async (
   targetDir: string,
   ports: ExportPorts,
-  reasons: {pluginDir: string; noSpace: string},
+  // `pluginDir` is the PATH the guard compares against; `pluginDirMessage` is
+  // the localized reason surfaced to the user when the guard fires (kept
+  // separate so the user never sees the raw `plugins/<id>/` path). `noSpace`
+  // is the localized abort reason for the space / dir-creation failures.
+  reasons: {pluginDir: string; pluginDirMessage: string; noSpace: string},
   logger?: ExportLogger,
 ): Promise<ExportSummary> => {
   // (0) Plugin-dir guard — FIRST, before any I/O, so a bad target can't
   //     touch the live DBs (F5-FR4 / F5-AC5).
   if (isInsidePluginDir(targetDir, reasons.pluginDir)) {
-    throw new Error(reasons.pluginDir);
+    throw new Error(reasons.pluginDirMessage);
   }
 
   const dbs = await ports.listDbs();

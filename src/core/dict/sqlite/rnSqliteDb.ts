@@ -64,6 +64,30 @@ const withTimeout = <T>(p: Promise<T>, label: string): Promise<T> => {
   return Promise.race([p, timeout]).finally(() => clearTimeout(timer));
 };
 
+// Force a just-made commit to be DURABLE on disk immediately. The plugin's
+// user.db is WAL-mode, and a plugin reload (onHostResume recreates the JS
+// context) opens a FRESH user.db connection BEFORE the un-checkpointed WAL is
+// merged into the main file — so a "committed" settings/audit write vanishes on
+// reopen (verified on-device: `save committed`, then a reload read all defaults
+// back). The autocommit transaction below makes the writes EXECUTE; this makes
+// them DURABLE across a reload. TRUNCATE merges the WAL into the main DB file
+// (and zeroes the WAL) so the next open sees the commit. Best-effort: a
+// checkpoint failure must NOT fail the write, and it's a harmless no-op when the
+// DB isn't in WAL mode. (Orthogonal to autocommit: autocommit fixes the
+// native-tx non-persist; this fixes the WAL-not-merged-on-reload loss. The
+// on-device logs that proved the reload case show BOTH bugs — both fixes are
+// needed; the checkpoint was wrongly dropped when the autocommit fix landed.)
+const checkpoint = async (db: RnDatabase): Promise<void> => {
+  try {
+    await withTimeout(
+      db.executeSql('PRAGMA wal_checkpoint(TRUNCATE)', []),
+      'checkpoint',
+    );
+  } catch {
+    // Durability hardening only — never surface a checkpoint error.
+  }
+};
+
 // Exported for the transaction-sequencing regression test (the native
 // module is lazy-required in loadStorage, so wrap itself is jest-safe).
 export const wrap = (db: RnDatabase): SqliteDb => ({
@@ -76,6 +100,10 @@ export const wrap = (db: RnDatabase): SqliteDb => ({
   },
   async run(sql: string, params: SqlParam[] = []): Promise<{changes: number}> {
     const [result] = await withTimeout(db.executeSql(sql, params), 'run');
+    // Single-statement writes (addUserEntry, removeImport, the keep-sources
+    // flag, …) must survive a plugin reload too — checkpoint the WAL into the
+    // main file before a reload can drop it.
+    await checkpoint(db);
     return {changes: result.rowsAffected};
   },
   async transaction(fn: (tx: SqliteDb) => Promise<void>): Promise<void> {
@@ -106,6 +134,11 @@ export const wrap = (db: RnDatabase): SqliteDb => ({
       close: async () => undefined,
     };
     await fn(txDb);
+    // Every statement above already autocommitted to the WAL; merge the whole
+    // batch into the main file once, here, so a reload can't drop it. A body
+    // that threw never reaches this — its partial autocommit writes self-heal
+    // on the next write (the deliberate atomicity-for-durability trade).
+    await checkpoint(db);
   },
   async close(): Promise<void> {
     await db.close();

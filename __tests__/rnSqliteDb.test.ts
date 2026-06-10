@@ -49,6 +49,9 @@ describe('rnSqliteDb wrap.transaction — sequential autocommit (device persiste
       'INSERT INTO dict_prefs VALUES (?)',
       'DELETE FROM dict_prefs WHERE pref_key = ?',
       'INSERT INTO dict_prefs VALUES (?)',
+      // Durability: the batch is checkpointed into the main DB file ONCE, after
+      // the body resolves, so a plugin reload can't drop the un-merged WAL.
+      'PRAGMA wal_checkpoint(TRUNCATE)',
     ]);
   });
 
@@ -80,7 +83,8 @@ describe('rnSqliteDb wrap.transaction — sequential autocommit (device persiste
       }),
     ).rejects.toBe(boom);
     // The first write already executed (autocommit) — atomicity is the
-    // deliberate trade for durability on this device.
+    // deliberate trade for durability on this device. A thrown body short-
+    // circuits BEFORE the end-of-transaction checkpoint, so no PRAGMA fires.
     expect(f.executed).toEqual(['INSERT INTO t VALUES (1)']);
   });
 
@@ -92,6 +96,24 @@ describe('rnSqliteDb wrap.transaction — sequential autocommit (device persiste
         await inner.run('B');
       });
     });
-    expect(f.executed).toEqual(['A', 'B']);
+    // The nested tx shares the connection and does NOT checkpoint on its own;
+    // the single end-of-transaction checkpoint at the OUTER boundary covers the
+    // whole batch.
+    expect(f.executed).toEqual(['A', 'B', 'PRAGMA wal_checkpoint(TRUNCATE)']);
+  });
+
+  test('a single autocommit run() checkpoints the WAL so it survives a reload', async () => {
+    const f = fakeDb();
+    await wrap(f.db).run('INSERT INTO entries VALUES (?)', ['hi']);
+    expect(f.executed).toEqual([
+      'INSERT INTO entries VALUES (?)',
+      'PRAGMA wal_checkpoint(TRUNCATE)',
+    ]);
+  });
+
+  test('a read does NOT checkpoint (no commit to make durable)', async () => {
+    const f = fakeDb([{word: 'hi'}]);
+    await wrap(f.db).query('SELECT * FROM entries');
+    expect(f.executed).toEqual(['SELECT * FROM entries']);
   });
 });

@@ -71,13 +71,20 @@ export type RestoreSummary = {
 // prefKey doesn't resolve to a removable imported dict (base/User — INV5,
 // F7-FR6) with a `reason`; a partial/idempotent delete (some artifact
 // already gone) still resolves ok:true (F7-FR5). `removed.*` reports which
-// sub-steps actually changed disk/db state: slugDb (handle closed + file
+// sub-steps actually CHANGED disk/db state: slugDb (handle closed + file
 // deleted), audit (imports row), pref (dict_prefs row), sources (the
-// leftover on-disk source set — false when it couldn't be removed, so the
-// caller warns the dict may reappear on reload, F7-AC3).
+// leftover on-disk source set was deleted).
+//
+// `sourcesAtRisk` is the SEPARATE signal the UI warns on (F7-AC3): true ONLY
+// when a source descriptor was found on disk but ≥1 of its files COULDN'T be
+// deleted, so discovery may re-import the dict on reload. It is deliberately
+// distinct from `removed.sources === false`, which is ALSO false in the benign
+// "nothing on disk to delete" case (a keep=false import, or sources already
+// gone) — that is not a resurrection risk and must NOT warn.
 export type DeleteResult = {
   ok: boolean;
   removed: {slugDb: boolean; audit: boolean; pref: boolean; sources: boolean};
+  sourcesAtRisk: boolean;
   reason?: string;
 };
 

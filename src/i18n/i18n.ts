@@ -63,10 +63,12 @@ export type StringId =
   | 'settings.keepPrompt'
   | 'settings.removeDict'
   | 'settings.deleteDictPrompt'
+  | 'settings.deleteSourcesLeft'
   | 'settings.export'
   | 'settings.exportFolder'
   | 'settings.newFolder'
   | 'settings.exportNoSpace'
+  | 'settings.exportPluginDir'
   | 'settings.exportDone'
   | 'settings.restore'
   | 'settings.restorePrompt'
@@ -124,14 +126,18 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'settings.keepSourcesHint':
       'When off, sideloaded files are deleted after a verified import.',
     'settings.keepPrompt':
-      'Keep the dropped dictionary files after importing? Choose Delete to remove them once the dictionary is built.',
+      'Keep a copy of your custom dictionary in MyStyle/SnDict/ after indexing? Choose Delete to remove the source file once the dictionary is built.',
     'settings.removeDict': 'Remove',
     'settings.deleteDictPrompt':
       'Remove this dictionary? Its database and any leftover source files are deleted; it will not reappear on reload.',
+    'settings.deleteSourcesLeft':
+      "Dictionary removed, but its source files couldn't be deleted — it may reappear the next time the plugin reloads.",
     'settings.export': 'Export dictionaries',
     'settings.exportFolder': 'Use this folder',
     'settings.newFolder': 'New folder',
     'settings.exportNoSpace': 'Not enough free space to export — nothing was copied.',
+    'settings.exportPluginDir':
+      "Choose a folder outside the plugin's own storage to export to.",
     'settings.exportDone': 'Export complete',
     'settings.restore': 'Restore from here',
     'settings.restorePrompt':
@@ -185,14 +191,17 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'settings.sources': '导入源文件',
     'settings.keepSources': '导入后保留源文件',
     'settings.keepSourcesHint': '关闭时，验证导入后将删除侧载文件。',
-    'settings.keepPrompt': '导入后保留拖入的词典文件吗？选择“删除”可在词典构建完成后移除它们。',
+    'settings.keepPrompt': '索引后在 MyStyle/SnDict/ 文件夹中保留自定义词典的副本吗？选择“删除”可在词典构建完成后移除源文件。',
     'settings.removeDict': '移除',
     'settings.deleteDictPrompt':
       '要移除此词典吗？将删除其数据库及任何残留的源文件；重新加载后不会再次出现。',
+    'settings.deleteSourcesLeft':
+      '词典已移除，但其源文件无法删除——插件下次重新加载时可能会再次出现。',
     'settings.export': '导出词典',
     'settings.exportFolder': '使用此文件夹',
     'settings.newFolder': '新建文件夹',
     'settings.exportNoSpace': '可用空间不足，无法导出——未复制任何文件。',
+    'settings.exportPluginDir': '请选择插件自身存储目录之外的文件夹进行导出。',
     'settings.exportDone': '导出完成',
     'settings.restore': '从此处恢复',
     'settings.restorePrompt': '要从此备份恢复吗？这将替换您当前的词典和已保存的单词。',
@@ -244,14 +253,17 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'settings.sources': '匯入來源檔案',
     'settings.keepSources': '匯入後保留來源檔案',
     'settings.keepSourcesHint': '關閉時，驗證匯入後將刪除側載檔案。',
-    'settings.keepPrompt': '匯入後保留拖入的詞典檔案嗎？選擇「刪除」可在詞典建立完成後移除它們。',
+    'settings.keepPrompt': '索引後在 MyStyle/SnDict/ 資料夾中保留自訂詞典的副本嗎？選擇「刪除」可在詞典建立完成後移除來源檔案。',
     'settings.removeDict': '移除',
     'settings.deleteDictPrompt':
       '要移除此詞典嗎？將刪除其資料庫及任何殘留的來源檔案；重新載入後不會再次出現。',
+    'settings.deleteSourcesLeft':
+      '詞典已移除，但其來源檔案無法刪除——外掛下次重新載入時可能會再次出現。',
     'settings.export': '匯出詞典',
     'settings.exportFolder': '使用此資料夾',
     'settings.newFolder': '新增資料夾',
     'settings.exportNoSpace': '可用空間不足，無法匯出——未複製任何檔案。',
+    'settings.exportPluginDir': '請選擇外掛自身儲存目錄以外的資料夾進行匯出。',
     'settings.exportDone': '匯出完成',
     'settings.restore': '從此處還原',
     'settings.restorePrompt': '要從此備份還原嗎？這將取代您目前的詞典和已儲存的單字。',
@@ -305,14 +317,17 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'settings.keepSourcesHint':
       'オフの場合、検証済みのインポート後にサイドロードファイルを削除します。',
     'settings.keepPrompt':
-      'インポート後に追加した辞書ファイルを残しますか？「削除」を選ぶと辞書の構築後に削除します。',
+      'インデックス作成後、MyStyle/SnDict/ フォルダーにカスタム辞書のコピーを残しますか？「削除」を選ぶと辞書の構築後に元のファイルを削除します。',
     'settings.removeDict': '削除',
     'settings.deleteDictPrompt':
       'この辞書を削除しますか？データベースと残っている元ファイルが削除され、再読み込みしても再表示されません。',
+    'settings.deleteSourcesLeft':
+      '辞書を削除しましたが、元ファイルは削除できませんでした — 次回プラグインの再読み込み時に再表示される場合があります。',
     'settings.export': '辞書をエクスポート',
     'settings.exportFolder': 'このフォルダを使う',
     'settings.newFolder': '新しいフォルダ',
     'settings.exportNoSpace': '空き容量が足りません — 何もコピーされませんでした。',
+    'settings.exportPluginDir': 'プラグイン自身の保存先以外のフォルダを選んでエクスポートしてください。',
     'settings.exportDone': 'エクスポート完了',
     'settings.restore': 'ここから復元',
     'settings.restorePrompt':
@@ -367,14 +382,17 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'settings.keepSourcesHint':
       'เมื่อปิด ระบบจะลบไฟล์ที่ไซด์โหลดหลังการนำเข้าที่ตรวจสอบแล้ว',
     'settings.keepPrompt':
-      'เก็บไฟล์พจนานุกรมที่วางไว้หลังการนำเข้าหรือไม่? เลือกลบเพื่อลบออกเมื่อสร้างพจนานุกรมเสร็จ',
+      'เก็บสำเนาพจนานุกรมที่กำหนดเองไว้ในโฟลเดอร์ MyStyle/SnDict/ หลังการทำดัชนีหรือไม่? เลือกลบเพื่อลบไฟล์ต้นฉบับเมื่อสร้างพจนานุกรมเสร็จ',
     'settings.removeDict': 'ลบออก',
     'settings.deleteDictPrompt':
       'ลบพจนานุกรมนี้หรือไม่? ฐานข้อมูลและไฟล์ต้นทางที่เหลือจะถูกลบ และจะไม่ปรากฏอีกเมื่อโหลดใหม่',
+    'settings.deleteSourcesLeft':
+      'ลบพจนานุกรมแล้ว แต่ไม่สามารถลบไฟล์ต้นทางได้ — อาจปรากฏอีกครั้งเมื่อปลั๊กอินโหลดใหม่ครั้งถัดไป',
     'settings.export': 'ส่งออกพจนานุกรม',
     'settings.exportFolder': 'ใช้โฟลเดอร์นี้',
     'settings.newFolder': 'โฟลเดอร์ใหม่',
     'settings.exportNoSpace': 'พื้นที่ว่างไม่พอสำหรับการส่งออก — ไม่มีการคัดลอกไฟล์ใด',
+    'settings.exportPluginDir': 'เลือกโฟลเดอร์ที่อยู่นอกพื้นที่จัดเก็บของปลั๊กอินเองเพื่อส่งออก',
     'settings.exportDone': 'ส่งออกเสร็จสิ้น',
     'settings.restore': 'กู้คืนจากที่นี่',
     'settings.restorePrompt':
@@ -430,15 +448,19 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'settings.keepSourcesHint':
       'Indien uit, worden gesideloade bestanden na een geverifieerde import verwijderd.',
     'settings.keepPrompt':
-      'De geplaatste woordenboekbestanden na het importeren behouden? Kies Verwijderen om ze te wissen zodra het woordenboek is gebouwd.',
+      'Een kopie van je aangepaste woordenboek in MyStyle/SnDict/ bewaren na het indexeren? Kies Verwijderen om het bronbestand te wissen zodra het woordenboek is gebouwd.',
     'settings.removeDict': 'Verwijderen',
     'settings.deleteDictPrompt':
       'Dit woordenboek verwijderen? De database en eventuele resterende bronbestanden worden gewist; het komt na opnieuw laden niet terug.',
+    'settings.deleteSourcesLeft':
+      'Woordenboek verwijderd, maar de bronbestanden konden niet worden gewist — het kan terugkomen wanneer de plug-in opnieuw wordt geladen.',
     'settings.export': 'Woordenboeken exporteren',
     'settings.exportFolder': 'Deze map gebruiken',
     'settings.newFolder': 'Nieuwe map',
     'settings.exportNoSpace':
       'Onvoldoende vrije ruimte om te exporteren — er is niets gekopieerd.',
+    'settings.exportPluginDir':
+      'Kies een map buiten de eigen opslag van de plug-in om naar te exporteren.',
     'settings.exportDone': 'Export voltooid',
     'settings.restore': 'Vanaf hier herstellen',
     'settings.restorePrompt':
@@ -494,15 +516,19 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'settings.keepSourcesHint':
       'Wenn aus, werden sideloadete Dateien nach einem verifizierten Import gelöscht.',
     'settings.keepPrompt':
-      'Die abgelegten Wörterbuchdateien nach dem Import behalten? Wählen Sie Löschen, um sie nach dem Aufbau zu entfernen.',
+      'Eine Kopie Ihres benutzerdefinierten Wörterbuchs nach der Indexierung in MyStyle/SnDict/ behalten? Wählen Sie Löschen, um die Quelldatei nach dem Aufbau zu entfernen.',
     'settings.removeDict': 'Entfernen',
     'settings.deleteDictPrompt':
       'Dieses Wörterbuch entfernen? Seine Datenbank und etwaige übrige Quelldateien werden gelöscht; es erscheint beim Neuladen nicht wieder.',
+    'settings.deleteSourcesLeft':
+      'Wörterbuch entfernt, aber seine Quelldateien konnten nicht gelöscht werden — es erscheint beim nächsten Neuladen des Plugins möglicherweise wieder.',
     'settings.export': 'Wörterbücher exportieren',
     'settings.exportFolder': 'Diesen Ordner verwenden',
     'settings.newFolder': 'Neuer Ordner',
     'settings.exportNoSpace':
       'Nicht genug freier Speicher zum Exportieren — es wurde nichts kopiert.',
+    'settings.exportPluginDir':
+      'Wählen Sie zum Exportieren einen Ordner außerhalb des plugin-eigenen Speichers.',
     'settings.exportDone': 'Export abgeschlossen',
     'settings.restore': 'Von hier wiederherstellen',
     'settings.restorePrompt':
