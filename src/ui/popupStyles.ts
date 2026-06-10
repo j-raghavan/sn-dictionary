@@ -14,8 +14,11 @@ export const popupStyles = StyleSheet.create({
     padding: 24,
   },
   card: {
-    minWidth: 480,
-    maxWidth: 640,
+    // FIXED width (not min/max) so the popup is the SAME size on every tab and
+    // state. With a min/max range the card sized to its content, so switching
+    // Definition <-> Thesaurus (long body vs short synonym list) visibly
+    // grew/shrank the window. A fixed width pins it; the body scrolls within.
+    width: 640,
     maxHeight: 520,
     backgroundColor: '#ffffff',
     borderRadius: 8,
@@ -146,6 +149,44 @@ export const popupStyles = StyleSheet.create({
     fontWeight: '600',
     color: '#000000',
   },
+  // Footer action row: copy actions on the left, Close on the right.
+  // space-between with an (often empty) left group keeps Close pinned to
+  // the right in every state, matching the previous solo-Close layout.
+  footerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  copyActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexShrink: 1,
+  },
+  // Copy buttons mirror the bordered look of Close / Look up. Hidden
+  // (not greyed) when there's nothing to copy — same rule as the rest of
+  // the popup chrome.
+  copyButton: {
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderWidth: 1,
+    borderColor: '#000000',
+    borderRadius: 4,
+    marginRight: 8,
+  },
+  copyLabel: {
+    fontSize: 16,
+    color: '#000000',
+  },
+  // Transient "Copied" / "Couldn't copy" feedback shown next to the copy
+  // buttons after a press. Italic grey so it reads as a status, not an
+  // action. Clears on a new headword / tab switch (no timer — e-ink
+  // shouldn't flap).
+  copyStatus: {
+    fontSize: 14,
+    color: '#555555',
+    fontStyle: 'italic',
+    flexShrink: 1,
+  },
   closeButton: {
     alignSelf: 'flex-end',
     paddingVertical: 8,
@@ -171,6 +212,267 @@ export const popupStyles = StyleSheet.create({
     // words (e.g. de "Wörterbuch") would otherwise push it off-screen.
     flexShrink: 1,
     marginRight: 12,
+  },
+  // Right-aligned header control cluster: the font-size stepper, then the
+  // settings gear pinned to the top-right corner. space-between in headerRow
+  // pushes this whole group to the right edge.
+  headerControls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  // Settings gear button — same 32×32 circular bordered touch target as
+  // the font-size −/+ glyph buttons (crisp on e-ink; no emoji, no PNG).
+  // marginLeft separates it from the stepper; it is the rightmost element
+  // so the header reads [headword] … [−][A][+][⚙] — gear in the corner.
+  gearButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#000000',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 10,
+  },
+  gearLabel: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#000000',
+    lineHeight: 20,
+  },
+  // Settings-Panel header: the title on the left, a Back button on the
+  // right — same space-between layout as the result header row.
+  settingsHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  // The panel title — like the headword `word` but a step smaller, since
+  // it's chrome rather than the looked-up term.
+  settingsTitle: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: '#000000',
+  },
+  // Back button mirrors the bordered Close button.
+  settingsBackButton: {
+    paddingVertical: 8,
+    paddingHorizontal: 20,
+    borderWidth: 1,
+    borderColor: '#000000',
+    borderRadius: 4,
+  },
+  settingsBackLabel: {
+    fontSize: 16,
+    color: '#000000',
+  },
+  // Save + Back sit together on the right of the header.
+  settingsHeaderActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  // Inline save outcome shown left of the Save button — italic grey so it
+  // reads as a status, not an action (mirrors the popup's copyStatus). Replaces
+  // the old two-"Close"-button RattaDialog confirmation. marginRight separates
+  // it from Save; flexShrink lets it yield before the buttons on a narrow card.
+  settingsSaveStatus: {
+    fontSize: 14,
+    color: '#555555',
+    fontStyle: 'italic',
+    flexShrink: 1,
+    marginRight: 12,
+  },
+  // The failure variant keeps the same footprint but in solid black so a
+  // "Couldn't save settings" reads as a problem the user must act on.
+  settingsSaveStatusError: {
+    color: '#000000',
+    fontStyle: 'normal',
+    fontWeight: '700',
+  },
+  // Save: a filled (black) button when there are unsaved edits, greyed/
+  // outlined when clean or mid-save — so "enabled only when changed" reads at
+  // a glance on e-ink. Sits just left of Back (marginRight gap).
+  settingsSaveButton: {
+    paddingVertical: 8,
+    paddingHorizontal: 20,
+    borderWidth: 1,
+    borderColor: '#000000',
+    borderRadius: 4,
+    backgroundColor: '#000000',
+    marginRight: 10,
+  },
+  settingsSaveButtonDisabled: {
+    backgroundColor: '#FFFFFF',
+    borderColor: '#AAAAAA',
+  },
+  settingsSaveLabel: {
+    fontSize: 16,
+    color: '#FFFFFF',
+  },
+  settingsSaveLabelDisabled: {
+    color: '#AAAAAA',
+  },
+  // Placeholder body copy until F4/F5/F7 fill the rest of the panel in.
+  settingsPlaceholder: {
+    marginTop: 16,
+    fontSize: 16,
+    color: '#555555',
+  },
+  // --- F3 dictionary manager -----------------------------------------
+  // Section heading above the dictionary list.
+  // Section header inside the Settings panel — a small uppercase label with
+  // a hairline divider, grouping the panel into Dictionaries / Import
+  // sources / Backup. Shared by SettingsPanel + ExportSection.
+  settingsSectionTitle: {
+    marginTop: 18,
+    marginBottom: 6,
+    paddingBottom: 4,
+    fontSize: 13,
+    fontWeight: '700',
+    letterSpacing: 1,
+    color: '#555555',
+    borderBottomWidth: 1,
+    borderBottomColor: '#000000',
+  },
+  // Scrollable settings body, below the fixed title + Back header.
+  settingsBody: {
+    marginTop: 4,
+  },
+  // One dictionary row: a tappable checkbox+name on the left, the reorder /
+  // remove controls on the right.
+  dictRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 8,
+  },
+  // The whole checkbox + name is one tap target (toggles enable/disable).
+  dictToggleTap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexShrink: 1,
+    paddingVertical: 4,
+  },
+  // ☑ / ☐ enable glyph — a dingbat (crisp on e-ink), not an emoji.
+  dictCheckbox: {
+    fontSize: 22,
+    color: '#000000',
+    marginRight: 12,
+    lineHeight: 24,
+  },
+  // A disabled dict greys out; the checkbox shows the off-state.
+  dictName: {
+    fontSize: 17,
+    color: '#000000',
+    flexShrink: 1,
+  },
+  dictNameDisabled: {
+    color: '#999999',
+  },
+  // The right-side control cluster (move arrows + Remove).
+  dictRowControls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  // Circular move-up/down buttons — same 32×32 e-ink target as the
+  // font-size stepper. Hidden (not greyed) at the top/bottom bound and
+  // entirely when there is only one dictionary.
+  dictArrowButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#000000',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 8,
+  },
+  dictArrowLabel: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#000000',
+    lineHeight: 20,
+  },
+  // Remove (imported dicts only) — a bordered text button, set slightly
+  // apart so it isn't mistaken for a move arrow.
+  removeButton: {
+    marginLeft: 14,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: '#000000',
+    borderRadius: 4,
+  },
+  removeButtonLabel: {
+    fontSize: 14,
+    color: '#000000',
+  },
+  // The all-disabled warning banner (F3-FR5).
+  settingsWarning: {
+    marginTop: 10,
+    marginBottom: 4,
+    fontSize: 14,
+    color: '#000000',
+    fontWeight: '700',
+  },
+  // --- F4 keep-sources toggle (a checkbox row) -----------------------
+  // The label + hint sit to the right of the shared checkbox glyph.
+  settingsToggleLabelCol: {
+    flexShrink: 1,
+    paddingRight: 12,
+  },
+  settingsToggleLabel: {
+    fontSize: 17,
+    color: '#000000',
+  },
+  settingsToggleHint: {
+    marginTop: 2,
+    fontSize: 13,
+    color: '#777777',
+  },
+  // --- F5 export section ----------------------------------------------
+  // The current export-target path, shown above the folder list.
+  exportTargetLabel: {
+    marginTop: 4,
+    marginBottom: 8,
+    fontSize: 14,
+    color: '#000000',
+  },
+  // One navigable subfolder row in the chooser (full-width tappable).
+  exportFolderRow: {
+    paddingVertical: 8,
+    paddingHorizontal: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: '#EEEEEE',
+  },
+  exportFolderRowLabel: {
+    fontSize: 15,
+    color: '#000000',
+  },
+  // The action-button row under the chooser (New folder + Export).
+  exportActionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 12,
+  },
+  // A primary action button (Export / New folder / Use this folder).
+  exportButton: {
+    marginRight: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderWidth: 1,
+    borderColor: '#000000',
+    borderRadius: 4,
+  },
+  exportButtonLabel: {
+    fontSize: 14,
+    color: '#000000',
+  },
+  // The post-export result summary line.
+  exportSummary: {
+    marginTop: 12,
+    fontSize: 14,
+    color: '#000000',
   },
   // Body-text size selector: three circular elements in a row,
   // ( − )( A )( + ). The outer two are Pressables; the middle is a

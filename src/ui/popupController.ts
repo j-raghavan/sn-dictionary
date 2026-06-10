@@ -1,5 +1,12 @@
 import type {LookupResult} from '../core/lookup';
 import type {ThesaurusResult} from '../core/dict/sqlite/thesaurusLookup';
+import type {
+  DbFile,
+  DeleteResult,
+  DictPref,
+  ExportSummary,
+  RestoreSummary,
+} from '../core/dict/sqlite/settings';
 
 // Bridge between async handlers (which don't render React) and the
 // popup component (which does). A handler calls one of the show*()
@@ -23,22 +30,30 @@ import type {ThesaurusResult} from '../core/dict/sqlite/thesaurusLookup';
 //                    with streaming, fires synchronously inside
 //                    multiDictLookup before any source resolves).
 
+// The closeable-and-restorable payload of a result-kind popup. Factored
+// out so the Settings panel can stash the exact result it opened over and
+// the Back button restores it verbatim (F1). It is NOT a LookupResult
+// field — editability + the active tab are popup chrome (IV-1).
+export type ResultSnapshot = {
+  ocrLabel?: string;
+  result: LookupResult;
+  // OPTIONAL: when true the popup shows the OCR-correction editable
+  // field (lasso flow). Absent/false -> read-only view (doc-select).
+  // The component guards on `=== true`, never on ocrLabel presence
+  // (Designer ruling 4 / flag 5). The LookupResult shape itself is
+  // unchanged (IV-1) — editability is popup chrome, not a result field.
+  editable?: boolean;
+  // The tab the user was on when they opened Settings, so Back restores
+  // it instead of resetting to Definition (F1-AC2). Absent on a normal
+  // lookup -> the component defaults to 'definition'.
+  activeTab?: 'definition' | 'thesaurus';
+};
+
 export type PopupState =
   | {visible: false}
   | {visible: true; kind: 'recognizing'; ocrLabel?: string}
-  | {
-      visible: true;
-      kind: 'result';
-      ocrLabel?: string;
-      result: LookupResult;
-      // OPTIONAL: when true the popup shows the OCR-correction editable
-      // field (lasso flow). Absent/false -> read-only view (doc-select).
-      // The component guards on `=== true`, never on ocrLabel presence
-      // (Designer ruling 4 / flag 5). The LookupResult shape itself is
-      // unchanged (IV-1) — editability is popup chrome, not a result
-      // field.
-      editable?: boolean;
-    };
+  | ({visible: true; kind: 'result'} & ResultSnapshot)
+  | {visible: true; kind: 'settings'; resume?: ResultSnapshot};
 
 type Listener = (state: PopupState) => void;
 
@@ -60,6 +75,57 @@ export type PopupActions = {
   ): Promise<{lang: string; omw: ThesaurusResult}>;
   addUserEntry(word: string, definition: string): Promise<void>;
   relookup(text: string): Promise<void>;
+  // F3 — the dictionary manager reads the current order+enablement and
+  // writes a whole reordered/toggled set. The engine (index.js) wires
+  // these to the RuntimeHandle's listDictPrefs/setDictPrefs, keeping the
+  // panel engine-agnostic (Designer ruling 1).
+  listDictPrefs(): Promise<DictPref[]>;
+  setDictPrefs(prefs: DictPref[]): Promise<void>;
+  // F4 — the opt-in source-deletion toggle. Reads/writes the
+  // keepSourcesAfterImport app setting (default keep=true). Applies to
+  // FUTURE imports only (F4-FR7). Wired by index.js to the user.db
+  // getKeepSources/setKeepSources helpers.
+  getKeepSources(): Promise<boolean>;
+  setKeepSources(keep: boolean): Promise<void>;
+  // F7 — delete an already-imported dict. `confirmDeleteDict` shows the
+  // device confirm dialog (showRattaDialog) and resolves true ONLY when the
+  // user taps Delete; it is a host-mockable PORT (like F4's promptKeepDelete)
+  // so the panel stays renderer-testable off-device. `deleteImportedDict`
+  // wires to the RuntimeHandle and reports what was removed. Both are
+  // OPTIONAL so the F3/F4 fakeActions (and a not-yet-wired engine) still
+  // satisfy PopupActions; the panel guards on their presence.
+  confirmDeleteDict?(name: string): Promise<boolean>;
+  deleteImportedDict?(prefKey: string): Promise<DeleteResult>;
+  // F5 — DB export. The panel's Export section lists the DBs to copy
+  // (`listExportableDbs`), drives the in-panel folder chooser
+  // (`listFolders` over the type-tagged FileUtils, `createFolder` over
+  // makeDir), and on confirm calls `exportDbs(target)` which orchestrates
+  // the space pre-check, plugin-dir guard, user.db checkpoint, and the
+  // per-file copy off-device (the actual NativeFileUtils calls live in
+  // index.js). All OPTIONAL so the F3/F4/F7 fakeActions still satisfy
+  // PopupActions; the panel guards on their presence. `exportDbs` REJECTS
+  // (with a localised reason) on the plugin-dir guard / no-space abort —
+  // the panel surfaces that as the export-failure summary.
+  listExportableDbs?(): Promise<DbFile[]>;
+  listFolders?(parent: string): Promise<string[]>;
+  createFolder?(path: string): Promise<boolean>;
+  exportDbs?(targetDir: string): Promise<ExportSummary>;
+  // F8 — DB restore (the inverse of export). `confirmRestore` shows the
+  // device confirm dialog (showRattaDialog: "this REPLACES your current
+  // dictionaries + saved words") and resolves true ONLY when the user
+  // confirms; it is a host-mockable PORT (like F4's promptKeepDelete / F7's
+  // confirmDeleteDict) so the panel stays renderer-testable off-device.
+  // `restoreDbs(backupDir)` closes the writable handles, copies the backup
+  // DBs over the live ones (NEVER base.db), and reports the per-file outcome;
+  // the panel then shows "Restored: N — reopen the plugin to finish" (no auto
+  // re-bootstrap). Both OPTIONAL so the existing fakeActions (and a not-yet-
+  // wired engine) still satisfy PopupActions; the panel guards on presence.
+  confirmRestore?(): Promise<boolean>;
+  restoreDbs?(backupDir: string): Promise<RestoreSummary>;
+  // Show a result/notification to the user as a modal dialog (the native
+  // RattaDialog). Used by export/restore to surface their outcome — an inline
+  // summary line at the bottom of a scrolled panel is too easy to miss.
+  notify?(message: string): Promise<void>;
 };
 
 let popupActions: PopupActions | null = null;
@@ -92,6 +158,24 @@ export const showDefinition = (
 
 export const hideDefinition = (): void => {
   emit({visible: false});
+};
+
+// Open the Settings panel, stashing the result the user was viewing so
+// Back can restore it verbatim (F1). `snapshot` is undefined when opened
+// from a non-result state (e.g. nothing to return to).
+export const showSettings = (snapshot?: ResultSnapshot): void => {
+  emit({visible: true, kind: 'settings', resume: snapshot});
+};
+
+// Leave the Settings panel: re-emit the stashed result (restoring its
+// OCR label, editability, and active tab) when there is one, else close.
+export const closeSettings = (): void => {
+  const s = currentState;
+  if (s.visible && s.kind === 'settings' && s.resume) {
+    emit({visible: true, kind: 'result', ...s.resume});
+  } else {
+    emit({visible: false});
+  }
 };
 
 export const getCurrentState = (): PopupState => currentState;

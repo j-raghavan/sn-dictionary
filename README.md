@@ -1,6 +1,6 @@
 # Dictionary Plugin for Supernote
 
-![Tests](https://img.shields.io/badge/tests-828%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-1118%20passed-brightgreen)
 ![Coverage](https://img.shields.io/badge/coverage-99%25%20lines%20%2F%2098%25%20branches-brightgreen)
 ![Lint](https://img.shields.io/badge/lint-passing-brightgreen)
 ![Platform](https://img.shields.io/badge/platform-Supernote-blue)
@@ -12,12 +12,12 @@ A Supernote plugin that adds offline English-word lookup to handwritten notes an
 ## Features
 
 - **Two entry gestures, one popup.** Lasso handwritten or already-recognised text on a note page → tap **Lookup** in the lasso toolbar; or select text in the PDF reader → tap **Lookup** in the selection toolbar. Both flows feed the same on-device dictionary and render in the same structured popup.
-- **Real WordNet content + thesaurus.** 149,535 Princeton WordNet 2.x definitions (BSD-style license) plus an English synonym/antonym thesaurus from Open English WordNet 2023 (CC BY 4.0), built into a single prebuilt SQLite `base.db` that ships inside the `.snplg` and is opened on-device by the native SQLite engine. No network at runtime; lookup is one indexed `SELECT` (no per-reload parse).
+- **Real WordNet content + thesaurus.** 149,535 Princeton WordNet 2.x definitions (BSD-style license) plus an English synonym/antonym thesaurus from Open English WordNet 2023 (CC BY 4.0) and the Moby Thesaurus (public domain), built into a single prebuilt SQLite `base.db` that ships inside the `.snplg` and is opened on-device by the native SQLite engine. No network at runtime; lookup is one indexed `SELECT` (no per-reload parse).
 - **OCR-aware.** When you lasso handwriting, the plugin runs the firmware's stroke recogniser (`recognizeElements`) before the lookup, so the popup shows what was *recognised* alongside the matching definition. Saved-and-reloaded handwriting (`trailLink`) and recognised titles (`title`) are covered by the same path — not just freshly-drawn strokes.
 - **Structured popup.** Each WordNet sense renders as its own block: a part-of-speech badge (*noun* / *verb* / *adjective* / *adverb*), a numbered sense, the definition, italicised example sentences in curly quotes, and a `Synonyms:` line. Senses are visually separated so multi-sense entries (e.g. "AI" — Army Intelligence vs. artificial intelligence vs. three-toed sloth vs. artificial insemination) are scannable at a glance.
-- **Bilingual UI chrome.** The plugin name on the plugin manager card, the **Lookup** toolbar label, and every popup label (`Synonyms:`, `OCR:`, `No definition found for…`, `Close`) localise into Simplified Chinese, Traditional Chinese, Japanese, Thai, and Dutch based on the device's system locale. The dictionary content stays English; the surrounding chrome doesn't.
+- **Bilingual UI chrome.** The plugin name on the plugin manager card, the **Lookup** toolbar label, and every popup label (`Synonyms:`, `OCR:`, `No definition found for…`, `Close`) localise into Simplified Chinese, Traditional Chinese, Japanese, Thai, Dutch, and German based on the device's system locale. The dictionary content stays English; the surrounding chrome doesn't.
 - **Case- and whitespace-insensitive.** "Anatomy", "anatomy", and "  ANATOMY  " all hit the same entry.
-- **Bring-your-own dictionary** *(shipped)* — drop a **StarDict** folder or a **CSV** file into `MyStyle/SnDict/` and the plugin imports it into its own SQLite DB at startup (native, off-thread; sources are deleted after a verified import). User dictionaries precede the base on lookup, so your terms shadow generic ones, and a `meta.json` sidecar can name the dict, set its language, and (for CSV) map columns including an optional phonetic field. A separate prebuilt custom `.snplg` via an in-browser converter (Prong B) may still come later.
+- **Bring-your-own dictionary** *(shipped)* — drop a **StarDict** folder or a **CSV** file into `MyStyle/SnDict/` and the plugin imports it into its own SQLite DB at startup (native, off-thread; **source files are kept by default** — a Settings toggle / first-run prompt lets you opt in to deleting them after a verified import). User dictionaries precede the base on lookup, so your terms shadow generic ones, and a `meta.json` sidecar can name the dict, set its language, and (for CSV) map columns including an optional phonetic field. A separate prebuilt custom `.snplg` via an in-browser converter (Prong B) may still come later.
 
 ## Demo
 
@@ -66,9 +66,18 @@ By design, **the plugin is pure read** — it never modifies the page, never del
 
 Lookup is ready in well under a second after the plugin process spins up — the native SQLite engine just opens the prebuilt `base.db` (no parse, no in-memory index build), and every lookup is a single indexed `SELECT`. (Measured ~250 ms to Lookup-ready on a note re-open; ADR-0007.)
 
+## Settings
+
+Tap the **gear (⚙)** in the top-right of any lookup popup to open Settings. Edits are staged locally and only written when you tap **Save** (a "Settings saved" line confirms); **Back** returns to the definition.
+
+- **Dictionaries** — every active source (the bundled WordNet, your saved words, and each imported dict) shows with a checkbox. Tap a row to enable/disable it; disabled sources are skipped on lookup (turning them all off warns you). With two or more dictionaries the **↑ / ↓** arrows reorder precedence — results appear in this order, so move the dictionary you want first to the top. An imported dictionary also has a **Remove** button: it confirms (naming the dictionary), then deletes its database and any leftover source files. If a source file can't be deleted, you're warned the dict may reappear on the next reload.
+- **Import sources** — the **Keep source files after import** toggle decides whether the files you dropped in `MyStyle/SnDict/` are kept after the dictionary is built, or deleted once the import is verified (default: keep). The same choice is offered once, the first time you import.
+- **Backup** — **Export** copies the bundled `base.db`, your `user.db` (saved words + settings), and every imported dictionary to a folder you choose under `MyStyle/`. **Restore** copies those DBs back over the live ones — reopen the plugin afterwards to finish. `base.db` is included in an export but is never overwritten on restore (it ships with the plugin).
+- **Copy** — in the definition popup, the **Copy** button puts the headword plus the current tab's text (definition or thesaurus) on the device's system clipboard for pasting into other apps. Pasting into handwritten notes isn't supported — the firmware's note-element clipboard isn't exposed to plugins.
+
 ## Adding your own dictionary
 
-The plugin scans `MyStyle/SnDict/` on every launch. A discovered dict is **imported** — parsed (natively, off the JS thread) and inserted into a self-contained SQLite DB under the plugin dir, then the source files are deleted after a verified commit. Imported dicts appear as separate sections in the popup, ahead of the bundled WordNet base — so a domain glossary like "medical" supplements the general definition rather than replacing it. Re-dropping the same dict replaces it; multiple dicts per language coexist.
+The plugin scans `MyStyle/SnDict/` on every launch. A discovered dict is **imported** — parsed (natively, off the JS thread) and inserted into a self-contained SQLite DB under the plugin dir. **By default the source files are kept** (a Settings toggle / one-time first-run prompt lets you opt in to deleting them after a verified commit). Imported dicts appear as separate sections in the popup, ahead of the bundled WordNet base — so a domain glossary like "medical" supplements the general definition rather than replacing it. Because sources are kept, a re-dropped dict that's already imported is just re-opened (idempotent), **not** re-imported — to refresh it, drop a `.refresh` marker in its folder (`<name>.refresh` beside a CSV) or toggle delete on and re-drop; multiple dicts per language coexist.
 
 ### Layout
 
@@ -93,7 +102,7 @@ MyStyle/
         └── de.dict.dz                (no meta.json — loads with defaults)
 ```
 
-Both formats are imported the same way (parsed → inserted into a SQLite DB → **source files deleted after a verified commit**); for StarDict the now-empty subfolder is removed too.
+Both formats are imported the same way (parsed → inserted into a SQLite DB → **source files kept by default**, or deleted after a verified commit if you opt in via the Settings toggle / first-run prompt); when deleting, StarDict's now-empty subfolder is removed too.
 
 `meta.json` is **optional** for both. For StarDict:
 
@@ -171,7 +180,7 @@ Two different things, and both are fast — there is **no per-session parse**. E
 
 **The bundled English dictionary is ready in ~0.25 s.** `base.db` (149k entries + thesaurus) ships *prebuilt* inside the `.snplg` and is *opened*, not parsed — the **Lookup** button is live within ~250–450 ms of the plugin starting (measured on a Manta).
 
-**A sideloaded dictionary is imported once, in the background.** When you drop a dict into `MyStyle/SnDict/`, it's indexed into its own SQLite DB at plugin start by a native (Kotlin) importer running **off the JS thread** — so it never blocks lookups, and the base dictionary is usable immediately. The new dict splices into the registry the moment its import finishes; after that it's permanent (the source files are deleted and the DB persists, so the next launch just *opens* it in milliseconds, like the base dictionary).
+**A sideloaded dictionary is imported once, in the background.** When you drop a dict into `MyStyle/SnDict/`, it's indexed into its own SQLite DB at plugin start by a native (Kotlin) importer running **off the JS thread** — so it never blocks lookups, and the base dictionary is usable immediately. The new dict splices into the registry the moment its import finishes; after that it's permanent (the DB persists, so the next launch just *opens* it in milliseconds, like the base dictionary). **Source files are kept by default** — on the next launch the kept-and-already-imported set is recognized and re-opened, not re-imported (no duplicate work, no loop); opt in to deleting sources after import via the Settings toggle / one-time first-run prompt.
 
 Import time scales with **entry count** at a steady **~18,000 entries/sec** (measured on a Manta), i.e. roughly `entries ÷ 18,000`:
 
@@ -239,7 +248,7 @@ To regenerate the sample after editing entries in `scripts/buildSampleDicts.mjs`
 - **English only** for the bundled dictionary content. Other languages are out of scope for the base; see *Adding your own dictionary* above for sideloading user dicts in StarDict or CSV format.
 - **Tap-on-existing-word** (no lasso, just tap a written word) is **not currently supported by the SDK** — there is no spatial-query API to ask "what stroke is under this point?". A pen/touch event API is on Dunn-sn's roadmap; tap-to-define is tracked for v1.x.
 - **`PEN_UP` auto-define** — explicitly *not* a feature. The "OCR every stroke as you write" UX is intrusive without a clean word-boundary signal; lookups are user-initiated only.
-- **Bundle size:** the `.snplg` ships the prebuilt `base.db` (WordNet + EN OMW thesaurus) plus the native `app.npk` and the JS bundle. There is no base64 blob and no first-run parse — the native SQLite engine opens `base.db` directly, so Lookup is ready in well under a second (no per-reload cost).
+- **Bundle size:** the `.snplg` ships the prebuilt `base.db` (WordNet + EN OMW + Moby thesaurus) plus the native `app.npk` and the JS bundle. There is no base64 blob and no first-run parse — the native SQLite engine opens `base.db` directly, so Lookup is ready in well under a second (no per-reload cost).
 
 ## Building
 
@@ -254,8 +263,9 @@ npm install
 
 1. `npm run prepare:dict` — fetches the WordNet StarDict source to `dict/wordnet/` (read directly by the generator; no base64 blob).
 2. `npm run prepare:omw` — fetches Open English WordNet 2023 and builds the EN thesaurus TSV.
-3. `npm run build:base-db` — folds the WordNet entries + OMW thesaurus into a prebuilt `build/base.db`, staged at the **`.snplg` root** (the host extracts it to `plugins/<id>/base.db`).
-4. Metro bundle → `gradlew buildCustomApkDebug` → `app.npk` → zips everything into `SnDict.snplg`.
+3. `npm run prepare:moby` — stages the public-domain Moby Thesaurus StarDict to `dict/moby/` (optional; the build warn-skips it if absent).
+4. `npm run build:base-db` — folds the WordNet entries + OMW + Moby thesaurus into a prebuilt `build/base.db`, staged at the **`.snplg` root** (the host extracts it to `plugins/<id>/base.db`).
+5. Metro bundle → `gradlew buildCustomApkDebug` → `app.npk` → zips everything into `SnDict.snplg`.
 
 `dict/wordnet/`, `dict/omw/`, and `build/` are git-ignored (regenerable). **`buildPlugin.ps1` does NOT support native builds** — it errors and points you to `buildPlugin.sh`.
 
@@ -274,7 +284,7 @@ npm install
 npm test
 ```
 
-Covers 175 unit tests across 20 suites: the StarDict reader (`.ifo` parser, `.idx` parser, dictzip decompression, orchestrator, lazy-init lookup), the synthetic StarDict writer used by tests and the placeholder dict, the WordNet entry formatter (3 sense-line shapes, multi-POS entries, synonyms wrapping across lines, examples, defensive paths), the on-device pipeline handlers (NOTE lasso branching on `trailNum` / `trailLinkNum` / `titleNum`, DOC selection, reentrancy guard, busy/empty/crash paths), the bilingual UI chrome (locale resolution, hyphen/region fallbacks, missing/throwing `Intl`, defensive string-id fallback), the popup component (visible/hidden states, found/not-found rendering, parsed-WordNet vs raw-text fallback, Close button → `PluginManager.closePluginView`), and the small SDK utility modules (UTF-8 codec with platform fast-path + manual fallback, base64 decoder with the same shape, reentrancy guard, `safeClosePluginView`, `unwrap`).
+Covers 1,118 unit tests across 58 suites (gate: 97 %+ coverage), run against an in-memory `better-sqlite3` adapter that stands in for the on-device SQLite engine. Broadly: the **SQLite engine** (parameterized lookup, schema/migrations, multi-dict fan-out, the dictionary source), **import** (StarDict `.ifo`/`.idx`/`.syn` reader + dictzip, CSV/RFC-4180 parsing, the shared `runImport` verify→commit→audit spine), the **bootstrap composition root** (provisioning, reconcile, detached imports, the F3 dictionary manager, F7 delete with `sourcesAtRisk`), **settings persistence** (dict prefs, keep-sources, app settings), **export/restore** (the plugin-dir guard, space pre-check, per-file copy, the snapshot/close-writable restore flow), the **thesaurus** (lazy fetch + assembly), the **popup component** (lookup/settings/thesaurus tabs, found/not-found, add-word, copy), **HTML rendering** (`htmlParser` → spans / plain text), the **multilingual UI chrome** across all seven locales, the on-device adapter contracts (`rnSqliteDb` transaction/checkpoint semantics, `identityKey` never embedding a NUL), and the small SDK utility modules. The device-only native modules (coverage-excluded) are mirrored by these host adapters against the same ports.
 
 Coverage thresholds are enforced in `jest.config.js` at **97%** statements / branches / functions / lines globally. Current measured coverage is **100% statements / 97.76% branches / 100% functions / 100% lines** across `src/`.
 
@@ -343,7 +353,8 @@ src/
 scripts/
   fetchBaseDict.mjs              idempotent WordNet download from dict.org mirror
   fetchOmw.mjs / buildOmw.mjs    fetch + build the EN OMW thesaurus TSV
-  buildBaseDb.mjs                fold WordNet + OMW into the prebuilt base.db
+  fetchMoby.mjs                  stage the public-domain Moby thesaurus StarDict
+  buildBaseDb.mjs                fold WordNet + OMW + Moby into the prebuilt base.db
 .github/workflows/
   ci.yml                         lint + test + build .snplg artifact per push
   release.yml                    manual workflow_dispatch; lint+test, version
@@ -398,7 +409,15 @@ The thesaurus (synonyms / antonyms) is **English-only** and built from **Open En
 - **License.** [Creative Commons Attribution 4.0 International (CC BY 4.0)](https://creativecommons.org/licenses/by/4.0/) — free to use, share, and adapt (including commercially) provided appropriate credit is given. **Attribution:** *Open English WordNet 2023, https://en-word.net/, licensed under CC BY 4.0.* Any redistribution of `base.db` must preserve this attribution.
 - **Scope used.** English (`lang='en'`) only; just the `synonym` and `antonym` relations are extracted (`scripts/buildOmw.mjs`). Synonyms are capped at 10 per headword to bound the bundle size; antonyms are uncapped. No other WordNet relations are bundled.
 
-> **RO-7 (coverage note).** `scripts/fetchOmw.mjs` and `scripts/buildOmw.mjs` perform network I/O and filesystem extraction and are therefore **not** measured by the jest coverage gate (same posture as `scripts/fetchBaseDict.mjs` / `scripts/buildBaseDb.mjs`). The data-shaping logic they feed *is* covered: the TSV parser (`parseOmwTsv`) and the DB population (`populateThesaurus`) live in `src/` and are unit-tested to the 97% gate against synthetic fixtures.
+### Bundled thesaurus content (Moby Thesaurus)
+
+In addition to OMW, the English synonyms from the **Moby Thesaurus** are folded into the same `base.db` `thesaurus` table (`lang='en'`, `rel='synonym'`), so a headword's synonym set is the union of OMW + Moby (de-duplicated against the WordNet senses at query time by `assembleThesaurus`). It is staged via `npm run prepare:moby` (a StarDict triple → `dict/moby/thesaurus-ee.{ifo,idx,dict}`) and folded into `base.db` by `npm run build:base-db`.
+
+- **Source.** Moby Thesaurus II by **Grady Ward**, packaged as the "English Thesaurus" StarDict (tabo / Hu Zheng, huzheng.org mirror). `scripts/fetchMoby.mjs` stages it (pinned URL when available, else the local StarDict zip).
+- **License.** **Public domain.** Grady Ward placed the Moby lexical project (including the Moby Thesaurus) in the public domain; no attribution is legally required, but it is credited here in good faith.
+- **Scope used.** English synonyms only. Each Moby `.dict` block is parsed (`src/core/dict/sqlite/buildMobyThesaurus.ts`) into cleaned synonyms — `[POS]` tags, `(Category):` prefixes, `{marker}` / `<annotation>` editorial markup and `*` slang flags are stripped, the headword is excluded, and the list is capped at 10 per headword to match the OMW cap. Antonyms are not extracted from Moby.
+
+> **Coverage note.** `scripts/fetchOmw.mjs`, `scripts/buildOmw.mjs`, and `scripts/fetchMoby.mjs` perform network I/O and filesystem extraction and are therefore **not** measured by the jest coverage gate (same posture as `scripts/fetchBaseDict.mjs` / `scripts/buildBaseDb.mjs`). The data-shaping logic they feed *is* covered: the OMW TSV parser (`parseOmwTsv`), the Moby block parser (`buildMobyThesaurus.ts`), and the DB population (`populateThesaurus`) live in `src/` and are unit-tested to the 97% gate against synthetic fixtures.
 
 ---
 

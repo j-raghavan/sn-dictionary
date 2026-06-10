@@ -92,6 +92,11 @@ dict/wordnet/
 # not committed.
 dict/omw/
 
+# Moby thesaurus source — staged by scripts/fetchMoby.mjs as the
+# StarDict triple dict/moby/thesaurus-ee.{ifo,idx,dict}, consumed by
+# scripts/buildBaseDb.mjs. Public domain (Grady Ward); regenerable; not committed.
+dict/moby/
+
 # Generated SQLite base.db APK asset, staged by buildPlugin.sh from
 # build/base.db. Regenerable; never committed (the source is the
 # generator + WordNet/OMW inputs).

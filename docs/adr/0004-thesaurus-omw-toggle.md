@@ -39,6 +39,7 @@ The product needs a thesaurus (synonyms/antonyms) across all five languages. Sta
 - Good: pure `assembleThesaurus` is the clear, unit-testable owner of dedup/headword-exclusion.
 - Bad/Cost: OMW relation tables add to `base.db` size (RO-2); coverage/quality varies by language (RO-7) — handled via an empty-state, never an error.
 - Decided: **synonyms are non-tappable in v1** (closes RO-4); tappable re-lookup is a deferred enhancement. A future option could also feed user-entry synonyms and add a language picker on add (the `'und'` default above).
+- Follow-up (issue #26): the **public-domain Moby Thesaurus** (Grady Ward) is additionally folded into the same `base.db` `thesaurus` table as EN `synonym` rows (`buildMobyThesaurus.ts`, staged by `scripts/fetchMoby.mjs`, capped 10/key like OMW). It is a pure build-time data addition — the runtime lookup, `assembleThesaurus` dedup, and toggle UI are unchanged; the EN synonym set is now `WordNet ∪ OMW ∪ Moby`, deduped at query time.
 
 ## More Information
 

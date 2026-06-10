@@ -70,6 +70,9 @@ describe('t (popup string lookup)', () => {
       'popup.save',
       'popup.addEmptyError',
       'popup.addFailedError',
+      'popup.copy',
+      'popup.copied',
+      'popup.copyFailed',
     ] as const;
     const localeRows = Object.keys(STRINGS);
     expect(localeRows.length).toBeGreaterThan(0);
@@ -112,8 +115,79 @@ describe('t (popup string lookup)', () => {
       'popup.save',
       'popup.addEmptyError',
       'popup.addFailedError',
+      'popup.copy',
+      'popup.copied',
+      'popup.copyFailed',
     ].sort();
     expect(enPopupKeys).toEqual(guarded);
+  });
+
+  test('every locale DEFINES every settings.* string (no en-fallback gaps)', () => {
+    // The popup.* guard above filters on 'popup.', so the settings.* keys
+    // (F1) are otherwise unguarded. Mirror the same parity assertion: take
+    // en's settings.* key set as the source of truth and require every
+    // locale to define each one non-empty.
+    const settingsIds = Object.keys(STRINGS.en).filter(k =>
+      k.startsWith('settings.'),
+    );
+    // Sanity: F1's three + F3's dictionary-manager keys + F4's keep-sources
+    // keys (the keepPrompt is also used by the first-run dialog).
+    expect(settingsIds.sort()).toEqual([
+      'settings.allDisabled',
+      'settings.back',
+      'settings.deleteDictPrompt',
+      'settings.deleteSourcesLeft',
+      'settings.dictionaries',
+      'settings.disableDict',
+      'settings.enableDict',
+      'settings.export',
+      'settings.exportDone',
+      'settings.exportFolder',
+      'settings.exportNoSpace',
+      'settings.exportPluginDir',
+      'settings.keepPrompt',
+      'settings.keepSources',
+      'settings.keepSourcesHint',
+      'settings.moveDown',
+      'settings.moveUp',
+      'settings.newFolder',
+      'settings.open',
+      'settings.removeDict',
+      'settings.restore',
+      'settings.restoreDone',
+      'settings.restoreNoBackup',
+      'settings.restorePrompt',
+      'settings.restoreReopen',
+      'settings.restoreSnapshotFailed',
+      'settings.save',
+      'settings.saveFailed',
+      'settings.saved',
+      'settings.sources',
+      'settings.title',
+    ]);
+    for (const locale of Object.keys(STRINGS)) {
+      for (const id of settingsIds) {
+        const value = STRINGS[locale][id as keyof (typeof STRINGS)[string]];
+        expect(typeof value === 'string' && value.length > 0).toBe(true);
+      }
+    }
+  });
+
+  test('every locale DEFINES every common.* string (F4/F7 dialog buttons)', () => {
+    const commonIds = Object.keys(STRINGS.en).filter(k =>
+      k.startsWith('common.'),
+    );
+    expect(commonIds.sort()).toEqual([
+      'common.cancel',
+      'common.delete',
+      'common.keep',
+    ]);
+    for (const locale of Object.keys(STRINGS)) {
+      for (const id of commonIds) {
+        const value = STRINGS[locale][id as keyof (typeof STRINGS)[string]];
+        expect(typeof value === 'string' && value.length > 0).toBe(true);
+      }
+    }
   });
 
   test('every locale defines a non-empty popup.pronunciation', () => {

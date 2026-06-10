@@ -16,6 +16,7 @@ import App from './App';
 import {name as appName} from './app.json';
 import {
   FileUtils,
+  NativeUIUtils,
   PluginCommAPI,
   PluginDocAPI,
   PluginFileAPI,
@@ -36,11 +37,31 @@ import {createRnProvisionPorts} from './src/core/dict/sqlite/provisionRnPorts';
 import {createRnImportPorts} from './src/core/dict/sqlite/importRnPorts';
 import {createRnCsvImportPorts} from './src/core/dict/sqlite/importCsvRnPorts';
 import {stardictRunPorts} from './src/core/dict/sqlite/importStardict';
-import {runNativeImport, getFileSize} from './src/core/dict/sqlite/nativeImport';
+import {
+  runNativeImport,
+  getFileSize,
+  copyPluginFile,
+  deletePluginFile,
+} from './src/core/dict/sqlite/nativeImport';
 import {openRnSqliteDb} from './src/core/dict/sqlite/rnSqliteDb';
 import {discoverUserDicts} from './src/core/dict/userDictDiscovery';
 import {lookupThesaurus} from './src/core/dict/sqlite/thesaurusLookup';
 import {addUserEntry} from './src/core/dict/sqlite/userEntries';
+import {
+  getKeepSources,
+  setKeepSources,
+} from './src/core/dict/sqlite/settings';
+import {
+  exportDbs as orchestrateExportDbs,
+  buildExportableDbs,
+  joinPath,
+  exportRootParent,
+  listFolders as listExportFolders,
+  toDbFiles,
+} from './src/core/dict/sqlite/exportDbs';
+import {restoreDbs as orchestrateRestoreDbs} from './src/core/dict/sqlite/restoreDbs';
+import {SELECT_IMPORT_ALL} from './src/core/dict/sqlite/schema';
+import {t} from './src/i18n/i18n';
 import {setPopupActions} from './src/ui/popupController';
 import {
   hideDefinition,
@@ -71,6 +92,14 @@ const logger = {
 const PLUGIN_LOCATION = 'plugins/sndictdfltbasev1/';
 
 const openDbByName = name => openRnSqliteDb({name, location: PLUGIN_LOCATION});
+
+// SINGLE source of truth for the slug-DB on-device path (P2-1). Both the
+// F7 delete port (resolveSlugPath) and the F5 export set (resolvePath)
+// address a slug DB at PLUGIN_LOCATION/<filename>; routing both through one
+// helper means they can never diverge. PLUGIN_LOCATION ends in '/', so
+// joinPath collapses to the same string the import path's resolveSlugDbPath
+// builds. joinPath is the shared, host-tested join from exportDbs.
+const resolveSlugDbPath = filename => joinPath(PLUGIN_LOCATION, filename);
 
 // Captured by the handlers; set when bootstrap resolves — which is NOW
 // fast: bootstrap returns as soon as base + user + already-imported are
@@ -165,12 +194,46 @@ const bootstrapPorts = {
       return db;
     },
     openImportedDb: filename => openDbByName(filename),
+    // F4-FR3: slug-DB health probe (existence is enough for v1). The slug
+    // lives at PLUGIN_LOCATION/<filename> (relative); RTNFileUtils.exists
+    // can't resolve that, so probe via the resolving native stat — a
+    // healthy slug DB is non-empty. A probe failure / 0 bytes -> treated as
+    // unhealthy upstream (RE-ADD).
+    slugDbExists: filename =>
+      getFileSize(resolveSlugDbPath(filename)).then(size => size > 0),
   },
   discover: () => discoverUserDicts({fileUtils: FileUtils, logger}),
+  // F7: the file-deletion seam deleteImportedDict drives — unlink the slug
+  // DB at PLUGIN_LOCATION/<filename> (same mapping resolveSlugDbPath uses on
+  // the import path) and the leftover on-disk source set. All best-effort;
+  // bootstrap reflects per-step success in the DeleteResult it returns.
+  delete: {
+    resolveSlugPath: resolveSlugDbPath,
+    // deletePluginFile resolves a RELATIVE plugin path (the slug DB) under
+    // filesDir AND passes an ABSOLUTE path (a kept source file) through —
+    // RTNFileUtils.deleteFile can't reach the relative slug path.
+    deleteFile: path => deletePluginFile(path).then(() => undefined),
+    deleteFolder: path => FileUtils.deleteDir(path),
+  },
+  // F4-FR5: the one-time first-run keep/delete dialog. Device-only (the
+  // RattaDialog is a native overlay); bootstrap calls it once before the
+  // first import dispatch when the flag is unset. true=keep, false=delete.
+  promptKeepDelete: () =>
+    NativeUIUtils.showRattaDialog(
+      t('settings.keepPrompt'),
+      t('common.delete'),
+      t('common.keep'),
+      true,
+    ),
   // Build the format-agnostic RunImportPorts for a descriptor, branching
   // on descriptor.kind. StarDict -> native produce-step (via
   // stardictRunPorts); CSV -> JS produce-step (createRnCsvImportPorts).
-  importPortsFor: (descriptor, audit) =>
+  // F4: the kind-specific factories build the produce/delete seam; this
+  // shell layers on the keepSources gate + the `.refresh` sentinel cleanup
+  // (both format-agnostic) so runImport skips the delete when keeping and
+  // removes a refresh marker after a verified refresh import.
+  importPortsFor: (descriptor, audit, keepSources) => {
+    const base =
     descriptor.kind === 'csv'
       ? createRnCsvImportPorts({
           csvPath: descriptor.csvPath,
@@ -196,7 +259,7 @@ const bootstrapPorts = {
           openWritableSlug: filename => openDbByName(filename)(),
           reopenSlugByName: filename => openDbByName(filename)(),
           discardSlugByName: filename =>
-            FileUtils.deleteFile(`${PLUGIN_LOCATION}${filename}`).catch(() => {}),
+            deletePluginFile(`${PLUGIN_LOCATION}${filename}`).catch(() => {}),
           audit,
         })
       : stardictRunPorts(
@@ -226,10 +289,23 @@ const bootstrapPorts = {
             // half-built file (best-effort).
             reopenSlugByName: filename => openDbByName(filename)(),
             discardSlugByName: filename =>
-              FileUtils.deleteFile(`${PLUGIN_LOCATION}${filename}`).catch(() => {}),
+              deletePluginFile(`${PLUGIN_LOCATION}${filename}`).catch(() => {}),
             audit,
           }),
-        ),
+        );
+    base.keepSources = keepSources;
+    // F4-FR9: when a `.refresh` sentinel forced this re-import, delete it
+    // after a verified commit so the same set doesn't loop next boot.
+    if (descriptor.refreshPath !== undefined) {
+      base.refreshPath = descriptor.refreshPath;
+      base.deleteRefreshSentinel = path =>
+        FileUtils.deleteFile(path).then(
+          () => undefined,
+          () => undefined,
+        );
+    }
+    return base;
+  },
   enableButtons,
 };
 
@@ -264,6 +340,207 @@ bootstrap(bootstrapPorts, logger)
         const res = await runtime.lookup.lookup(text);
         showDefinition(res, undefined, true);
       },
+      // F3 dictionary manager: the heavy logic (merge with the live
+      // allSources + recompute the live `sources`) lives in the host-
+      // tested handle; index.js just forwards.
+      // [settings] diagnostics. Logs the actual prefKEYS (not just names) so a
+      // write/read key mismatch is visible, and an IMMEDIATE read-back on the
+      // SAME connection right after the save — if that read-back doesn't show
+      // the just-saved state, the write isn't being applied at all (a broken
+      // transaction), as opposed to a reload-durability issue.
+      listDictPrefs: () =>
+        handle.listDictPrefs().then(p => {
+          logger.log(
+            `[settings] load <- ${p.length}: ` +
+              p
+                .map(x => `${x.prefKey}=${x.enabled ? 'on' : 'off'}#${x.sortOrder}`)
+                .join(' | '),
+          );
+          return p;
+        }),
+      setDictPrefs: prefs => {
+        logger.log(
+          `[settings] save -> ${prefs.length}: ` +
+            prefs
+              .map(x => `${x.prefKey}=${x.enabled ? 'on' : 'off'}#${x.sortOrder}`)
+              .join(' | '),
+        );
+        return handle.setDictPrefs(prefs).then(
+          () =>
+            handle.listDictPrefs().then(rb =>
+              logger.log(
+                `[settings] readback <- ` +
+                  rb
+                    .map(x => `${x.prefKey}=${x.enabled ? 'on' : 'off'}`)
+                    .join(' | '),
+              ),
+            ),
+          e => {
+            logger.log(`[settings] save FAILED: ${e?.message ?? e}`);
+            throw e;
+          },
+        );
+      },
+      // F4 opt-in delete toggle: read/write the keepSourcesAfterImport
+      // app setting on the live user.db (default keep; null-db-safe).
+      getKeepSources: () => getKeepSources(handle.userDb),
+      setKeepSources: keep => setKeepSources(handle.userDb, keep, logger),
+      // F7 delete an imported dict: the confirm dialog is a native overlay
+      // (device-only), so it lives here as the host-mockable port the panel
+      // calls; only the Delete button (showRattaDialog -> true) proceeds.
+      // The delete itself runs through the host-tested RuntimeHandle. The dict
+      // `name` (a proper noun — not re-translated) heads the localized prompt
+      // so the user sees WHICH dictionary they're about to remove.
+      confirmDeleteDict: name =>
+        NativeUIUtils.showRattaDialog(
+          `${name}\n\n${t('settings.deleteDictPrompt')}`,
+          t('common.cancel'),
+          t('common.delete'),
+          false,
+        ),
+      deleteImportedDict: prefKey => handle.deleteImportedDict(prefKey),
+      // F5 DB export. The orchestration (space pre-check, plugin-dir
+      // guard, user.db checkpoint, per-file copy) is host-tested in
+      // exportDbs.ts; index.js only supplies the device ports
+      // (NativeFileUtils) and the live audit/handle state.
+      //
+      // The export set is base.db + user.db + every imported slug (from
+      // the imports audit table), each addressed at PLUGIN_LOCATION/<fn>.
+      listExportableDbs: async () => {
+        const imports =
+          handle.userDb !== null
+            ? await handle.userDb.query(SELECT_IMPORT_ALL)
+            : [];
+        return toDbFiles(
+          buildExportableDbs({
+            hasBase: true,
+            hasUser: handle.userDb !== null,
+            imports,
+            resolvePath: resolveSlugDbPath,
+          }),
+        );
+      },
+      // Folder chooser: reuse the type-tagged FileUtils.listFiles (dirs
+      // only) — the SAME FileUtils discovery injects (resolution #4).
+      listFolders: parent => listExportFolders(FileUtils, parent),
+      createFolder: path => FileUtils.makeDir(path),
+      exportDbs: targetDir =>
+        orchestrateExportDbs(
+          targetDir,
+          {
+            listDbs: async () => {
+              const imports =
+                handle.userDb !== null
+                  ? await handle.userDb.query(SELECT_IMPORT_ALL)
+                  : [];
+              return buildExportableDbs({
+                hasBase: true,
+                hasUser: handle.userDb !== null,
+                imports,
+                resolvePath: resolveSlugDbPath,
+              });
+            },
+            availableSpace: () => FileUtils.getStorageAvailableSpace(),
+            sizeOf: srcPath => getFileSize(srcPath),
+            copyFile: (srcPath, destPath) =>
+              copyPluginFile(srcPath, destPath),
+            ensureDir: dir => FileUtils.makeDir(dir),
+            // Checkpoint the OPEN user.db so its on-disk file is
+            // WAL-consistent before the raw copy (resolution #9).
+            checkpointUserDb: async () => {
+              if (handle.userDb !== null) {
+                await handle.userDb.run('PRAGMA wal_checkpoint(TRUNCATE)');
+              }
+            },
+          },
+          {
+            pluginDir: PLUGIN_LOCATION,
+            pluginDirMessage: t('settings.exportPluginDir'),
+            noSpace: t('settings.exportNoSpace'),
+          },
+          logger,
+        ),
+      // F8 DB restore (the inverse of export). The orchestration (the
+      // base.db exclusion, close-writable-before-copy, per-file copy) is
+      // host-tested in restoreDbs.ts; index.js only supplies the device
+      // ports. DEVICE-UNVERIFIED.
+      //
+      // The confirm dialog is a native overlay (device-only), so it lives
+      // here as the host-mockable port the panel calls; only the Restore
+      // button (showRattaDialog -> true) proceeds. The restore itself runs
+      // through the host-tested orchestration over the live handle.
+      confirmRestore: () =>
+        NativeUIUtils.showRattaDialog(
+          t('settings.restorePrompt'),
+          t('common.cancel'),
+          t('settings.restore'),
+          false,
+        ),
+      restoreDbs: backupDir =>
+        orchestrateRestoreDbs(
+          backupDir,
+          {
+            // The backup folder is external (MyStyle/...), so FileUtils
+            // reaches it; keep only the .db files (type===1), by basename.
+            listBackup: async dir => {
+              const entries = await FileUtils.listFiles(dir);
+              if (!entries) {
+                return [];
+              }
+              return entries
+                .filter(e => e.type === 1 && e.path.endsWith('.db'))
+                .map(e => {
+                  const slash = e.path.lastIndexOf('/');
+                  return slash >= 0 ? e.path.slice(slash + 1) : e.path;
+                });
+            },
+            // copyPluginFile resolves BOTH ends (absolute backup src,
+            // relative live dest) via the native copyResolved — a real
+            // byte copy across the external->filesDir boundary.
+            copyInto: (absSrc, relDest) => copyPluginFile(absSrc, relDest),
+            resolveLivePath: resolveSlugDbPath,
+            // Close the WRITABLE handles (user.db + imported slugs) BEFORE
+            // the copy overwrites their files; base.db stays open (read-only,
+            // never restored). The user reopens the plugin to finish.
+            closeWritable: () => handle.closeWritable(),
+            // Pre-restore safety snapshot: checkpoint user.db, then copy the
+            // live user.db + every imported slug DB out to MyStyle/
+            // SnDict-pre-restore/ so a bad restore is undoable (restore FROM
+            // that folder to revert). base.db is the .snplg copy — not
+            // snapshotted. A throw ABORTS the restore (orchestration) so the
+            // live DBs are never overwritten without a safety net.
+            snapshot: async () => {
+              const snapDir = joinPath(exportRootParent(), 'SnDict-pre-restore');
+              await FileUtils.makeDir(snapDir);
+              if (handle.userDb !== null) {
+                await handle.userDb.run('PRAGMA wal_checkpoint(TRUNCATE)');
+              }
+              const imports =
+                handle.userDb !== null
+                  ? await handle.userDb.query(SELECT_IMPORT_ALL)
+                  : [];
+              const files = ['user.db', ...imports.map(r => r.filename)];
+              for (const f of files) {
+                await copyPluginFile(resolveSlugDbPath(f), joinPath(snapDir, f));
+              }
+            },
+          },
+          {
+            noBackup: t('settings.restoreNoBackup'),
+            snapshotFailed: t('settings.restoreSnapshotFailed'),
+          },
+          logger,
+        ),
+      // Surface export/restore outcomes as a modal dialog (RattaDialog) — a
+      // result the user can't miss, unlike the inline summary that's easy to
+      // scroll past. Both buttons just dismiss it.
+      notify: msg =>
+        NativeUIUtils.showRattaDialog(
+          msg,
+          t('popup.close'),
+          t('popup.close'),
+          true,
+        ).then(() => undefined),
     });
 
     logger.log(

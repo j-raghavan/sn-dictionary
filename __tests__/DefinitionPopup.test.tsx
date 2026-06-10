@@ -16,6 +16,14 @@ jest.mock('sn-plugin-lib', () => ({
   PluginManager: {closePluginView: jest.fn(() => Promise.resolve(true))},
 }));
 
+// The native clipboard bridge is device-only (NativeModules); mock it so
+// the popup's copy handlers are exercised without a native module.
+jest.mock('../src/native/clipboard', () => ({
+  copyToClipboard: jest.fn(() =>
+    Promise.resolve({success: true, code: 'OK', message: ''}),
+  ),
+}));
+
 import React from 'react';
 import {act, create, type ReactTestRenderer} from 'react-test-renderer';
 import {PluginManager} from 'sn-plugin-lib';
@@ -25,13 +33,23 @@ import {
   showRecognizing,
   hideDefinition,
   setPopupActions,
+  getCurrentState,
   type PopupActions,
   __testing__,
 } from '../src/ui/popupController';
 import type {DefinitionFormat, LookupResult} from '../src/core/lookup';
 import type {ThesaurusResult} from '../src/core/dict/sqlite/thesaurusLookup';
+import type {
+  DbFile,
+  DictPref,
+  RestoreSummary,
+} from '../src/core/dict/sqlite/settings';
+
+import {copyToClipboard} from '../src/native/clipboard';
+import {htmlToPlainText} from '../src/ui/htmlToPlainText';
 
 const closePluginView = PluginManager.closePluginView as jest.Mock;
+const copyMock = copyToClipboard as jest.Mock;
 
 const found = (
   source: string,
@@ -60,6 +78,10 @@ beforeEach(() => {
   __testing__.reset();
   closePluginView.mockClear();
   closePluginView.mockImplementation(() => Promise.resolve(true));
+  copyMock.mockClear();
+  copyMock.mockImplementation(() =>
+    Promise.resolve({success: true, code: 'OK', message: ''}),
+  );
 });
 
 const renderPopup = (): ReactTestRenderer => {
@@ -835,6 +857,10 @@ const fakeActions = (
   lookupThesaurus,
   addUserEntry: async () => undefined,
   relookup: async () => undefined,
+  listDictPrefs: async () => [],
+  setDictPrefs: async () => undefined,
+  getKeepSources: async () => true,
+  setKeepSources: async () => undefined,
 });
 
 describe('DefinitionPopup — Definition/Thesaurus toggle', () => {
@@ -1071,10 +1097,22 @@ const relookupActions = (
   lookupThesaurus: async () => ({lang: 'en', omw: {synonyms: [], antonyms: []}}),
   addUserEntry: async () => undefined,
   relookup,
+  listDictPrefs: async () => [],
+  setDictPrefs: async () => undefined,
+  getKeepSources: async () => true,
+  setKeepSources: async () => undefined,
 });
 
 const findByLabel = (tree: ReactTestRenderer, label: string) =>
   tree.root.findAll(n => n.props.accessibilityLabel === label);
+
+// Narrowed read of the current popup kind: getCurrentState() is a union
+// and `.kind` only exists on the visible variants, so narrow on .visible
+// first (mirrors the guard popupController.closeSettings uses).
+const currentKind = (): string | undefined => {
+  const s = getCurrentState();
+  return s.visible ? s.kind : undefined;
+};
 
 // Tap the pencil to enter edit mode.
 const enterEdit = (tree: ReactTestRenderer) =>
@@ -1191,6 +1229,10 @@ const addActions = (
   lookupThesaurus: async () => ({lang: 'en', omw: {synonyms: [], antonyms: []}}),
   addUserEntry,
   relookup,
+  listDictPrefs: async () => [],
+  setDictPrefs: async () => undefined,
+  getKeepSources: async () => true,
+  setKeepSources: async () => undefined,
 });
 
 describe('DefinitionPopup — add-word form', () => {
@@ -1300,5 +1342,1425 @@ describe('DefinitionPopup — add-word form', () => {
     act(() => findByLabel(tree, 'Definition')[0].props.onChangeText('a def'));
     await act(async () => findByLabel(tree, 'Save')[0].props.onPress());
     expect(collectText(tree)).toContain('Could not save');
+  });
+});
+
+describe('DefinitionPopup — copy to clipboard', () => {
+  test('Copy writes the word + definition and shows the "Copied" status', async () => {
+    const tree = renderPopup();
+    act(() => showDefinition(found('WordNet', 'rain', 'to fall as water')));
+    await act(async () => findByLabel(tree, 'Copy')[0].props.onPress());
+    expect(copyMock).toHaveBeenCalledWith('rain\nto fall as water');
+    expect(collectText(tree)).toContain('Copied');
+  });
+
+  test('Copy on a single-hit definition copies the word then the body', async () => {
+    const tree = renderPopup();
+    act(() => showDefinition(found('User', 'apple', 'a fruit')));
+    await act(async () => findByLabel(tree, 'Copy')[0].props.onPress());
+    expect(copyMock).toHaveBeenCalledWith('apple\na fruit');
+  });
+
+  test('a failed copy shows the failure status, not "Copied"', async () => {
+    copyMock.mockImplementation(() =>
+      Promise.resolve({
+        success: false,
+        code: 'NO_CLIPBOARD_SERVICE',
+        message: 'x',
+      }),
+    );
+    const tree = renderPopup();
+    act(() => showDefinition(found('WordNet', 'rain', 'to fall as water')));
+    await act(async () => findByLabel(tree, 'Copy')[0].props.onPress());
+    const text = collectText(tree);
+    expect(text).toContain("Couldn't copy");
+    expect(text).not.toContain('Copied');
+  });
+
+  test('a thrown copy promise is treated as a failure, never a crash', async () => {
+    copyMock.mockImplementation(() => Promise.reject(new Error('boom')));
+    const tree = renderPopup();
+    act(() => showDefinition(found('WordNet', 'rain', 'to fall as water')));
+    await act(async () => findByLabel(tree, 'Copy')[0].props.onPress());
+    expect(collectText(tree)).toContain("Couldn't copy");
+  });
+
+  test('no Copy action in the not-found state (nothing to copy)', () => {
+    const tree = renderPopup();
+    act(() => showDefinition(notFound('photon')));
+    expect(findByLabel(tree, 'Copy')).toHaveLength(0);
+  });
+
+  test('the copy status clears when a new word is looked up', async () => {
+    const tree = renderPopup();
+    act(() => showDefinition(found('WordNet', 'rain', 'to fall as water')));
+    await act(async () => findByLabel(tree, 'Copy')[0].props.onPress());
+    expect(collectText(tree)).toContain('Copied');
+    act(() => showDefinition(found('WordNet', 'snow', 'frozen rain')));
+    expect(collectText(tree)).not.toContain('Copied');
+  });
+});
+
+// Integration-level copy tests: exercise the popup's wiring of the
+// active tab / multi-source / format into buildCopyText — the paths the
+// reducer tests cover in isolation but that a DefinitionPopup param-
+// wiring regression (wrong `tab`, dropped `showSourceBadges`) would
+// otherwise slip past. Uses the module-level flush/fakeActions/wordnetHit
+// helpers from the thesaurus suite.
+const pressTab = (tree: ReactTestRenderer, label: string) =>
+  tree.root.findAll(
+    n => n.props.accessibilityLabel === label && n.props.onPress,
+  )[0].props.onPress();
+
+describe('DefinitionPopup — copy wiring (tab / multi-source / format)', () => {
+  test('Copy on the Thesaurus tab copies the word + synonyms/antonyms', async () => {
+    setPopupActions(
+      fakeActions(async () => ({
+        lang: 'en',
+        omw: {synonyms: ['glad'], antonyms: ['sad']},
+      })),
+    );
+    const tree = renderPopup();
+    act(() => showDefinition(wordnetHit('happy', 'feeling joy')));
+    await act(async () => pressTab(tree, 'Thesaurus'));
+    await flush();
+    await act(async () => findByLabel(tree, 'Copy')[0].props.onPress());
+    expect(copyMock).toHaveBeenCalledWith(
+      'happy\nSynonyms: glad\nAntonyms: sad',
+    );
+  });
+
+  test('the copy status clears when switching tabs', async () => {
+    setPopupActions(
+      fakeActions(async () => ({
+        lang: 'en',
+        omw: {synonyms: ['glad'], antonyms: []},
+      })),
+    );
+    const tree = renderPopup();
+    act(() => showDefinition(wordnetHit('happy', 'feeling joy')));
+    await act(async () => findByLabel(tree, 'Copy')[0].props.onPress());
+    expect(collectText(tree)).toContain('Copied');
+    await act(async () => pressTab(tree, 'Thesaurus'));
+    await flush();
+    expect(collectText(tree)).not.toContain('Copied');
+  });
+
+  test('Copy on a multi-source result copies the word + each badged section', async () => {
+    setPopupActions(
+      fakeActions(async () => ({lang: 'en', omw: {synonyms: [], antonyms: []}})),
+    );
+    const tree = renderPopup();
+    act(() =>
+      showDefinition({
+        queriedFor: 'apple',
+        hits: [
+          {
+            source: 'WordNet',
+            entry: {word: 'apple', definition: 'a fruit', format: 'plain'},
+          },
+          {
+            source: 'Dune',
+            entry: {
+              word: 'apple',
+              definition: 'a house word',
+              format: 'plain',
+            },
+          },
+        ],
+        loading: [],
+      }),
+    );
+    await act(async () => findByLabel(tree, 'Copy')[0].props.onPress());
+    expect(copyMock).toHaveBeenCalledWith(
+      'apple\nWordNet\na fruit\n\nDune\na house word',
+    );
+  });
+
+  test('on the Thesaurus tab with no thesaurus, Copy still copies the word', async () => {
+    setPopupActions(
+      fakeActions(async () => ({lang: 'und', omw: {synonyms: [], antonyms: []}})),
+    );
+    const tree = renderPopup();
+    act(() => showDefinition(wordnetHit('xyzzy', 'no known relations')));
+    await act(async () => pressTab(tree, 'Thesaurus'));
+    await flush();
+    // The single Copy stays (it always copies at least the word).
+    expect(findByLabel(tree, 'Copy')).toHaveLength(1);
+    await act(async () => findByLabel(tree, 'Copy')[0].props.onPress());
+    expect(copyMock).toHaveBeenCalledWith('xyzzy');
+  });
+
+  test('Copy of an html-format definition copies the word + the reduced text', async () => {
+    const html = '<div>noun<br>a domestic animal</div>';
+    const tree = renderPopup();
+    act(() => showDefinition(found('Dict', 'cat', html, 'html')));
+    await act(async () => findByLabel(tree, 'Copy')[0].props.onPress());
+    const copied = copyMock.mock.calls[copyMock.mock.calls.length - 1][0];
+    expect(copied).not.toMatch(/[<>]/);
+    expect(copied).toBe(`cat\n${htmlToPlainText(html)}`);
+  });
+});
+
+// --- Settings panel shell (F1) -------------------------------------
+
+const pressLabel = (tree: ReactTestRenderer, label: string) =>
+  findByLabel(tree, label)[0].props.onPress();
+
+describe('DefinitionPopup — settings panel', () => {
+  test('the gear renders in a result state (found)', () => {
+    const tree = renderPopup();
+    act(() => showDefinition(found('WordNet', 'hello', 'a greeting')));
+    expect(findByLabel(tree, 'Settings')).toHaveLength(1);
+  });
+
+  test('the gear renders even in the not-found result state', () => {
+    const tree = renderPopup();
+    act(() => showDefinition(notFound('xenoglossy')));
+    expect(findByLabel(tree, 'Settings')).toHaveLength(1);
+  });
+
+  test('the gear is absent during the recognizing kind', () => {
+    const tree = renderPopup();
+    act(() => showRecognizing());
+    expect(findByLabel(tree, 'Settings')).toHaveLength(0);
+  });
+
+  test('tapping the gear opens the settings panel (title shown, kind=settings)', () => {
+    const tree = renderPopup();
+    act(() => showDefinition(found('WordNet', 'hello', 'a greeting')));
+    act(() => pressLabel(tree, 'Settings'));
+    const text = collectText(tree);
+    expect(text).toContain('Settings');
+    // The result definition is gone (panel replaced it).
+    expect(text).not.toContain('a greeting');
+    expect(currentKind()).toBe('settings');
+    // The panel has a Back button.
+    expect(findByLabel(tree, 'Back')).toHaveLength(1);
+  });
+
+  test('Back restores the prior result AND the Thesaurus tab (F1-AC2)', async () => {
+    setPopupActions(
+      fakeActions(async () => ({
+        lang: 'en',
+        omw: {synonyms: ['glad'], antonyms: ['sad']},
+      })),
+    );
+    const tree = renderPopup();
+    act(() => showDefinition(wordnetHit('happy', 'feeling joy')));
+    // Flip to the Thesaurus tab and let the fetch settle.
+    await act(async () =>
+      tree.root
+        .findAll(n => n.props.accessibilityLabel === 'Thesaurus' && n.props.onPress)[0]
+        .props.onPress(),
+    );
+    await flush();
+    expect(collectText(tree)).toContain('glad');
+    // Open settings, then Back.
+    act(() => pressLabel(tree, 'Settings'));
+    expect(currentKind()).toBe('settings');
+    await act(async () => pressLabel(tree, 'Back'));
+    await flush();
+    // The result is back AND we're on the Thesaurus tab (synonyms still
+    // render) — Back did not clobber the restored tab.
+    const text = collectText(tree);
+    expect(text).toContain('glad');
+    expect(text).toContain('sad');
+    expect(currentKind()).toBe('result');
+  });
+
+  test('the gear renders in the loading result state', () => {
+    // Lead decision 4: the gear shows in every result state — incl. the
+    // streaming "loading" snapshot, not just found/not-found.
+    const tree = renderPopup();
+    act(() => showDefinition(loading('apple', ['WordNet'])));
+    expect(findByLabel(tree, 'Settings')).toHaveLength(1);
+  });
+
+  test('Back restores the editable lasso OCR row (the pencil returns)', async () => {
+    // The other state-carry dimension besides activeTab: an editable
+    // (lasso) result must come back editable after Settings → Back, so the
+    // OCR-correction pencil reappears.
+    const tree = renderPopup();
+    act(() =>
+      showDefinition(found('WordNet', 'rain', 'water'), 'OCR: rain', true),
+    );
+    expect(findByLabel(tree, 'Edit recognized text')).toHaveLength(1);
+    act(() => pressLabel(tree, 'Settings'));
+    expect(currentKind()).toBe('settings');
+    await act(async () => pressLabel(tree, 'Back'));
+    expect(currentKind()).toBe('result');
+    expect(findByLabel(tree, 'Edit recognized text')).toHaveLength(1);
+  });
+});
+
+// --- Dictionary manager (F3) ---------------------------------------
+
+const dictPref = (
+  name: string,
+  enabled: boolean,
+  sortOrder: number,
+  removable = false,
+): DictPref => ({prefKey: name, name, enabled, sortOrder, removable});
+
+// PopupActions whose listDictPrefs returns a fixed set and whose
+// setDictPrefs is a spy (captures the persisted payload the manager sends).
+// F4: optional keepSources value + setKeepSources spy for the toggle tests.
+const dictManagerActions = (
+  prefs: DictPref[],
+  setDictPrefs: PopupActions['setDictPrefs'] = async () => undefined,
+  keepSources = true,
+  setKeepSources: PopupActions['setKeepSources'] = async () => undefined,
+): PopupActions => ({
+  lookupThesaurus: async () => ({lang: 'en', omw: {synonyms: [], antonyms: []}}),
+  addUserEntry: async () => undefined,
+  relookup: async () => undefined,
+  listDictPrefs: async () => prefs,
+  setDictPrefs,
+  getKeepSources: async () => keepSources,
+  setKeepSources,
+});
+
+// Open settings from a result, then let the mount-time listDictPrefs fetch
+// + its setState settle so the list is rendered.
+const openSettings = async (tree: ReactTestRenderer): Promise<void> => {
+  act(() => showDefinition(found('WordNet', 'hello', 'a greeting')));
+  act(() => pressLabel(tree, 'Settings'));
+  await flush();
+};
+
+describe('DefinitionPopup — dictionary manager (F3)', () => {
+  test('renders one row per pref with the section title (F3-FR2)', async () => {
+    setPopupActions(
+      dictManagerActions([
+        dictPref('User', true, 0),
+        dictPref('Dune', true, 1, true),
+        dictPref('WordNet', true, 2),
+      ]),
+    );
+    const tree = renderPopup();
+    await openSettings(tree);
+    const text = collectText(tree);
+    expect(text).toContain('Dictionaries');
+    expect(text).toContain('User');
+    expect(text).toContain('Dune');
+    expect(text).toContain('WordNet');
+  });
+
+  test('an enabled row shows Disable; toggling persists enabled=false (F3-FR3)', async () => {
+    const spy = jest.fn(async (_prefs: DictPref[]) => undefined);
+    setPopupActions(
+      dictManagerActions(
+        [dictPref('User', true, 0), dictPref('WordNet', true, 1)],
+        spy,
+      ),
+    );
+    const tree = renderPopup();
+    await openSettings(tree);
+    // Toggle User off — staged LOCALLY (off-state shown immediately), but
+    // nothing is persisted until Save.
+    await act(async () => findByLabel(tree, 'Disable: User')[0].props.onPress());
+    expect(spy).not.toHaveBeenCalled();
+    // The row now offers Enable (off-state shown, not hidden).
+    expect(findByLabel(tree, 'Enable: User')).toHaveLength(1);
+    // Save persists the staged set in one write.
+    await act(async () => findByLabel(tree, 'Save')[0].props.onPress());
+    expect(spy).toHaveBeenCalledTimes(1);
+    const payload = spy.mock.calls[0][0] as DictPref[];
+    expect(payload.find(p => p.name === 'User')?.enabled).toBe(false);
+    // sortOrder is renumbered to the array index.
+    expect(payload.map(p => p.sortOrder)).toEqual([0, 1]);
+  });
+
+  test('Save is disabled until an edit, enabled after, and confirms INLINE (no modal)', async () => {
+    const spy = jest.fn(async (_prefs: DictPref[]) => undefined);
+    // notify must NOT be used for the save acknowledgement — the old code reused
+    // the two-button confirm dialog as a notification (two "Close" buttons).
+    const notify = jest.fn(async () => undefined);
+    setPopupActions({
+      ...dictManagerActions(
+        [dictPref('User', true, 0), dictPref('WordNet', true, 1)],
+        spy,
+      ),
+      notify,
+    });
+    const tree = renderPopup();
+    await openSettings(tree);
+    // No edits yet -> Save is disabled (a tap is a no-op, nothing persisted).
+    await act(async () => findByLabel(tree, 'Save')[0].props.onPress());
+    expect(spy).not.toHaveBeenCalled();
+    expect(collectText(tree)).not.toContain('Settings saved');
+    // Edit -> Save now persists + confirms inline.
+    await act(async () => findByLabel(tree, 'Disable: User')[0].props.onPress());
+    await act(async () => findByLabel(tree, 'Save')[0].props.onPress());
+    expect(spy).toHaveBeenCalledTimes(1);
+    // Inline acknowledgement, NOT a modal dialog.
+    expect(collectText(tree)).toContain('Settings saved');
+    expect(notify).not.toHaveBeenCalled();
+    // After a successful save the panel is clean -> Save no-ops again.
+    await act(async () => findByLabel(tree, 'Save')[0].props.onPress());
+    expect(spy).toHaveBeenCalledTimes(1);
+    // Staging another edit clears the stale "saved" status.
+    await act(async () => findByLabel(tree, 'Enable: User')[0].props.onPress());
+    expect(collectText(tree)).not.toContain('Settings saved');
+  });
+
+  test('a failed save surfaces saveFailed INLINE and STAYS dirty (retryable)', async () => {
+    const spy = jest.fn(async (_prefs: DictPref[]) => {
+      throw new Error('disk full');
+    });
+    const notify = jest.fn(async () => undefined);
+    setPopupActions({
+      ...dictManagerActions(
+        [dictPref('User', true, 0), dictPref('WordNet', true, 1)],
+        spy,
+      ),
+      notify,
+    });
+    const tree = renderPopup();
+    await openSettings(tree);
+    await act(async () => findByLabel(tree, 'Disable: User')[0].props.onPress());
+    await act(async () => findByLabel(tree, 'Save')[0].props.onPress());
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(collectText(tree)).toContain("Couldn't save settings");
+    expect(notify).not.toHaveBeenCalled();
+    // Still dirty after the failure -> a retry Save fires again.
+    await act(async () => findByLabel(tree, 'Save')[0].props.onPress());
+    expect(spy).toHaveBeenCalledTimes(2);
+  });
+
+  test('Save with no setDictPrefs port wired is a safe no-op (no crash)', async () => {
+    const noPersist = dictManagerActions([
+      dictPref('User', true, 0),
+      dictPref('WordNet', true, 1),
+    ]);
+    delete (noPersist as Partial<PopupActions>).setDictPrefs;
+    setPopupActions(noPersist as PopupActions);
+    const tree = renderPopup();
+    await openSettings(tree);
+    await act(async () => findByLabel(tree, 'Disable: User')[0].props.onPress());
+    // The missing-port guard returns early — no throw, edit stays staged.
+    await act(async () => findByLabel(tree, 'Save')[0].props.onPress());
+    expect(findByLabel(tree, 'Enable: User')).toHaveLength(1);
+  });
+
+  test('Move-down on the top row reorders and persists the new order (F3-AC1)', async () => {
+    const spy = jest.fn(async (_prefs: DictPref[]) => undefined);
+    setPopupActions(
+      dictManagerActions(
+        [
+          dictPref('User', true, 0),
+          dictPref('Dune', true, 1, true),
+          dictPref('WordNet', true, 2),
+        ],
+        spy,
+      ),
+    );
+    const tree = renderPopup();
+    await openSettings(tree);
+    await act(async () => findByLabel(tree, 'Move down: User')[0].props.onPress());
+    await act(async () => findByLabel(tree, 'Save')[0].props.onPress());
+    const payload = spy.mock.calls[0][0] as DictPref[];
+    expect(payload.map(p => p.name)).toEqual(['Dune', 'User', 'WordNet']);
+    expect(payload.map(p => p.sortOrder)).toEqual([0, 1, 2]);
+  });
+
+  test('Move-up on a lower row promotes it (F3-AC1) and persists the order', async () => {
+    const spy = jest.fn(async (_prefs: DictPref[]) => undefined);
+    setPopupActions(
+      dictManagerActions(
+        [
+          dictPref('User', true, 0),
+          dictPref('Dune', true, 1, true),
+          dictPref('WordNet', true, 2),
+        ],
+        spy,
+      ),
+    );
+    const tree = renderPopup();
+    await openSettings(tree);
+    // Move WordNet up one -> [User, WordNet, Dune], then Save.
+    await act(async () => findByLabel(tree, 'Move up: WordNet')[0].props.onPress());
+    await act(async () => findByLabel(tree, 'Save')[0].props.onPress());
+    expect((spy.mock.calls[0][0] as DictPref[]).map(p => p.name)).toEqual([
+      'User',
+      'WordNet',
+      'Dune',
+    ]);
+  });
+
+  test('the top row hides Move-up and the bottom row hides Move-down (hide-don\'t-grey)', async () => {
+    setPopupActions(
+      dictManagerActions([
+        dictPref('User', true, 0),
+        dictPref('WordNet', true, 1),
+      ]),
+    );
+    const tree = renderPopup();
+    await openSettings(tree);
+    // Top row (User) has no Move-up; bottom row (WordNet) has no Move-down.
+    expect(findByLabel(tree, 'Move up: User')).toHaveLength(0);
+    expect(findByLabel(tree, 'Move down: User')).toHaveLength(1);
+    expect(findByLabel(tree, 'Move up: WordNet')).toHaveLength(1);
+    expect(findByLabel(tree, 'Move down: WordNet')).toHaveLength(0);
+  });
+
+  test('disabling all sources shows the all-disabled warning (F3-FR5 / AC5)', async () => {
+    setPopupActions(
+      dictManagerActions([
+        dictPref('User', false, 0),
+        dictPref('WordNet', false, 1),
+      ]),
+    );
+    const tree = renderPopup();
+    await openSettings(tree);
+    expect(collectText(tree)).toContain(
+      'All dictionaries are off — lookups return nothing.',
+    );
+  });
+
+  test('with at least one enabled dict, no warning is shown', async () => {
+    setPopupActions(
+      dictManagerActions([
+        dictPref('User', false, 0),
+        dictPref('WordNet', true, 1),
+      ]),
+    );
+    const tree = renderPopup();
+    await openSettings(tree);
+    expect(collectText(tree)).not.toContain('All dictionaries are off');
+  });
+
+  test('re-fetches the list on every mount (EC6)', async () => {
+    const listSpy = jest.fn(async () => [dictPref('WordNet', true, 0)]);
+    setPopupActions({
+      lookupThesaurus: async () => ({lang: 'en', omw: {synonyms: [], antonyms: []}}),
+      addUserEntry: async () => undefined,
+      relookup: async () => undefined,
+      listDictPrefs: listSpy,
+      setDictPrefs: async () => undefined,
+      getKeepSources: async () => true,
+      setKeepSources: async () => undefined,
+    });
+    const tree = renderPopup();
+    await openSettings(tree);
+    expect(listSpy).toHaveBeenCalledTimes(1);
+    // Back to the result, then re-open settings -> the panel re-mounts and
+    // re-fetches (a fresh detached import could have changed the set).
+    await act(async () => pressLabel(tree, 'Back'));
+    act(() => pressLabel(tree, 'Settings'));
+    await flush();
+    expect(listSpy).toHaveBeenCalledTimes(2);
+  });
+
+  test('renders without crashing when no actions are registered (null guard)', async () => {
+    // No setPopupActions — getPopupActions() is null; the panel opens with
+    // an empty list and no warning, no crash.
+    const tree = renderPopup();
+    await openSettings(tree);
+    expect(collectText(tree)).toContain('Dictionaries');
+    expect(collectText(tree)).not.toContain('All dictionaries are off');
+  });
+
+  test('a setDictPrefs rejection is swallowed (optimistic UI stays)', async () => {
+    const spy = jest.fn(async () => {
+      throw new Error('persist failed');
+    });
+    setPopupActions(
+      dictManagerActions([dictPref('WordNet', true, 0)], spy),
+    );
+    const tree = renderPopup();
+    await openSettings(tree);
+    await act(async () => {
+      findByLabel(tree, 'Disable: WordNet')[0].props.onPress();
+      await Promise.resolve();
+    });
+    // The optimistic toggle still applied (row now shows Enable).
+    expect(findByLabel(tree, 'Enable: WordNet')).toHaveLength(1);
+  });
+
+  test('a listDictPrefs rejection leaves an empty list (no crash)', async () => {
+    setPopupActions({
+      lookupThesaurus: async () => ({lang: 'en', omw: {synonyms: [], antonyms: []}}),
+      addUserEntry: async () => undefined,
+      relookup: async () => undefined,
+      listDictPrefs: async () => {
+        throw new Error('read failed');
+      },
+      setDictPrefs: async () => undefined,
+      getKeepSources: async () => true,
+      setKeepSources: async () => undefined,
+    });
+    const tree = renderPopup();
+    await openSettings(tree);
+    expect(collectText(tree)).toContain('Dictionaries');
+  });
+});
+
+describe('DefinitionPopup — keep-sources toggle (F4)', () => {
+  test('renders the Import sources section with the keep label + hint', async () => {
+    setPopupActions(dictManagerActions([dictPref('WordNet', true, 0)]));
+    const tree = renderPopup();
+    await openSettings(tree);
+    const text = collectText(tree);
+    expect(text).toContain('Import sources');
+    expect(text).toContain('Keep source files after import');
+  });
+
+  test('keep=true shows the Keep state on the toggle', async () => {
+    setPopupActions(
+      dictManagerActions([dictPref('WordNet', true, 0)], undefined, true),
+    );
+    const tree = renderPopup();
+    await openSettings(tree);
+    // The switch control reflects the persisted keep state.
+    const sw = findByLabel(tree, 'Keep source files after import');
+    expect(sw).toHaveLength(1);
+    expect(sw[0].props.accessibilityState).toMatchObject({checked: true});
+  });
+
+  test('toggling persists the flipped value via setKeepSources', async () => {
+    const spy = jest.fn(async (_keep: boolean) => undefined);
+    setPopupActions(
+      dictManagerActions([dictPref('WordNet', true, 0)], undefined, true, spy),
+    );
+    const tree = renderPopup();
+    await openSettings(tree);
+    await act(async () => {
+      findByLabel(tree, 'Keep source files after import')[0].props.onPress();
+      await Promise.resolve();
+    });
+    // Flipped keep=true -> setKeepSources(false).
+    expect(spy).toHaveBeenCalledWith(false);
+    // The control now reflects the optimistic off (delete) state.
+    const sw = findByLabel(tree, 'Keep source files after import');
+    expect(sw[0].props.accessibilityState).toMatchObject({checked: false});
+  });
+
+  test('loads keep=false from the engine and shows the Delete state', async () => {
+    setPopupActions(
+      dictManagerActions([dictPref('WordNet', true, 0)], undefined, false),
+    );
+    const tree = renderPopup();
+    await openSettings(tree);
+    const sw = findByLabel(tree, 'Keep source files after import');
+    expect(sw[0].props.accessibilityState).toMatchObject({checked: false});
+  });
+
+  test('a setKeepSources rejection is swallowed (optimistic UI stays)', async () => {
+    const spy = jest.fn(async () => {
+      throw new Error('persist failed');
+    });
+    setPopupActions(
+      dictManagerActions([dictPref('WordNet', true, 0)], undefined, true, spy),
+    );
+    const tree = renderPopup();
+    await openSettings(tree);
+    await act(async () => {
+      findByLabel(tree, 'Keep source files after import')[0].props.onPress();
+      await Promise.resolve();
+    });
+    const sw = findByLabel(tree, 'Keep source files after import');
+    expect(sw[0].props.accessibilityState).toMatchObject({checked: false});
+  });
+
+  test('null actions: the toggle defaults to keep, no crash', async () => {
+    const tree = renderPopup();
+    await openSettings(tree);
+    const sw = findByLabel(tree, 'Keep source files after import');
+    expect(sw[0].props.accessibilityState).toMatchObject({checked: true});
+  });
+
+  test('a getKeepSources rejection keeps the safe default (keep), no crash', async () => {
+    setPopupActions({
+      lookupThesaurus: async () => ({lang: 'en', omw: {synonyms: [], antonyms: []}}),
+      addUserEntry: async () => undefined,
+      relookup: async () => undefined,
+      listDictPrefs: async () => [dictPref('WordNet', true, 0)],
+      setDictPrefs: async () => undefined,
+      getKeepSources: async () => {
+        throw new Error('read failed');
+      },
+      setKeepSources: async () => undefined,
+    });
+    const tree = renderPopup();
+    await openSettings(tree);
+    const sw = findByLabel(tree, 'Keep source files after import');
+    expect(sw[0].props.accessibilityState).toMatchObject({checked: true});
+  });
+
+  test('unmount before the keep/list fetches resolve does not setState (cancel guard)', async () => {
+    // Deferred actions so the panel unmounts (Back) while both fetches are
+    // still pending — the cancelled guard must skip both setState calls.
+    let releasePrefs!: (p: DictPref[]) => void;
+    let releaseKeep!: (k: boolean) => void;
+    setPopupActions({
+      lookupThesaurus: async () => ({lang: 'en', omw: {synonyms: [], antonyms: []}}),
+      addUserEntry: async () => undefined,
+      relookup: async () => undefined,
+      listDictPrefs: () =>
+        new Promise<DictPref[]>(res => {
+          releasePrefs = res;
+        }),
+      setDictPrefs: async () => undefined,
+      getKeepSources: () =>
+        new Promise<boolean>(res => {
+          releaseKeep = res;
+        }),
+      setKeepSources: async () => undefined,
+    });
+    const tree = renderPopup();
+    act(() => showDefinition(found('WordNet', 'hello', 'a greeting')));
+    act(() => pressLabel(tree, 'Settings'));
+    // Leave settings (unmount the panel) BEFORE the fetches resolve.
+    await act(async () => pressLabel(tree, 'Back'));
+    // Now resolve — the cancelled guard means no setState-after-unmount.
+    await act(async () => {
+      releasePrefs([dictPref('WordNet', true, 0)]);
+      releaseKeep(false);
+      await Promise.resolve();
+    });
+    // No crash / no warning surfaced; the popup is back on the result view.
+    expect(collectText(tree)).toContain('hello');
+  });
+});
+
+// --- Remove an imported dict (F7) ----------------------------------
+
+const okDelete = {
+  ok: true as const,
+  removed: {slugDb: true, audit: true, pref: true, sources: true},
+  sourcesAtRisk: false,
+};
+
+// PopupActions with the F3 list + the F7 delete seam: a confirm port (resolves
+// true=Delete / false=Cancel) and a deleteImportedDict spy.
+const deleteActions = (
+  prefs: DictPref[],
+  confirmDeleteDict: PopupActions['confirmDeleteDict'] = async () => true,
+  deleteImportedDict: PopupActions['deleteImportedDict'] = async () => okDelete,
+  listDictPrefs: PopupActions['listDictPrefs'] = async () => prefs,
+): PopupActions => ({
+  lookupThesaurus: async () => ({lang: 'en', omw: {synonyms: [], antonyms: []}}),
+  addUserEntry: async () => undefined,
+  relookup: async () => undefined,
+  listDictPrefs,
+  setDictPrefs: async () => undefined,
+  getKeepSources: async () => true,
+  setKeepSources: async () => undefined,
+  confirmDeleteDict,
+  deleteImportedDict,
+});
+
+describe('DefinitionPopup — remove imported dict (F7)', () => {
+  test('Remove renders ONLY on removable rows (F7-FR1)', async () => {
+    setPopupActions(
+      deleteActions([
+        dictPref('User', true, 0),
+        dictPref('Dune', true, 1, true),
+        dictPref('WordNet', true, 2),
+      ]),
+    );
+    const tree = renderPopup();
+    await openSettings(tree);
+    // Imported (removable) Dune has a Remove control...
+    expect(findByLabel(tree, 'Remove: Dune')).toHaveLength(1);
+    // ...base/User do NOT (hide-don't-grey).
+    expect(findByLabel(tree, 'Remove: User')).toHaveLength(0);
+    expect(findByLabel(tree, 'Remove: WordNet')).toHaveLength(0);
+  });
+
+  test('tapping Remove confirms, then deletes on Delete + re-fetches (F7-FR2/FR3)', async () => {
+    const confirm = jest.fn(async (_name: string) => true);
+    const del = jest.fn(async (_key: string) => okDelete);
+    // The list loses Dune after the delete (re-fetch returns the new set).
+    const lists = [
+      [dictPref('User', true, 0), dictPref('Dune', true, 1, true), dictPref('WordNet', true, 2)],
+      [dictPref('User', true, 0), dictPref('WordNet', true, 1)],
+    ];
+    let call = 0;
+    setPopupActions(
+      deleteActions(lists[0], confirm, del, async () => lists[Math.min(call++, 1)]),
+    );
+    const tree = renderPopup();
+    await openSettings(tree);
+    await act(async () => {
+      findByLabel(tree, 'Remove: Dune')[0].props.onPress();
+      await flush();
+    });
+    // Confirm shown with the dict name; delete called with Dune's prefKey.
+    expect(confirm).toHaveBeenCalledWith('Dune');
+    expect(del).toHaveBeenCalledWith('Dune');
+    // The list re-fetched -> Dune row is gone.
+    expect(findByLabel(tree, 'Remove: Dune')).toHaveLength(0);
+    expect(collectText(tree)).not.toContain('Dune');
+  });
+
+  test('cancelling the confirm does NOT delete (only Delete proceeds)', async () => {
+    const confirm = jest.fn(async () => false); // user taps Cancel
+    const del = jest.fn(async () => okDelete);
+    setPopupActions(deleteActions([dictPref('Dune', true, 0, true)], confirm, del));
+    const tree = renderPopup();
+    await openSettings(tree);
+    await act(async () => {
+      findByLabel(tree, 'Remove: Dune')[0].props.onPress();
+      await flush();
+    });
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(del).not.toHaveBeenCalled();
+    // The row stays.
+    expect(findByLabel(tree, 'Remove: Dune')).toHaveLength(1);
+  });
+
+  test('a deleteImportedDict rejection is swallowed (no crash)', async () => {
+    const del = jest.fn(async () => {
+      throw new Error('delete blew up');
+    });
+    setPopupActions(
+      deleteActions([dictPref('Dune', true, 0, true)], async () => true, del),
+    );
+    const tree = renderPopup();
+    await openSettings(tree);
+    await act(async () => {
+      findByLabel(tree, 'Remove: Dune')[0].props.onPress();
+      await flush();
+    });
+    // No crash; the popup is still on the settings panel.
+    expect(collectText(tree)).toContain('Dictionaries');
+  });
+
+  test('Remove is a no-op when the F7 ports are absent (F3/F4-only actions)', async () => {
+    // dictManagerActions omits confirmDeleteDict/deleteImportedDict — but the
+    // Remove control still renders on a removable row; tapping it is a no-op.
+    setPopupActions(dictManagerActions([dictPref('Dune', true, 0, true)]));
+    const tree = renderPopup();
+    await openSettings(tree);
+    const remove = findByLabel(tree, 'Remove: Dune');
+    expect(remove).toHaveLength(1);
+    await act(async () => {
+      remove[0].props.onPress();
+      await flush();
+    });
+    // No crash; row stays.
+    expect(findByLabel(tree, 'Remove: Dune')).toHaveLength(1);
+  });
+
+  test('unmount before the post-delete re-fetch resolves does not setState (cancel guard)', async () => {
+    // Defer the re-fetch's listDictPrefs so the panel can unmount (Back)
+    // while it is still pending — the cancelled guard must skip its setState.
+    let releaseRefetch!: (p: DictPref[]) => void;
+    let listCalls = 0;
+    const listDictPrefs: PopupActions['listDictPrefs'] = () => {
+      listCalls += 1;
+      // 1st call (mount) resolves immediately; the 2nd (post-delete refresh)
+      // is deferred so we can unmount before it lands.
+      if (listCalls === 1) {
+        return Promise.resolve([dictPref('Dune', true, 0, true)]);
+      }
+      return new Promise<DictPref[]>(res => {
+        releaseRefetch = res;
+      });
+    };
+    setPopupActions(
+      deleteActions([dictPref('Dune', true, 0, true)], async () => true, async () => okDelete, listDictPrefs),
+    );
+    const tree = renderPopup();
+    await openSettings(tree);
+    // Trigger the delete -> its post-delete refreshList fires (the deferred
+    // 2nd listDictPrefs), then Back (unmount) before it resolves.
+    await act(async () => {
+      findByLabel(tree, 'Remove: Dune')[0].props.onPress();
+      await flush();
+    });
+    await act(async () => pressLabel(tree, 'Back'));
+    // Resolve the deferred re-fetch AFTER unmount — the cancelled guard means
+    // no setState-after-unmount (no crash / warning).
+    await act(async () => {
+      releaseRefetch([dictPref('Dune', true, 0, true)]);
+      await Promise.resolve();
+    });
+    expect(collectText(tree)).toContain('hello');
+  });
+
+  test('a partial delete (source files survived) warns the user (F7-AC3)', async () => {
+    const partial = {
+      ok: true as const,
+      removed: {slugDb: true, audit: true, pref: true, sources: false},
+      sourcesAtRisk: true,
+    };
+    const lists = [
+      [dictPref('User', true, 0), dictPref('Dune', true, 1, true), dictPref('WordNet', true, 2)],
+      [dictPref('User', true, 0), dictPref('WordNet', true, 1)],
+    ];
+    let call = 0;
+    setPopupActions(
+      deleteActions(lists[0], async () => true, async () => partial, async () =>
+        lists[Math.min(call++, 1)],
+      ),
+    );
+    const tree = renderPopup();
+    await openSettings(tree);
+    await act(async () => {
+      findByLabel(tree, 'Remove: Dune')[0].props.onPress();
+      await flush();
+    });
+    // The removed row is gone, but the user is warned it may re-import on reload.
+    expect(findByLabel(tree, 'Remove: Dune')).toHaveLength(0);
+    expect(collectText(tree)).toContain('may reappear');
+  });
+
+  test('removed.sources=false but NOT at risk (keep=false import) shows NO warning', async () => {
+    // The source files were never on disk to delete (a keep=false import), so
+    // the engine reports removed.sources:false WITHOUT sourcesAtRisk — no
+    // resurrection risk, so the panel must NOT warn (the false-positive fix).
+    const benign = {
+      ok: true as const,
+      removed: {slugDb: true, audit: true, pref: true, sources: false},
+      sourcesAtRisk: false,
+    };
+    const lists = [
+      [dictPref('User', true, 0), dictPref('Dune', true, 1, true), dictPref('WordNet', true, 2)],
+      [dictPref('User', true, 0), dictPref('WordNet', true, 1)],
+    ];
+    let call = 0;
+    setPopupActions(
+      deleteActions(lists[0], async () => true, async () => benign, async () =>
+        lists[Math.min(call++, 1)],
+      ),
+    );
+    const tree = renderPopup();
+    await openSettings(tree);
+    await act(async () => {
+      findByLabel(tree, 'Remove: Dune')[0].props.onPress();
+      await flush();
+    });
+    expect(findByLabel(tree, 'Remove: Dune')).toHaveLength(0);
+    expect(collectText(tree)).not.toContain('may reappear');
+  });
+
+  test('a clean delete (source files removed) shows NO warning', async () => {
+    const lists = [
+      [dictPref('User', true, 0), dictPref('Dune', true, 1, true), dictPref('WordNet', true, 2)],
+      [dictPref('User', true, 0), dictPref('WordNet', true, 1)],
+    ];
+    let call = 0;
+    setPopupActions(
+      deleteActions(lists[0], async () => true, async () => okDelete, async () =>
+        lists[Math.min(call++, 1)],
+      ),
+    );
+    const tree = renderPopup();
+    await openSettings(tree);
+    await act(async () => {
+      findByLabel(tree, 'Remove: Dune')[0].props.onPress();
+      await flush();
+    });
+    expect(collectText(tree)).not.toContain('may reappear');
+  });
+});
+
+// --- DB export section (F5) ----------------------------------------
+
+const MYSTYLE = '/storage/emulated/0/MyStyle';
+
+type ExportSummaryShape = {
+  copied: string[];
+  failed: {file: string; reason: string}[];
+  targetDir: string;
+};
+
+// PopupActions carrying the F3 list + the F5 export ports: a folder
+// lister, a createFolder spy, an exportDbs spy, and listExportableDbs.
+// All four export ports are optional on PopupActions; the section renders
+// only when exportDbs is present.
+const exportActions = (
+  exportDbs: PopupActions['exportDbs'] = async (targetDir) => ({
+    copied: ['base.db', 'user.db'],
+    failed: [],
+    targetDir,
+  }),
+  listFolders: PopupActions['listFolders'] = async () => [`${MYSTYLE}/SnDict`],
+  createFolder: PopupActions['createFolder'] = async () => true,
+  listExportableDbs: PopupActions['listExportableDbs'] = async () =>
+    [
+      {label: 'WordNet', filename: 'base.db'},
+      {label: 'User', filename: 'user.db'},
+    ] as DbFile[],
+  notify: PopupActions['notify'] = async () => undefined,
+): PopupActions => ({
+  lookupThesaurus: async () => ({lang: 'en', omw: {synonyms: [], antonyms: []}}),
+  addUserEntry: async () => undefined,
+  relookup: async () => undefined,
+  listDictPrefs: async () => [],
+  setDictPrefs: async () => undefined,
+  getKeepSources: async () => true,
+  setKeepSources: async () => undefined,
+  listExportableDbs,
+  listFolders,
+  createFolder,
+  exportDbs,
+  notify,
+});
+
+describe('DefinitionPopup — DB export (F5)', () => {
+  test('the export section renders its title + the chooser root path', async () => {
+    setPopupActions(exportActions());
+    const tree = renderPopup();
+    await openSettings(tree);
+    const text = collectText(tree);
+    expect(text).toContain('Export dictionaries');
+    // The chooser opens at the MyStyle root.
+    expect(text).toContain(MYSTYLE);
+  });
+
+  test('the chooser lists subfolders and descends on tap (F5-FR2)', async () => {
+    setPopupActions(exportActions(undefined, async () => [`${MYSTYLE}/SnDict`]));
+    const tree = renderPopup();
+    await openSettings(tree);
+    // The SnDict subfolder is listed; tapping it descends into it.
+    await act(async () => {
+      findByLabel(tree, 'Use this folder: SnDict')[0].props.onPress();
+      await flush();
+    });
+    // Current path is now MyStyle/SnDict.
+    expect(collectText(tree)).toContain(`${MYSTYLE}/SnDict`);
+  });
+
+  test('the section is absent when the export ports are not wired', async () => {
+    // dictManagerActions omits the F5 ports -> the section renders nothing.
+    setPopupActions(dictManagerActions([dictPref('User', true, 0)]));
+    const tree = renderPopup();
+    await openSettings(tree);
+    expect(collectText(tree)).not.toContain('Export dictionaries');
+  });
+
+  test('Export calls exportDbs with the current folder and shows the summary (F5-FR5)', async () => {
+    const exportSpy = jest.fn(async (targetDir: string) => ({
+      copied: ['base.db', 'user.db', 'dune.en.db'],
+      failed: [],
+      targetDir,
+    }));
+    setPopupActions(exportActions(exportSpy));
+    const tree = renderPopup();
+    await openSettings(tree);
+    await act(async () => {
+      findByLabel(tree, 'Export dictionaries')[0].props.onPress();
+      await flush();
+    });
+    // Exported to the root folder; the summary shows the copied count.
+    expect(exportSpy).toHaveBeenCalledWith(MYSTYLE);
+    const text = collectText(tree);
+    expect(text).toContain('Export complete');
+    expect(text).toContain(MYSTYLE);
+  });
+
+  test('the export result is ALSO surfaced via notify (a modal the user cannot miss)', async () => {
+    const notifySpy = jest.fn(async () => undefined);
+    setPopupActions(
+      exportActions(undefined, undefined, undefined, undefined, notifySpy),
+    );
+    const tree = renderPopup();
+    await openSettings(tree);
+    await act(async () => {
+      findByLabel(tree, 'Export dictionaries')[0].props.onPress();
+      await flush();
+    });
+    // The same result string handed to the inline summary is also pushed to
+    // the dialog — so a successful export can't look like nothing happened.
+    expect(notifySpy).toHaveBeenCalledWith(
+      expect.stringContaining('Export complete'),
+    );
+  });
+
+  test('a partial-failure summary lists the failed file (F5-AC4)', async () => {
+    const exportSpy = jest.fn(async (targetDir: string) => ({
+      copied: ['base.db'],
+      failed: [{file: 'user.db', reason: 'disk error'}],
+      targetDir,
+    }));
+    setPopupActions(exportActions(exportSpy));
+    const tree = renderPopup();
+    await openSettings(tree);
+    await act(async () => {
+      findByLabel(tree, 'Export dictionaries')[0].props.onPress();
+      await flush();
+    });
+    expect(collectText(tree)).toContain('user.db');
+  });
+
+  test('an export rejection (no-space / plugin-dir guard) surfaces its reason (F5-AC2/AC5)', async () => {
+    const exportSpy = jest.fn(async () => {
+      throw new Error('Not enough free space to export — nothing was copied.');
+    });
+    setPopupActions(exportActions(exportSpy as PopupActions['exportDbs']));
+    const tree = renderPopup();
+    await openSettings(tree);
+    await act(async () => {
+      findByLabel(tree, 'Export dictionaries')[0].props.onPress();
+      await flush();
+    });
+    expect(collectText(tree)).toContain('Not enough free space');
+  });
+
+  test('New folder creates a named child and descends into it (F5-AC3)', async () => {
+    const createSpy = jest.fn(async () => true);
+    const listSpy = jest.fn(async () => [] as string[]);
+    setPopupActions(exportActions(undefined, listSpy, createSpy));
+    const tree = renderPopup();
+    await openSettings(tree);
+    // Type a folder name into the New-folder input, then tap "+".
+    await act(async () => {
+      findByLabel(tree, 'New folder')[0].props.onChangeText('backup');
+      await flush();
+    });
+    await act(async () => {
+      // The "+" Pressable is the 2nd New-folder-labelled node (after input).
+      findByLabel(tree, 'New folder')[1].props.onPress();
+      await flush();
+    });
+    expect(createSpy).toHaveBeenCalledWith(`${MYSTYLE}/backup`);
+    // Descended into the new folder (current path updated).
+    expect(collectText(tree)).toContain(`${MYSTYLE}/backup`);
+  });
+
+  test('New folder with a blank name is a no-op', async () => {
+    const createSpy = jest.fn(async () => true);
+    setPopupActions(exportActions(undefined, undefined, createSpy));
+    const tree = renderPopup();
+    await openSettings(tree);
+    await act(async () => {
+      findByLabel(tree, 'New folder')[1].props.onPress();
+      await flush();
+    });
+    expect(createSpy).not.toHaveBeenCalled();
+  });
+
+  test('Up navigates back to the parent after descending', async () => {
+    setPopupActions(exportActions(undefined, async () => [`${MYSTYLE}/SnDict`]));
+    const tree = renderPopup();
+    await openSettings(tree);
+    await act(async () => {
+      findByLabel(tree, 'Use this folder: SnDict')[0].props.onPress();
+      await flush();
+    });
+    // Up row appears below root; tap it to go back to MyStyle.
+    await act(async () => {
+      findByLabel(tree, `Move up: ${MYSTYLE}/SnDict`)[0].props.onPress();
+      await flush();
+    });
+    // Back at the root: the Up row is gone (atRoot hides it).
+    expect(findByLabel(tree, `Move up: ${MYSTYLE}`)).toHaveLength(0);
+  });
+
+  test('a listFolders rejection yields an empty chooser (no crash)', async () => {
+    setPopupActions(
+      exportActions(undefined, async () => {
+        throw new Error('listFiles blew up');
+      }),
+    );
+    const tree = renderPopup();
+    await openSettings(tree);
+    // The section still renders (title + root path), just with no rows.
+    expect(collectText(tree)).toContain('Export dictionaries');
+    expect(collectText(tree)).toContain(MYSTYLE);
+  });
+
+  test('the chooser has no rows when listFolders is not wired', async () => {
+    // exportDbs present (section renders) but listFolders absent -> the
+    // loadFolders short-circuit sets an empty list.
+    const noListFolders = exportActions();
+    delete noListFolders.listFolders;
+    setPopupActions(noListFolders);
+    const tree = renderPopup();
+    await openSettings(tree);
+    expect(collectText(tree)).toContain('Export dictionaries');
+    // No SnDict subfolder row (listFolders never ran).
+    expect(findByLabel(tree, 'Use this folder: SnDict')).toHaveLength(0);
+  });
+
+  test('a createFolder resolving false does NOT descend (stays at root)', async () => {
+    const createSpy = jest.fn(async () => false);
+    setPopupActions(exportActions(undefined, async () => [], createSpy));
+    const tree = renderPopup();
+    await openSettings(tree);
+    await act(async () => {
+      findByLabel(tree, 'New folder')[0].props.onChangeText('backup');
+      await flush();
+    });
+    await act(async () => {
+      findByLabel(tree, 'New folder')[1].props.onPress();
+      await flush();
+    });
+    expect(createSpy).toHaveBeenCalledWith(`${MYSTYLE}/backup`);
+    // Did NOT descend — still at the MyStyle root.
+    expect(collectText(tree)).not.toContain(`${MYSTYLE}/backup`);
+  });
+
+  test('a createFolder rejection is swallowed (no crash, name retained)', async () => {
+    const createSpy = jest.fn(async () => {
+      throw new Error('mkdir EACCES');
+    });
+    setPopupActions(exportActions(undefined, async () => [], createSpy));
+    const tree = renderPopup();
+    await openSettings(tree);
+    await act(async () => {
+      findByLabel(tree, 'New folder')[0].props.onChangeText('backup');
+      await flush();
+    });
+    await act(async () => {
+      findByLabel(tree, 'New folder')[1].props.onPress();
+      await flush();
+    });
+    // No crash; still on the export section.
+    expect(collectText(tree)).toContain('Export dictionaries');
+  });
+
+  test('New folder is a no-op when the createFolder port is absent', async () => {
+    const noCreate = exportActions();
+    delete noCreate.createFolder;
+    setPopupActions(noCreate);
+    const tree = renderPopup();
+    await openSettings(tree);
+    await act(async () => {
+      findByLabel(tree, 'New folder')[0].props.onChangeText('backup');
+      await flush();
+    });
+    await act(async () => {
+      findByLabel(tree, 'New folder')[1].props.onPress();
+      await flush();
+    });
+    // No descend, no crash.
+    expect(collectText(tree)).not.toContain(`${MYSTYLE}/backup`);
+  });
+
+  test('unmount before the export resolves does not setState (cancel guard)', async () => {
+    // Defer exportDbs so the panel can unmount (Back) while it is pending —
+    // the cancelled guard must skip the summary setState (no crash).
+    let releaseExport!: (s: ExportSummaryShape) => void;
+    const exportSpy: PopupActions['exportDbs'] = () =>
+      new Promise(res => {
+        releaseExport = res;
+      });
+    setPopupActions(exportActions(exportSpy));
+    const tree = renderPopup();
+    await openSettings(tree);
+    await act(async () => {
+      findByLabel(tree, 'Export dictionaries')[0].props.onPress();
+      await flush();
+    });
+    // Back (unmount the panel) before the export resolves.
+    await act(async () => pressLabel(tree, 'Back'));
+    // Resolve AFTER unmount — the cancelled guard means no setState.
+    await act(async () => {
+      releaseExport({copied: ['base.db'], failed: [], targetDir: MYSTYLE});
+      await Promise.resolve();
+    });
+    // The prior result is back; no export summary leaked into it.
+    expect(collectText(tree)).toContain('hello');
+  });
+
+  test('unmount before an export REJECTION resolves does not setState', async () => {
+    // The catch path's cancelled guard: defer a rejecting export, unmount,
+    // then reject — no setState-after-unmount.
+    let rejectExport!: (e: Error) => void;
+    const exportSpy: PopupActions['exportDbs'] = () =>
+      new Promise((_res, rej) => {
+        rejectExport = rej;
+      });
+    setPopupActions(exportActions(exportSpy));
+    const tree = renderPopup();
+    await openSettings(tree);
+    await act(async () => {
+      findByLabel(tree, 'Export dictionaries')[0].props.onPress();
+      await flush();
+    });
+    await act(async () => pressLabel(tree, 'Back'));
+    await act(async () => {
+      rejectExport(new Error('NO_SPACE'));
+      await Promise.resolve();
+    });
+    expect(collectText(tree)).toContain('hello');
+  });
+
+  test('a listed folder with no slash renders its bare name (basename edge)', async () => {
+    // A listFiles entry that is a bare segment (no slash) exercises the
+    // basename slash<0 fallback.
+    setPopupActions(exportActions(undefined, async () => ['solo']));
+    const tree = renderPopup();
+    await openSettings(tree);
+    expect(findByLabel(tree, 'Use this folder: solo')).toHaveLength(1);
+  });
+});
+
+// --- DB restore section (F8) ---------------------------------------
+
+// PopupActions carrying the F5 export ports PLUS the F8 restore ports
+// (confirmRestore + restoreDbs). The Restore button renders only when
+// restoreDbs is wired; the confirm gate uses confirmRestore (a
+// host-mockable port).
+const restoreActions = (
+  restoreDbs: PopupActions['restoreDbs'] = async (backupDir) => ({
+    restored: ['user.db', 'dune.en.db'],
+    failed: [],
+    backupDir,
+  }),
+  confirmRestore: PopupActions['confirmRestore'] = async () => true,
+): PopupActions => ({
+  ...exportActions(),
+  restoreDbs,
+  confirmRestore,
+});
+
+describe('DefinitionPopup — DB restore (F8)', () => {
+  test('the Restore control renders when the restore port is wired', async () => {
+    setPopupActions(restoreActions());
+    const tree = renderPopup();
+    await openSettings(tree);
+    expect(findByLabel(tree, 'Restore from here')).toHaveLength(1);
+  });
+
+  test('the Restore control is ABSENT when only the export ports are wired', async () => {
+    // exportActions() has no restoreDbs port -> no Restore button.
+    setPopupActions(exportActions());
+    const tree = renderPopup();
+    await openSettings(tree);
+    expect(findByLabel(tree, 'Restore from here')).toHaveLength(0);
+  });
+
+  test('confirm -> restoreDbs(current) -> shows the restored count + reopen message', async () => {
+    const restoreSpy = jest.fn(async (backupDir: string) => ({
+      restored: ['user.db', 'dune.en.db'],
+      failed: [],
+      backupDir,
+    }));
+    const confirmSpy = jest.fn(async () => true);
+    setPopupActions(restoreActions(restoreSpy, confirmSpy));
+    const tree = renderPopup();
+    await openSettings(tree);
+    await act(async () => {
+      findByLabel(tree, 'Restore from here')[0].props.onPress();
+      await flush();
+    });
+    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    // Restored from the current (root) folder; the summary shows the count
+    // AND the "reopen the plugin to finish" message (no auto re-bootstrap).
+    expect(restoreSpy).toHaveBeenCalledWith(MYSTYLE);
+    const text = collectText(tree);
+    expect(text).toContain('Restored: 2');
+    expect(text).toContain('reopen the plugin to finish');
+  });
+
+  test('cancel (confirm -> false) does NOT call restoreDbs', async () => {
+    const restoreSpy = jest.fn(async (backupDir: string) => ({
+      restored: [],
+      failed: [],
+      backupDir,
+    }));
+    setPopupActions(restoreActions(restoreSpy, async () => false));
+    const tree = renderPopup();
+    await openSettings(tree);
+    await act(async () => {
+      findByLabel(tree, 'Restore from here')[0].props.onPress();
+      await flush();
+    });
+    expect(restoreSpy).not.toHaveBeenCalled();
+    // No reopen message (nothing was restored).
+    expect(collectText(tree)).not.toContain('reopen the plugin');
+  });
+
+  test('an empty-backup summary surfaces the no-backup reason (no reopen prompt)', async () => {
+    const restoreSpy = jest.fn(async (backupDir: string) => ({
+      restored: [],
+      failed: [{file: backupDir, reason: 'No dictionary backups found in this folder.'}],
+      backupDir,
+    }));
+    setPopupActions(restoreActions(restoreSpy));
+    const tree = renderPopup();
+    await openSettings(tree);
+    await act(async () => {
+      findByLabel(tree, 'Restore from here')[0].props.onPress();
+      await flush();
+    });
+    const text = collectText(tree);
+    expect(text).toContain('No dictionary backups found');
+    // No reopen prompt — nothing changed on disk.
+    expect(text).not.toContain('reopen the plugin to finish');
+  });
+
+  test('a partial-failure restore lists the failed file + the reopen message', async () => {
+    const restoreSpy = jest.fn(async (backupDir: string) => ({
+      restored: ['user.db'],
+      failed: [{file: 'dune.en.db', reason: 'disk error'}],
+      backupDir,
+    }));
+    setPopupActions(restoreActions(restoreSpy));
+    const tree = renderPopup();
+    await openSettings(tree);
+    await act(async () => {
+      findByLabel(tree, 'Restore from here')[0].props.onPress();
+      await flush();
+    });
+    const text = collectText(tree);
+    expect(text).toContain('Restored: 1');
+    expect(text).toContain('dune.en.db');
+    expect(text).toContain('reopen the plugin to finish');
+  });
+
+  test('a restore REJECTION surfaces its reason verbatim', async () => {
+    const restoreSpy = jest.fn(async () => {
+      throw new Error('native copy unavailable');
+    });
+    setPopupActions(
+      restoreActions(restoreSpy as PopupActions['restoreDbs']),
+    );
+    const tree = renderPopup();
+    await openSettings(tree);
+    await act(async () => {
+      findByLabel(tree, 'Restore from here')[0].props.onPress();
+      await flush();
+    });
+    expect(collectText(tree)).toContain('native copy unavailable');
+  });
+
+  test('a null confirmRestore port treats restore as confirmed (still inert without restoreDbs)', async () => {
+    // restoreDbs wired but confirmRestore absent -> the restore proceeds
+    // without a confirm dialog (the port gates the button, not the confirm).
+    const restoreSpy = jest.fn(async (backupDir: string) => ({
+      restored: ['user.db'],
+      failed: [],
+      backupDir,
+    }));
+    const actions = restoreActions(restoreSpy);
+    delete actions.confirmRestore;
+    setPopupActions(actions);
+    const tree = renderPopup();
+    await openSettings(tree);
+    await act(async () => {
+      findByLabel(tree, 'Restore from here')[0].props.onPress();
+      await flush();
+    });
+    expect(restoreSpy).toHaveBeenCalledWith(MYSTYLE);
+    expect(collectText(tree)).toContain('Restored: 1');
+  });
+
+  test('unmount before a restore resolves does not setState (cancelled guard)', async () => {
+    let resolveRestore!: (s: RestoreSummary) => void;
+    const restoreSpy: PopupActions['restoreDbs'] = () =>
+      new Promise<RestoreSummary>(res => {
+        resolveRestore = res;
+      });
+    setPopupActions(restoreActions(restoreSpy));
+    const tree = renderPopup();
+    await openSettings(tree);
+    await act(async () => {
+      findByLabel(tree, 'Restore from here')[0].props.onPress();
+      await flush();
+    });
+    await act(async () => pressLabel(tree, 'Back'));
+    await act(async () => {
+      resolveRestore({restored: ['user.db'], failed: [], backupDir: MYSTYLE});
+      await Promise.resolve();
+    });
+    expect(collectText(tree)).toContain('hello');
   });
 });

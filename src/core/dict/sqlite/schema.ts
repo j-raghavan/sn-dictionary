@@ -222,3 +222,46 @@ export interface ImportRow {
   imported_at: string;
   filename: string;
 }
+
+// --- settings tables (F1, ADR-0009) — user.db only ------------------
+// All Settings-Panel preferences persist in the WRITABLE user.db via
+// additive tables (never base.db, never a native key-value store — see
+// ADR-0009). dict_prefs holds per-source enablement + ordering; the
+// pref_key is the source's identity (identityKey(name,lang) for imports,
+// bare name for the built-in User + WordNet sources). app_settings is a
+// generic string key/value store (e.g. keepSourcesAfterImport, exportDir,
+// consumed by later features). user_meta is a forward-migration anchor
+// (user.db has no version meta today; these tables self-heal via
+// CREATE ... IF NOT EXISTS like the imports table).
+export const CREATE_DICT_PREFS_TABLE =
+  'CREATE TABLE IF NOT EXISTS dict_prefs (' +
+  'pref_key TEXT PRIMARY KEY, name TEXT NOT NULL, ' +
+  'enabled INTEGER NOT NULL DEFAULT 1, sort_order INTEGER NOT NULL)';
+export const SELECT_DICT_PREFS_ALL =
+  'SELECT pref_key, name, enabled, sort_order FROM dict_prefs ORDER BY sort_order';
+export const DELETE_DICT_PREF = 'DELETE FROM dict_prefs WHERE pref_key = ?';
+export const INSERT_DICT_PREF =
+  'INSERT INTO dict_prefs (pref_key, name, enabled, sort_order) VALUES (?, ?, ?, ?)';
+export const CREATE_APP_SETTINGS_TABLE =
+  'CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)';
+export const SELECT_APP_SETTING =
+  'SELECT value FROM app_settings WHERE key = ? LIMIT 1';
+export const DELETE_APP_SETTING = 'DELETE FROM app_settings WHERE key = ?';
+export const INSERT_APP_SETTING =
+  'INSERT INTO app_settings (key, value) VALUES (?, ?)';
+export const CREATE_USER_META_TABLE =
+  'CREATE TABLE IF NOT EXISTS user_meta (schema_version INTEGER NOT NULL)';
+
+// Projected shape of SELECT_DICT_PREFS_ALL (enabled is 0/1, mapped to a
+// boolean by readDictPrefs).
+export interface DictPrefRow {
+  pref_key: string;
+  name: string;
+  enabled: number;
+  sort_order: number;
+}
+
+// Projected shape of SELECT_APP_SETTING.
+export interface AppSettingRow {
+  value: string;
+}

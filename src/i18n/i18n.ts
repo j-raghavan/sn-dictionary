@@ -41,7 +41,44 @@ export type StringId =
   | 'popup.definitionBody'
   | 'popup.save'
   | 'popup.addEmptyError'
-  | 'popup.addFailedError';
+  | 'popup.addFailedError'
+  | 'popup.copy'
+  | 'popup.copied'
+  | 'popup.copyFailed'
+  | 'settings.open'
+  | 'settings.title'
+  | 'settings.back'
+  | 'settings.save'
+  | 'settings.saved'
+  | 'settings.saveFailed'
+  | 'settings.dictionaries'
+  | 'settings.moveUp'
+  | 'settings.moveDown'
+  | 'settings.enableDict'
+  | 'settings.disableDict'
+  | 'settings.allDisabled'
+  | 'settings.sources'
+  | 'settings.keepSources'
+  | 'settings.keepSourcesHint'
+  | 'settings.keepPrompt'
+  | 'settings.removeDict'
+  | 'settings.deleteDictPrompt'
+  | 'settings.deleteSourcesLeft'
+  | 'settings.export'
+  | 'settings.exportFolder'
+  | 'settings.newFolder'
+  | 'settings.exportNoSpace'
+  | 'settings.exportPluginDir'
+  | 'settings.exportDone'
+  | 'settings.restore'
+  | 'settings.restorePrompt'
+  | 'settings.restoreDone'
+  | 'settings.restoreReopen'
+  | 'settings.restoreNoBackup'
+  | 'settings.restoreSnapshotFailed'
+  | 'common.keep'
+  | 'common.delete'
+  | 'common.cancel';
 
 // Locale codes use the firmware's convention: en, zh_CN, zh_TW, ja,
 // th, nl. Underscore (not hyphen) matches PluginButton.nameMap shape
@@ -69,6 +106,50 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.save': 'Save',
     'popup.addEmptyError': 'Enter a headword and a definition.',
     'popup.addFailedError': 'Could not save — please try again.',
+    'popup.copy': 'Copy',
+    'popup.copied': 'Copied',
+    'popup.copyFailed': "Couldn't copy",
+    'settings.open': 'Settings',
+    'settings.title': 'Settings',
+    'settings.back': 'Back',
+    'settings.save': 'Save',
+    'settings.saved': 'Settings saved',
+    'settings.saveFailed': "Couldn't save settings",
+    'settings.dictionaries': 'Dictionaries',
+    'settings.moveUp': 'Move up',
+    'settings.moveDown': 'Move down',
+    'settings.enableDict': 'Enable',
+    'settings.disableDict': 'Disable',
+    'settings.allDisabled': 'All dictionaries are off — lookups return nothing.',
+    'settings.sources': 'Import sources',
+    'settings.keepSources': 'Keep source files after import',
+    'settings.keepSourcesHint':
+      'When off, sideloaded files are deleted after a verified import.',
+    'settings.keepPrompt':
+      'Keep a copy of your custom dictionary in MyStyle/SnDict/ after indexing? Choose Delete to remove the source file once the dictionary is built.',
+    'settings.removeDict': 'Remove',
+    'settings.deleteDictPrompt':
+      'Remove this dictionary? Its database and any leftover source files are deleted; it will not reappear on reload.',
+    'settings.deleteSourcesLeft':
+      "Dictionary removed, but its source files couldn't be deleted — it may reappear the next time the plugin reloads.",
+    'settings.export': 'Export dictionaries',
+    'settings.exportFolder': 'Use this folder',
+    'settings.newFolder': 'New folder',
+    'settings.exportNoSpace': 'Not enough free space to export — nothing was copied.',
+    'settings.exportPluginDir':
+      "Choose a folder outside the plugin's own storage to export to.",
+    'settings.exportDone': 'Export complete',
+    'settings.restore': 'Restore from here',
+    'settings.restorePrompt':
+      'Restore from this backup? This replaces your current dictionaries and saved words.',
+    'settings.restoreDone': 'Restored',
+    'settings.restoreReopen': 'reopen the plugin to finish',
+    'settings.restoreNoBackup': 'No dictionary backups found in this folder.',
+    'settings.restoreSnapshotFailed':
+      "Couldn't save a safety backup — nothing was changed.",
+    'common.keep': 'Keep',
+    'common.delete': 'Delete',
+    'common.cancel': 'Cancel',
   },
   zh_CN: {
     'popup.synonyms': '同义词',
@@ -92,6 +173,45 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.save': '保存',
     'popup.addEmptyError': '请输入词条和释义。',
     'popup.addFailedError': '保存失败，请重试。',
+    'popup.copy': '复制',
+    'popup.copied': '已复制',
+    'popup.copyFailed': '复制失败',
+    'settings.open': '设置',
+    'settings.title': '设置',
+    'settings.back': '返回',
+    'settings.save': '保存',
+    'settings.saved': '设置已保存',
+    'settings.saveFailed': '无法保存设置',
+    'settings.dictionaries': '词典',
+    'settings.moveUp': '上移',
+    'settings.moveDown': '下移',
+    'settings.enableDict': '启用',
+    'settings.disableDict': '停用',
+    'settings.allDisabled': '所有词典均已关闭——查询将无结果。',
+    'settings.sources': '导入源文件',
+    'settings.keepSources': '导入后保留源文件',
+    'settings.keepSourcesHint': '关闭时，验证导入后将删除侧载文件。',
+    'settings.keepPrompt': '索引后在 MyStyle/SnDict/ 文件夹中保留自定义词典的副本吗？选择“删除”可在词典构建完成后移除源文件。',
+    'settings.removeDict': '移除',
+    'settings.deleteDictPrompt':
+      '要移除此词典吗？将删除其数据库及任何残留的源文件；重新加载后不会再次出现。',
+    'settings.deleteSourcesLeft':
+      '词典已移除，但其源文件无法删除——插件下次重新加载时可能会再次出现。',
+    'settings.export': '导出词典',
+    'settings.exportFolder': '使用此文件夹',
+    'settings.newFolder': '新建文件夹',
+    'settings.exportNoSpace': '可用空间不足，无法导出——未复制任何文件。',
+    'settings.exportPluginDir': '请选择插件自身存储目录之外的文件夹进行导出。',
+    'settings.exportDone': '导出完成',
+    'settings.restore': '从此处恢复',
+    'settings.restorePrompt': '要从此备份恢复吗？这将替换您当前的词典和已保存的单词。',
+    'settings.restoreDone': '已恢复',
+    'settings.restoreReopen': '请重新打开插件以完成',
+    'settings.restoreNoBackup': '此文件夹中未找到词典备份。',
+    'settings.restoreSnapshotFailed': '无法创建安全备份——未做任何更改。',
+    'common.keep': '保留',
+    'common.delete': '删除',
+    'common.cancel': '取消',
   },
   zh_TW: {
     'popup.synonyms': '同義詞',
@@ -115,6 +235,45 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.save': '儲存',
     'popup.addEmptyError': '請輸入詞條和釋義。',
     'popup.addFailedError': '儲存失敗，請重試。',
+    'popup.copy': '複製',
+    'popup.copied': '已複製',
+    'popup.copyFailed': '複製失敗',
+    'settings.open': '設定',
+    'settings.title': '設定',
+    'settings.back': '返回',
+    'settings.save': '儲存',
+    'settings.saved': '設定已儲存',
+    'settings.saveFailed': '無法儲存設定',
+    'settings.dictionaries': '詞典',
+    'settings.moveUp': '上移',
+    'settings.moveDown': '下移',
+    'settings.enableDict': '啟用',
+    'settings.disableDict': '停用',
+    'settings.allDisabled': '所有詞典均已關閉——查詢將無結果。',
+    'settings.sources': '匯入來源檔案',
+    'settings.keepSources': '匯入後保留來源檔案',
+    'settings.keepSourcesHint': '關閉時，驗證匯入後將刪除側載檔案。',
+    'settings.keepPrompt': '索引後在 MyStyle/SnDict/ 資料夾中保留自訂詞典的副本嗎？選擇「刪除」可在詞典建立完成後移除來源檔案。',
+    'settings.removeDict': '移除',
+    'settings.deleteDictPrompt':
+      '要移除此詞典嗎？將刪除其資料庫及任何殘留的來源檔案；重新載入後不會再次出現。',
+    'settings.deleteSourcesLeft':
+      '詞典已移除，但其來源檔案無法刪除——外掛下次重新載入時可能會再次出現。',
+    'settings.export': '匯出詞典',
+    'settings.exportFolder': '使用此資料夾',
+    'settings.newFolder': '新增資料夾',
+    'settings.exportNoSpace': '可用空間不足，無法匯出——未複製任何檔案。',
+    'settings.exportPluginDir': '請選擇外掛自身儲存目錄以外的資料夾進行匯出。',
+    'settings.exportDone': '匯出完成',
+    'settings.restore': '從此處還原',
+    'settings.restorePrompt': '要從此備份還原嗎？這將取代您目前的詞典和已儲存的單字。',
+    'settings.restoreDone': '已還原',
+    'settings.restoreReopen': '請重新開啟外掛以完成',
+    'settings.restoreNoBackup': '此資料夾中未找到詞典備份。',
+    'settings.restoreSnapshotFailed': '無法建立安全備份——未做任何變更。',
+    'common.keep': '保留',
+    'common.delete': '刪除',
+    'common.cancel': '取消',
   },
   ja: {
     'popup.synonyms': '類義語',
@@ -138,6 +297,48 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.save': '保存',
     'popup.addEmptyError': '見出し語と定義を入力してください。',
     'popup.addFailedError': '保存できませんでした。もう一度お試しください。',
+    'popup.copy': 'コピー',
+    'popup.copied': 'コピーしました',
+    'popup.copyFailed': 'コピーできませんでした',
+    'settings.open': '設定',
+    'settings.title': '設定',
+    'settings.back': '戻る',
+    'settings.save': '保存',
+    'settings.saved': '設定を保存しました',
+    'settings.saveFailed': '設定を保存できませんでした',
+    'settings.dictionaries': '辞書',
+    'settings.moveUp': '上へ',
+    'settings.moveDown': '下へ',
+    'settings.enableDict': '有効',
+    'settings.disableDict': '無効',
+    'settings.allDisabled': 'すべての辞書がオフです — 検索結果は表示されません。',
+    'settings.sources': 'インポート元ファイル',
+    'settings.keepSources': 'インポート後に元ファイルを残す',
+    'settings.keepSourcesHint':
+      'オフの場合、検証済みのインポート後にサイドロードファイルを削除します。',
+    'settings.keepPrompt':
+      'インデックス作成後、MyStyle/SnDict/ フォルダーにカスタム辞書のコピーを残しますか？「削除」を選ぶと辞書の構築後に元のファイルを削除します。',
+    'settings.removeDict': '削除',
+    'settings.deleteDictPrompt':
+      'この辞書を削除しますか？データベースと残っている元ファイルが削除され、再読み込みしても再表示されません。',
+    'settings.deleteSourcesLeft':
+      '辞書を削除しましたが、元ファイルは削除できませんでした — 次回プラグインの再読み込み時に再表示される場合があります。',
+    'settings.export': '辞書をエクスポート',
+    'settings.exportFolder': 'このフォルダを使う',
+    'settings.newFolder': '新しいフォルダ',
+    'settings.exportNoSpace': '空き容量が足りません — 何もコピーされませんでした。',
+    'settings.exportPluginDir': 'プラグイン自身の保存先以外のフォルダを選んでエクスポートしてください。',
+    'settings.exportDone': 'エクスポート完了',
+    'settings.restore': 'ここから復元',
+    'settings.restorePrompt':
+      'このバックアップから復元しますか？現在の辞書と保存した単語が置き換えられます。',
+    'settings.restoreDone': '復元しました',
+    'settings.restoreReopen': 'プラグインを開き直して完了してください',
+    'settings.restoreNoBackup': 'このフォルダに辞書のバックアップが見つかりません。',
+    'settings.restoreSnapshotFailed': '安全バックアップを作成できませんでした。変更はありません。',
+    'common.keep': '残す',
+    'common.delete': '削除',
+    'common.cancel': 'キャンセル',
   },
   th: {
     'popup.synonyms': 'คำพ้องความหมาย',
@@ -161,6 +362,48 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.save': 'บันทึก',
     'popup.addEmptyError': 'กรุณาใส่คำหลักและคำจำกัดความ',
     'popup.addFailedError': 'บันทึกไม่สำเร็จ โปรดลองอีกครั้ง',
+    'popup.copy': 'คัดลอก',
+    'popup.copied': 'คัดลอกแล้ว',
+    'popup.copyFailed': 'คัดลอกไม่ได้',
+    'settings.open': 'การตั้งค่า',
+    'settings.title': 'การตั้งค่า',
+    'settings.back': 'ย้อนกลับ',
+    'settings.save': 'บันทึก',
+    'settings.saved': 'บันทึกการตั้งค่าแล้ว',
+    'settings.saveFailed': 'บันทึกการตั้งค่าไม่ได้',
+    'settings.dictionaries': 'พจนานุกรม',
+    'settings.moveUp': 'เลื่อนขึ้น',
+    'settings.moveDown': 'เลื่อนลง',
+    'settings.enableDict': 'เปิด',
+    'settings.disableDict': 'ปิด',
+    'settings.allDisabled': 'ปิดพจนานุกรมทั้งหมดแล้ว — การค้นหาจะไม่มีผลลัพธ์',
+    'settings.sources': 'ไฟล์ต้นทางการนำเข้า',
+    'settings.keepSources': 'เก็บไฟล์ต้นทางหลังการนำเข้า',
+    'settings.keepSourcesHint':
+      'เมื่อปิด ระบบจะลบไฟล์ที่ไซด์โหลดหลังการนำเข้าที่ตรวจสอบแล้ว',
+    'settings.keepPrompt':
+      'เก็บสำเนาพจนานุกรมที่กำหนดเองไว้ในโฟลเดอร์ MyStyle/SnDict/ หลังการทำดัชนีหรือไม่? เลือกลบเพื่อลบไฟล์ต้นฉบับเมื่อสร้างพจนานุกรมเสร็จ',
+    'settings.removeDict': 'ลบออก',
+    'settings.deleteDictPrompt':
+      'ลบพจนานุกรมนี้หรือไม่? ฐานข้อมูลและไฟล์ต้นทางที่เหลือจะถูกลบ และจะไม่ปรากฏอีกเมื่อโหลดใหม่',
+    'settings.deleteSourcesLeft':
+      'ลบพจนานุกรมแล้ว แต่ไม่สามารถลบไฟล์ต้นทางได้ — อาจปรากฏอีกครั้งเมื่อปลั๊กอินโหลดใหม่ครั้งถัดไป',
+    'settings.export': 'ส่งออกพจนานุกรม',
+    'settings.exportFolder': 'ใช้โฟลเดอร์นี้',
+    'settings.newFolder': 'โฟลเดอร์ใหม่',
+    'settings.exportNoSpace': 'พื้นที่ว่างไม่พอสำหรับการส่งออก — ไม่มีการคัดลอกไฟล์ใด',
+    'settings.exportPluginDir': 'เลือกโฟลเดอร์ที่อยู่นอกพื้นที่จัดเก็บของปลั๊กอินเองเพื่อส่งออก',
+    'settings.exportDone': 'ส่งออกเสร็จสิ้น',
+    'settings.restore': 'กู้คืนจากที่นี่',
+    'settings.restorePrompt':
+      'กู้คืนจากข้อมูลสำรองนี้หรือไม่? การดำเนินการนี้จะแทนที่พจนานุกรมและคำที่บันทึกไว้ของคุณ',
+    'settings.restoreDone': 'กู้คืนแล้ว',
+    'settings.restoreReopen': 'เปิดปลั๊กอินใหม่เพื่อให้เสร็จสมบูรณ์',
+    'settings.restoreNoBackup': 'ไม่พบข้อมูลสำรองพจนานุกรมในโฟลเดอร์นี้',
+    'settings.restoreSnapshotFailed': 'สร้างข้อมูลสำรองนิรภัยไม่ได้ — ไม่มีการเปลี่ยนแปลง',
+    'common.keep': 'เก็บ',
+    'common.delete': 'ลบ',
+    'common.cancel': 'ยกเลิก',
   },
   nl: {
     'popup.synonyms': 'Synoniemen',
@@ -184,6 +427,51 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.save': 'Opslaan',
     'popup.addEmptyError': 'Voer een trefwoord en een definitie in.',
     'popup.addFailedError': 'Opslaan mislukt — probeer opnieuw.',
+    'popup.copy': 'Kopiëren',
+    'popup.copied': 'Gekopieerd',
+    'popup.copyFailed': 'Kopiëren mislukt',
+    'settings.open': 'Instellingen',
+    'settings.title': 'Instellingen',
+    'settings.back': 'Terug',
+    'settings.save': 'Opslaan',
+    'settings.saved': 'Instellingen opgeslagen',
+    'settings.saveFailed': 'Kan instellingen niet opslaan',
+    'settings.dictionaries': 'Woordenboeken',
+    'settings.moveUp': 'Omhoog',
+    'settings.moveDown': 'Omlaag',
+    'settings.enableDict': 'Inschakelen',
+    'settings.disableDict': 'Uitschakelen',
+    'settings.allDisabled':
+      'Alle woordenboeken zijn uit — zoekopdrachten geven niets terug.',
+    'settings.sources': 'Importbronnen',
+    'settings.keepSources': 'Bronbestanden behouden na import',
+    'settings.keepSourcesHint':
+      'Indien uit, worden gesideloade bestanden na een geverifieerde import verwijderd.',
+    'settings.keepPrompt':
+      'Een kopie van je aangepaste woordenboek in MyStyle/SnDict/ bewaren na het indexeren? Kies Verwijderen om het bronbestand te wissen zodra het woordenboek is gebouwd.',
+    'settings.removeDict': 'Verwijderen',
+    'settings.deleteDictPrompt':
+      'Dit woordenboek verwijderen? De database en eventuele resterende bronbestanden worden gewist; het komt na opnieuw laden niet terug.',
+    'settings.deleteSourcesLeft':
+      'Woordenboek verwijderd, maar de bronbestanden konden niet worden gewist — het kan terugkomen wanneer de plug-in opnieuw wordt geladen.',
+    'settings.export': 'Woordenboeken exporteren',
+    'settings.exportFolder': 'Deze map gebruiken',
+    'settings.newFolder': 'Nieuwe map',
+    'settings.exportNoSpace':
+      'Onvoldoende vrije ruimte om te exporteren — er is niets gekopieerd.',
+    'settings.exportPluginDir':
+      'Kies een map buiten de eigen opslag van de plug-in om naar te exporteren.',
+    'settings.exportDone': 'Export voltooid',
+    'settings.restore': 'Vanaf hier herstellen',
+    'settings.restorePrompt':
+      'Herstellen vanaf deze back-up? Dit vervangt je huidige woordenboeken en opgeslagen woorden.',
+    'settings.restoreDone': 'Hersteld',
+    'settings.restoreReopen': 'open de plug-in opnieuw om te voltooien',
+    'settings.restoreNoBackup': 'Geen woordenboekback-ups in deze map gevonden.',
+    'settings.restoreSnapshotFailed': 'Kon geen veiligheidsback-up maken — er is niets gewijzigd.',
+    'common.keep': 'Behouden',
+    'common.delete': 'Verwijderen',
+    'common.cancel': 'Annuleren',
   },
   de: {
     'popup.synonyms': 'Synonyme',
@@ -207,6 +495,51 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'popup.save': 'Speichern',
     'popup.addEmptyError': 'Bitte Stichwort und Definition eingeben.',
     'popup.addFailedError': 'Speichern fehlgeschlagen — bitte erneut versuchen.',
+    'popup.copy': 'Kopieren',
+    'popup.copied': 'Kopiert',
+    'popup.copyFailed': 'Kopieren fehlgeschlagen',
+    'settings.open': 'Einstellungen',
+    'settings.title': 'Einstellungen',
+    'settings.back': 'Zurück',
+    'settings.save': 'Speichern',
+    'settings.saved': 'Einstellungen gespeichert',
+    'settings.saveFailed': 'Einstellungen konnten nicht gespeichert werden',
+    'settings.dictionaries': 'Wörterbücher',
+    'settings.moveUp': 'Nach oben',
+    'settings.moveDown': 'Nach unten',
+    'settings.enableDict': 'Aktivieren',
+    'settings.disableDict': 'Deaktivieren',
+    'settings.allDisabled':
+      'Alle Wörterbücher sind aus — Suchen liefern nichts.',
+    'settings.sources': 'Importquellen',
+    'settings.keepSources': 'Quelldateien nach Import behalten',
+    'settings.keepSourcesHint':
+      'Wenn aus, werden sideloadete Dateien nach einem verifizierten Import gelöscht.',
+    'settings.keepPrompt':
+      'Eine Kopie Ihres benutzerdefinierten Wörterbuchs nach der Indexierung in MyStyle/SnDict/ behalten? Wählen Sie Löschen, um die Quelldatei nach dem Aufbau zu entfernen.',
+    'settings.removeDict': 'Entfernen',
+    'settings.deleteDictPrompt':
+      'Dieses Wörterbuch entfernen? Seine Datenbank und etwaige übrige Quelldateien werden gelöscht; es erscheint beim Neuladen nicht wieder.',
+    'settings.deleteSourcesLeft':
+      'Wörterbuch entfernt, aber seine Quelldateien konnten nicht gelöscht werden — es erscheint beim nächsten Neuladen des Plugins möglicherweise wieder.',
+    'settings.export': 'Wörterbücher exportieren',
+    'settings.exportFolder': 'Diesen Ordner verwenden',
+    'settings.newFolder': 'Neuer Ordner',
+    'settings.exportNoSpace':
+      'Nicht genug freier Speicher zum Exportieren — es wurde nichts kopiert.',
+    'settings.exportPluginDir':
+      'Wählen Sie zum Exportieren einen Ordner außerhalb des plugin-eigenen Speichers.',
+    'settings.exportDone': 'Export abgeschlossen',
+    'settings.restore': 'Von hier wiederherstellen',
+    'settings.restorePrompt':
+      'Aus dieser Sicherung wiederherstellen? Dies ersetzt Ihre aktuellen Wörterbücher und gespeicherten Wörter.',
+    'settings.restoreDone': 'Wiederhergestellt',
+    'settings.restoreReopen': 'Plugin neu öffnen, um abzuschließen',
+    'settings.restoreNoBackup': 'Keine Wörterbuch-Sicherungen in diesem Ordner gefunden.',
+    'settings.restoreSnapshotFailed': 'Sicherheitskopie fehlgeschlagen — nichts wurde geändert.',
+    'common.keep': 'Behalten',
+    'common.delete': 'Löschen',
+    'common.cancel': 'Abbrechen',
   },
 };
 

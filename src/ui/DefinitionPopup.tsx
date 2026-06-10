@@ -5,13 +5,17 @@ import {
   getCurrentState,
   getPopupActions,
   hideDefinition,
+  showSettings,
   subscribe,
   type PopupState,
 } from './popupController';
+import SettingsPanel from './SettingsPanel';
 import {SourceSection} from './SourceSection';
 import {popupStyles as styles} from './popupStyles';
 import {t} from '../i18n/i18n';
 import {parseWordNetEntry} from './wordnetFormatter';
+import {buildCopyText} from './copyText';
+import {copyToClipboard} from '../native/clipboard';
 import {
   assembleThesaurus,
   type ThesaurusResult,
@@ -68,6 +72,10 @@ export default function DefinitionPopup(): React.JSX.Element {
   // + Lookup. Reset to false on every new result so each lookup opens in
   // display mode (the common case — the OCR was correct).
   const [editing, setEditing] = useState(false);
+  // Transient clipboard-copy feedback ('idle' until a copy fires, then
+  // 'ok'/'fail'). No timer — it clears on a new headword or tab switch so
+  // e-ink doesn't flap with a self-reverting label.
+  const [copyStatus, setCopyStatus] = useState<'idle' | 'ok' | 'fail'>('idle');
   // Add-definition form (shown from the not-found state). headword is
   // seeded with the queried word; body is the user's definition.
   const [showAddForm, setShowAddForm] = useState(false);
@@ -108,11 +116,18 @@ export default function DefinitionPopup(): React.JSX.Element {
   const fetchedHeadwordRef = useRef<string | null>(null);
 
   // A new headword resets to the Definition tab and drops any cached
-  // thesaurus (single-fetch is per-headword).
+  // thesaurus (single-fetch is per-headword). EXCEPT when the result was
+  // restored from Settings (Back) carrying an activeTab — then honour it
+  // so Back doesn't clobber the tab the user left from (F1-AC2). On a
+  // normal lookup activeTab is undefined and we default to 'definition'.
   useEffect(() => {
-    setTab('definition');
+    const resumedTab =
+      state.visible && state.kind === 'result' ? state.activeTab : undefined;
+    setTab(resumedTab ?? 'definition');
     setThesaurus(null);
+    setCopyStatus('idle');
     fetchedHeadwordRef.current = null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [headword]);
 
   // EN WordNet senses for the primary hit, memoised by the definition
@@ -192,8 +207,27 @@ export default function DefinitionPopup(): React.JSX.Element {
     () => setFontSize(s => stepUp(s)),
     [],
   );
-  const handleDefinitionTab = useCallback(() => setTab('definition'), []);
-  const handleThesaurusTab = useCallback(() => setTab('thesaurus'), []);
+  const handleDefinitionTab = useCallback(() => {
+    setTab('definition');
+    setCopyStatus('idle');
+  }, []);
+  const handleThesaurusTab = useCallback(() => {
+    setTab('thesaurus');
+    setCopyStatus('idle');
+  }, []);
+  // Write `text` to the OS clipboard via the native module, reflecting
+  // the typed result in the feedback label. Empty text is a no-op (the
+  // copy affordance is hidden in that case anyway). getPopupActions-style
+  // guarding lives inside copyToClipboard (returns MODULE_MISSING off
+  // device); a thrown promise is treated as a failure, never a crash.
+  const runCopy = useCallback((text: string) => {
+    if (text === '') {
+      return;
+    }
+    copyToClipboard(text)
+      .then(result => setCopyStatus(result.success ? 'ok' : 'fail'))
+      .catch(() => setCopyStatus('fail'));
+  }, []);
   const handleEditOcr = useCallback(() => setEditing(true), []);
 
   // Re-run the lookup with the corrected OCR text. Empty/whitespace is
@@ -278,6 +312,17 @@ export default function DefinitionPopup(): React.JSX.Element {
     );
   }
 
+  if (state.kind === 'settings') {
+    // The Settings panel renders inside the same backdrop + card chrome;
+    // SettingsPanel owns the card and the Back button (which restores the
+    // stashed result via closeSettings).
+    return (
+      <View style={styles.backdrop}>
+        <SettingsPanel resume={state.resume} />
+      </View>
+    );
+  }
+
   // state.kind === 'result'
   const hits = state.result.hits;
   const loading = state.result.loading ?? [];
@@ -314,6 +359,21 @@ export default function DefinitionPopup(): React.JSX.Element {
     thesaurus !== null && thesaurus.headword === headword
       ? thesaurus.result
       : null;
+  // Plain text for the active tab's "Copy" action — the on-screen
+  // definitions (or thesaurus lists), reduced to clipboard-ready text.
+  // '' when there's nothing to copy, which hides the button (hide-don't-
+  // grey). The looked-up word copies separately via "Copy word".
+  const copyActiveText = buildCopyText({
+    tab,
+    hits,
+    thesaurus: thesaurusForHeadword,
+    showSourceBadges,
+  });
+  // A single "Copy" copies the whole entry: the headword followed by the
+  // active tab's visible text (definition or thesaurus). When the active
+  // tab has nothing (e.g. an empty thesaurus), it falls back to the word.
+  const copyAllText =
+    copyActiveText !== '' ? `${headerWord}\n${copyActiveText}` : headerWord;
   const hasThesaurus =
     thesaurusForHeadword !== null &&
     (thesaurusForHeadword.synonyms.length > 0 ||
@@ -330,6 +390,9 @@ export default function DefinitionPopup(): React.JSX.Element {
           <Text style={[styles.word, styles.headerWordWrap]} numberOfLines={1}>
             {headerWord}
           </Text>
+          {/* Right-aligned control cluster: the font-size stepper, then the
+              settings gear pinned to the top-right corner of the card. */}
+          <View style={styles.headerControls}>
           <View style={styles.fontSizeRow}>
             <Pressable
               accessibilityRole="button"
@@ -368,6 +431,21 @@ export default function DefinitionPopup(): React.JSX.Element {
                 +
               </Text>
             </Pressable>
+          </View>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={t('settings.open')}
+            onPress={() =>
+              showSettings({
+                ocrLabel: state.ocrLabel,
+                result: state.result,
+                editable: state.editable,
+                activeTab: tab,
+              })
+            }
+            style={styles.gearButton}>
+            <Text style={styles.gearLabel}>⚙</Text>
+          </Pressable>
           </View>
         </View>
         {headerPhonetic ? (
@@ -579,13 +657,35 @@ export default function DefinitionPopup(): React.JSX.Element {
             </>
           )}
         </ScrollView>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={t('popup.close')}
-          onPress={handleClose}
-          style={styles.closeButton}>
-          <Text style={styles.closeLabel}>{t('popup.close')}</Text>
-        </Pressable>
+        <View style={styles.footerRow}>
+          <View style={styles.copyActions}>
+            {/* One Copy action — copies the word + the visible definition/
+                thesaurus text in one go. Hidden when there's nothing to copy. */}
+            {hits.length > 0 ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={t('popup.copy')}
+                onPress={() => runCopy(copyAllText)}
+                style={styles.copyButton}>
+                <Text style={styles.copyLabel}>{t('popup.copy')}</Text>
+              </Pressable>
+            ) : null}
+            {copyStatus !== 'idle' ? (
+              <Text style={styles.copyStatus} numberOfLines={1}>
+                {copyStatus === 'ok'
+                  ? t('popup.copied')
+                  : t('popup.copyFailed')}
+              </Text>
+            ) : null}
+          </View>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={t('popup.close')}
+            onPress={handleClose}
+            style={styles.closeButton}>
+            <Text style={styles.closeLabel}>{t('popup.close')}</Text>
+          </Pressable>
+        </View>
       </View>
     </View>
   );

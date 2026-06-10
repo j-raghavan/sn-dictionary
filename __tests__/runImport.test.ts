@@ -29,6 +29,11 @@ type Opts = {
   sourceFolder?: string;
   // Make deleteFolder throw / resolve false (still a success import).
   deleteFolderThrows?: Error;
+  // F4: keep the source files after a verified import (skip the delete).
+  keepSources?: boolean;
+  // F4-FR9: a `.refresh` sentinel path + its (best-effort) deleter.
+  refreshPath?: string;
+  deleteRefreshThrows?: Error;
 };
 
 type Harness = {
@@ -37,6 +42,7 @@ type Harness = {
   deleteFile: jest.Mock;
   deleteFolder: jest.Mock;
   discard: jest.Mock;
+  deleteRefreshSentinel: jest.Mock;
   slugFiles: Map<string, SqliteDb>;
   audit: SqliteDb;
   deleteOrder: string[];
@@ -70,6 +76,12 @@ const makeHarness = async (opts: Opts = {}): Promise<Harness> => {
   });
   const discard = jest.fn(async (filename: string) => {
     slugFiles.delete(filename);
+  });
+  const deleteRefreshSentinel = jest.fn(async (path: string) => {
+    deleteOrder.push(`refresh:${path}`);
+    if (opts.deleteRefreshThrows) {
+      throw opts.deleteRefreshThrows;
+    }
   });
   const rows = opts.rows ?? DEFAULT_ROWS;
 
@@ -114,12 +126,20 @@ const makeHarness = async (opts: Opts = {}): Promise<Harness> => {
     ports.sourceFolder = opts.sourceFolder;
     ports.deleteFolder = deleteFolder;
   }
+  if (opts.keepSources !== undefined) {
+    ports.keepSources = opts.keepSources;
+  }
+  if (opts.refreshPath !== undefined) {
+    ports.refreshPath = opts.refreshPath;
+    ports.deleteRefreshSentinel = deleteRefreshSentinel;
+  }
   return {
     ports,
     produceSlugDb,
     deleteFile,
     deleteFolder,
     discard,
+    deleteRefreshSentinel,
     slugFiles,
     audit,
     deleteOrder,
@@ -253,5 +273,90 @@ describe('runImport — source folder cleanup (FR3)', () => {
     expect(res.ok).toBe(false);
     expect(h.deleteFolder).not.toHaveBeenCalled();
     expect(h.deleteFile).not.toHaveBeenCalled();
+  });
+});
+
+describe('runImport — F4 opt-in source deletion (keepSources)', () => {
+  it('keep=true: writes the audit row + keeps the slug DB, but SKIPS deleteFile/deleteFolder (AC1)', async () => {
+    const h = await makeHarness({
+      keepSources: true,
+      sourcePaths: ['/d/Fr/x.ifo', '/d/Fr/x.idx', '/d/Fr/x.dict'],
+      sourceFolder: '/d/Fr',
+    });
+    const res = await runImport(h.ports);
+    expect(res).toMatchObject({ok: true, filename: 'my-dict.en.db'});
+    // Audit row written (the import is durably recorded)...
+    expect(await findImportByNameLang(h.audit, 'My Dict', 'en')).toMatchObject({
+      entry_count: 2,
+      filename: 'my-dict.en.db',
+    });
+    // ...slug DB kept (never discarded)...
+    expect(h.discard).not.toHaveBeenCalled();
+    expect(h.slugFiles.has('my-dict.en.db')).toBe(true);
+    // ...and NO source deletion happened (the whole point of keep).
+    expect(h.deleteFile).not.toHaveBeenCalled();
+    expect(h.deleteFolder).not.toHaveBeenCalled();
+  });
+
+  it('keep=false: deletes sources + writes the audit row (AC2 — today behaviour)', async () => {
+    const h = await makeHarness({keepSources: false});
+    const res = await runImport(h.ports);
+    expect(res.ok).toBe(true);
+    expect(h.deleteFile.mock.calls.map(c => c[0])).toEqual(['a.csv', 'a.meta.json']);
+    expect(await findImportByNameLang(h.audit, 'My Dict', 'en')).toMatchObject({
+      filename: 'my-dict.en.db',
+    });
+  });
+
+  it('keep unset defaults to delete (legacy callers unchanged)', async () => {
+    const h = await makeHarness(); // no keepSources
+    await runImport(h.ports);
+    expect(h.deleteFile).toHaveBeenCalled();
+  });
+
+  it('verify-failure parity: keep=true leaves sources + discards the half DB (AC6)', async () => {
+    const h = await makeHarness({keepSources: true, reports: 99});
+    const res = await runImport(h.ports);
+    expect(res.ok).toBe(false);
+    // Identical to keep=false failure: sources untouched, DB discarded.
+    expect(h.deleteFile).not.toHaveBeenCalled();
+    expect(h.discard).toHaveBeenCalledWith('my-dict.en.db');
+    expect(await findImportByNameLang(h.audit, 'My Dict', 'en')).toBeNull();
+  });
+
+  it('keep=true still removes a .refresh sentinel after a verified refresh (FR9)', async () => {
+    const h = await makeHarness({
+      keepSources: true,
+      refreshPath: '/d/Fr/.refresh',
+    });
+    const res = await runImport(h.ports);
+    expect(res.ok).toBe(true);
+    // Sources kept, but the sentinel is deleted so it doesn't loop.
+    expect(h.deleteFile).not.toHaveBeenCalled();
+    expect(h.deleteRefreshSentinel).toHaveBeenCalledWith('/d/Fr/.refresh');
+  });
+
+  it('a deleteRefreshSentinel failure is isolated: import still succeeds', async () => {
+    const h = await makeHarness({
+      keepSources: true,
+      refreshPath: '/d/Fr/.refresh',
+      deleteRefreshThrows: new Error('sentinel gone'),
+    });
+    const res = await runImport(h.ports, {warn: jest.fn()});
+    expect(res).toMatchObject({ok: true, filename: 'my-dict.en.db'});
+    expect(await findImportByNameLang(h.audit, 'My Dict', 'en')).toMatchObject({
+      filename: 'my-dict.en.db',
+    });
+  });
+
+  it('does NOT remove the sentinel on a FAILED import (verify mismatch)', async () => {
+    const h = await makeHarness({
+      keepSources: true,
+      refreshPath: '/d/Fr/.refresh',
+      reports: 99,
+    });
+    const res = await runImport(h.ports);
+    expect(res.ok).toBe(false);
+    expect(h.deleteRefreshSentinel).not.toHaveBeenCalled();
   });
 });

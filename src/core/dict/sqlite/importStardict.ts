@@ -76,7 +76,7 @@ export const estimateImportBytes = (dictByteLength: number): number =>
 // seam runImport calls; the `format` comes from the validated sidecar.
 const produceStardictSlugDb = async (
   ports: ImportPorts,
-  format: 'plain' | 'html' | 'wordnet',
+  format: 'plain' | 'html' | 'wordnet' | undefined,
   filename: string,
 ): Promise<{entryCount: number}> =>
   ports.runNativeImport({
@@ -93,12 +93,14 @@ const produceStardictSlugDb = async (
 // host (index.js) calls THIS to build the run ports for a 'stardict'
 // descriptor, then hands them straight to runImport.
 export const stardictRunPorts = (ports: ImportPorts): RunImportPorts => {
-  // The space estimate needs the validated sidecar format; the sidecar
-  // is re-validated inside runImport, but the format the native importer
-  // is handed must come from the SAME parse. Parse once here for the
-  // format; runImport's own parse is the authoritative gate (a bad
-  // sidecar fails there before produceSlugDb is ever called).
-  let format: 'plain' | 'html' | 'wordnet' = 'plain';
+  // The format handed to the native importer comes from the validated
+  // sidecar ONLY when meta.json sets it explicitly. Otherwise leave it
+  // `undefined` so the native importer derives it from the .ifo's
+  // sametypesequence (h -> html, else plain) — NOT a hardcoded 'plain',
+  // which would shadow an HTML StarDict's own type declaration and render
+  // its `<i>/<ol>/<li>` markup as literal text. runImport's own parse is
+  // the authoritative gate (a bad sidecar fails there before produceSlugDb).
+  let format: 'plain' | 'html' | 'wordnet' | undefined;
   try {
     const parsed = parseSidecar(JSON.parse(ports.sidecarText));
     if (parsed.ok && parsed.sidecar.format !== undefined) {

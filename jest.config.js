@@ -36,6 +36,10 @@ module.exports = {
     '/src/core/dict/sqlite/importRnPorts\\.ts$',
     '/src/core/dict/sqlite/importCsvRnPorts\\.ts$',
     '/src/core/dict/sqlite/nativeImport\\.ts$',
+    // Device-only clipboard bridge — touches NativeModules.SnDictClipboard
+    // (unbound off-device); the copy reducer + popup handlers are
+    // host-tested with it mocked.
+    '/src/native/clipboard\\.ts$',
   ],
   collectCoverageFrom: [
     'src/**/*.{ts,tsx}',

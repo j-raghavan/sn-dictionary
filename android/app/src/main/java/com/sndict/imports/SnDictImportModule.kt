@@ -56,17 +56,71 @@ class SnDictImportModule(
     }
   }
 
-  // File size in bytes, for the on-device import space guard. Double for
-  // the RN bridge (no native long); 0 when the file is missing. Runs on
-  // the worker thread to keep all native fs touches off the JS thread.
+  // Resolve a path the way the SQLite engine does: an ABSOLUTE path
+  // (starting with '/') is used as-is; a RELATIVE one — e.g. the plugin DB
+  // location "plugins/<id>/foo.db" — is resolved under the app's private
+  // files dir, the SAME getFilesDir()+location base the SQLite plugin opens
+  // DBs from. RTNFileUtils does NOT do this, so a bare relative plugin path
+  // is ENOENT to it; that is why DB export/delete needs this module.
+  private fun resolve(path: String): java.io.File =
+    if (path.startsWith("/")) {
+      java.io.File(path)
+    } else {
+      java.io.File(reactApplicationContext.filesDir, path)
+    }
+
+  // File size in bytes, for the on-device space guards. Double for the RN
+  // bridge (no native long); 0 when the file is missing. Runs on the worker
+  // thread to keep all native fs touches off the JS thread.
   @ReactMethod
   fun fileSize(path: String, promise: Promise) {
     executor.execute {
       try {
-        val f = java.io.File(path)
+        val f = resolve(path)
         promise.resolve(if (f.exists()) f.length().toDouble() else 0.0)
       } catch (e: Exception) {
         promise.reject("FILE_SIZE_FAILED", e.message, e)
+      }
+    }
+  }
+
+  // Copy a plugin DB across the internal(filesDir)<->external boundary, in
+  // EITHER direction. A REAL byte copy: RTNFileUtils.copyFile is a
+  // File.renameTo under the hood, which cannot cross that boundary (and
+  // would MOVE, not copy). BOTH ends are resolve()d (absolute as-is;
+  // relative under filesDir), so the SAME method serves the DB export
+  // (src=relative plugin DB, dest=absolute backup) and the F8 restore
+  // (src=absolute backup, dest=relative live plugin DB). Resolves true.
+  @ReactMethod
+  fun copyResolved(srcPath: String, destPath: String, promise: Promise) {
+    executor.execute {
+      try {
+        val src = resolve(srcPath)
+        val dest = resolve(destPath)
+        dest.parentFile?.mkdirs()
+        src.inputStream().use { input ->
+          dest.outputStream().use { output -> input.copyTo(output) }
+        }
+        promise.resolve(true)
+      } catch (e: Exception) {
+        promise.reject("COPY_FAILED", e.message, e)
+      }
+    }
+  }
+
+  // Delete a plugin file (resolving a relative path under filesDir, like
+  // the slug DB at "plugins/<id>/<slug>.db") — used by F7 delete-imported-
+  // dict, where RTNFileUtils.deleteFile can't reach the relative path.
+  // An absolute path (a kept source file under MyStyle) passes through.
+  // Resolves true if the file is gone afterwards (missing == success).
+  @ReactMethod
+  fun deleteResolved(path: String, promise: Promise) {
+    executor.execute {
+      try {
+        val f = resolve(path)
+        promise.resolve(!f.exists() || f.delete())
+      } catch (e: Exception) {
+        promise.reject("DELETE_FAILED", e.message, e)
       }
     }
   }

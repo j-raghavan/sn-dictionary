@@ -17,6 +17,8 @@
     "fetch:omw": "node scripts/fetchOmw.mjs",
     "build:omw": "node scripts/buildOmw.mjs",
     "prepare:omw": "npm run --silent fetch:omw && npm run --silent build:omw",
+    "fetch:moby": "node scripts/fetchMoby.mjs",
+    "prepare:moby": "npm run --silent fetch:moby",
     "build:sample-dicts": "node scripts/buildSampleDicts.mjs"
   },
   "dependencies": {
