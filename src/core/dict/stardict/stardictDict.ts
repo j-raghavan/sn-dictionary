@@ -21,6 +21,7 @@ import {parseSyn} from './parseSyn';
 import type {DictReader} from './dictReader';
 import {createDictReader} from './dictReader';
 import {decodeUtf8} from '../../../sdk/utf8';
+import {splitDictEntry} from './dictEntry';
 import {normalizeKey} from '../normalizeKey';
 import {shouldYield, yieldToEventLoop} from '../yieldOften';
 
@@ -104,6 +105,9 @@ export const lookupDict = (
     return null;
   }
   const slice = dict.dictReader.slice(entry.offset, entry.length);
-  const definition = decodeUtf8(slice);
+  // Strip the sts-absent per-entry type byte + trailing NUL before
+  // decode (issue #28); a no-op when sametypesequence is present.
+  const {payload} = splitDictEntry(dict.meta.sametypesequence ?? null, slice);
+  const definition = decodeUtf8(payload);
   return {canonicalWord: entry.word, definition};
 };

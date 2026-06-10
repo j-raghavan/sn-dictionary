@@ -56,6 +56,42 @@ describe('entriesFromParsedDict', () => {
       expect(row.definition).toBe(lookupDict(parsed, row.word)?.definition);
     }
   });
+
+  // Regression byte-equality guard (issue #28): the sametypesequence
+  // split must NOT shift the body for sts-PRESENT dicts. base.db is
+  // built from WordNet, which sets sametypesequence=m, so persisted
+  // bodies must remain byte-identical to the raw payload for both the
+  // common 'm' (plain) and 'h' (html) single-char sts values.
+  it.each(['m', 'h'])(
+    'sts-present (=%s): persisted definitions equal the raw payload (no prefix/NUL shift)',
+    async sts => {
+      const t = buildSyntheticStarDict(DEFS, {sametypesequence: sts});
+      const parsed = await buildDict(t.ifo, t.idx, t.dict);
+      const rows = entriesFromParsedDict(parsed);
+      const byKey = new Map(rows.map(r => [r.key, r.definition]));
+      // The raw payload IS the definition verbatim when sts is present.
+      expect(byKey.get('apple')).toBe('a round fruit');
+      expect(byKey.get('banana')).toBe('a long yellow fruit');
+      expect(byKey.get("muad'dib")).toBe('a desert mouse');
+      // And it stays equal to what lookupDict returns.
+      for (const row of rows) {
+        expect(row.definition).toBe(lookupDict(parsed, row.word)?.definition);
+      }
+    },
+  );
+
+  it('sts-absent dict: persisted body == looked-up body (prefix/NUL stripped)', async () => {
+    const t = buildSyntheticStarDict(DEFS, {omitSametypesequence: true});
+    const parsed = await buildDict(t.ifo, t.idx, t.dict);
+    for (const row of entriesFromParsedDict(parsed)) {
+      expect(row.definition).toBe(lookupDict(parsed, row.word)?.definition);
+    }
+    const byKey = new Map(
+      entriesFromParsedDict(parsed).map(r => [r.key, r.definition]),
+    );
+    // No leading type byte, no trailing NUL leaked into the stored body.
+    expect(byKey.get('apple')).toBe('a round fruit');
+  });
 });
 
 describe('deterministicBuiltAt', () => {

@@ -21,6 +21,10 @@ import {
 } from '../src/core/dict/sqlite/schema';
 import type {SqliteDb} from '../src/core/dict/sqlite/db';
 import type {RunNativeImport} from '../src/core/dict/sqlite/nativeImport';
+import {
+  splitDictEntry,
+  formatFromTypeChar,
+} from '../src/core/dict/stardict/dictEntry';
 
 const SIDECAR = JSON.stringify({name: 'My Dict', language: 'en'});
 const DICT_BYTES = 1000;
@@ -46,6 +50,18 @@ type Opts = {
   // The rows the fake native importer "inserts" into the slug DB and
   // the count it reports (default: keyed entries below).
   nativeRows?: Array<{key: string; word: string; definition: string; format: string}>;
+  // Raw StarDict-style entries the fake importer derives rows from by
+  // running the REAL splitDictEntry / formatFromTypeChar helpers — this
+  // encodes the native (Kotlin) semantics in the host fake so the
+  // device-only behaviour is guarded. `sts` is the .ifo
+  // sametypesequence (null = absent); each entry's `raw` is the .dict
+  // slice (type byte + payload + optional NUL when sts absent).
+  // `formatOverride` mirrors the sidecar format passed to native.
+  nativeRawEntries?: {
+    sts: string | null;
+    formatOverride?: string;
+    entries: Array<{key: string; word: string; raw: Uint8Array}>;
+  };
   // Override the count the native side REPORTS (to force a verify
   // mismatch even when rows are inserted) and/or make it throw.
   nativeReports?: number;
@@ -73,16 +89,35 @@ const makeHarness = async (opts: Opts = {}): Promise<Harness> => {
   // The .dict-size port the space guard reads (native stat on-device).
   const statDictSize = jest.fn(async () => opts.dictSize ?? DICT_BYTES);
 
-  const rows = opts.nativeRows ?? DEFAULT_ROWS;
+  const staticRows = opts.nativeRows ?? DEFAULT_ROWS;
 
-  // Fake native import: seed `rows` into a fresh slug DB keyed by the
+  // Fake native import: seed rows into a fresh slug DB keyed by the
   // resolved dbPath's trailing filename, and resolve the reported count.
+  // When `nativeRawEntries` is set, the rows are DERIVED from raw .dict
+  // bytes by running the SAME splitDictEntry / formatFromTypeChar helpers
+  // the device path mirrors — so the fake encodes native semantics
+  // (stripped body + per-entry format) rather than hand-baked rows.
+  const decode = (b: Uint8Array): string => new TextDecoder().decode(b);
   const runNativeImport = jest.fn<ReturnType<RunNativeImport>, Parameters<RunNativeImport>>(
-    async ({dbPath}) => {
+    async ({dbPath, format}) => {
       if (opts.nativeThrows) {
         throw opts.nativeThrows;
       }
       const filename = dbPath.split('/').pop() as string;
+      const rows = opts.nativeRawEntries
+        ? opts.nativeRawEntries.entries.map(e => {
+            const split = splitDictEntry(opts.nativeRawEntries!.sts, e.raw);
+            const rowFormat =
+              (opts.nativeRawEntries!.formatOverride ?? format) ??
+              formatFromTypeChar(split.typeChar);
+            return {
+              key: e.key,
+              word: e.word,
+              definition: decode(split.payload),
+              format: rowFormat,
+            };
+          })
+        : staticRows;
       const db = await createSeededDb(async d => {
         await d.run(CREATE_ENTRIES_TABLE);
         for (const r of rows) {
@@ -206,9 +241,20 @@ describe('importStardict — happy path', () => {
     // SIDECAR sets only name + language (no `format`). Forcing 'plain' here
     // would shadow an HTML StarDict's own sametypesequence=h and render its
     // <i>/<ol>/<li> markup as literal text (the fr-en-strdict bug).
-    const h = await makeHarness();
+    // Drive a sts='h' fixture so we assert BOTH that no JS override is
+    // forwarded AND that the derived row format reaches the slug DB as
+    // 'html' (not just that the override is undefined).
+    const h = await makeHarness({
+      nativeRawEntries: {
+        sts: 'h',
+        entries: [{key: 'rich', word: 'rich', raw: new TextEncoder().encode('<i>x</i>')}],
+      },
+    });
     await importStardict(h.ports);
     expect(h.runNativeImport.mock.calls[0][0].format).toBeUndefined();
+    const slug = h.slugFiles.get('my-dict.en.db')!;
+    const rich = await slug.query(SELECT_ENTRY_BY_KEY, ['rich']);
+    expect(rich[0]).toMatchObject({definition: '<i>x</i>', format: 'html'});
   });
 
   it('forwards the optional .syn path to the native import', async () => {
@@ -218,6 +264,112 @@ describe('importStardict — happy path', () => {
     expect(h.runNativeImport).toHaveBeenCalledWith(
       expect.objectContaining({synPath: 'dict.syn'}),
     );
+  });
+});
+
+describe('importStardict — sametypesequence-absent body/format (issue #28)', () => {
+  // The fake runNativeImport runs the REAL splitDictEntry /
+  // formatFromTypeChar helpers, mirroring the Kotlin importer. These
+  // tests assert the END STATE in the slug DB: definitions are stripped
+  // of the type byte + trailing NUL, and each row's format is derived
+  // per-entry from its type char (unless the sidecar overrides it).
+  const enc = (s: string): Uint8Array => new TextEncoder().encode(s);
+  const rawEntry = (typeChar: string, body: string, withNul: boolean): Uint8Array =>
+    new Uint8Array([
+      ...enc(typeChar),
+      ...enc(body),
+      ...(withNul ? [0x00] : []),
+    ]);
+
+  it('strips the type byte + trailing NUL from each definition (sts absent)', async () => {
+    const h = await makeHarness({
+      nativeRawEntries: {
+        sts: null,
+        entries: [
+          {key: 'apple', word: 'apple', raw: rawEntry('m', 'a fruit', true)},
+          {key: 'banana', word: 'Banana', raw: rawEntry('m', 'a yellow fruit', false)},
+        ],
+      },
+    });
+    const res = await importStardict(h.ports);
+    expect(res.ok).toBe(true);
+    const slug = h.slugFiles.get('my-dict.en.db')!;
+    const apple = await slug.query(SELECT_ENTRY_BY_KEY, ['apple']);
+    expect(apple).toEqual([
+      {word: 'apple', definition: 'a fruit', format: 'plain', phonetic: null},
+    ]);
+    const banana = await slug.query(SELECT_ENTRY_BY_KEY, ['banana']);
+    expect(banana[0]).toMatchObject({definition: 'a yellow fruit'});
+  });
+
+  it("derives format per-entry from the type char ('h' -> html, 'm' -> plain) when the sidecar omits format", async () => {
+    const h = await makeHarness({
+      nativeRawEntries: {
+        sts: null,
+        entries: [
+          {key: 'rich', word: 'rich', raw: rawEntry('h', '<b>bold</b>', true)},
+          {key: 'flat', word: 'flat', raw: rawEntry('m', 'plain text', false)},
+        ],
+      },
+    });
+    await importStardict(h.ports);
+    const slug = h.slugFiles.get('my-dict.en.db')!;
+    const rich = await slug.query(SELECT_ENTRY_BY_KEY, ['rich']);
+    expect(rich[0]).toMatchObject({definition: '<b>bold</b>', format: 'html'});
+    const flat = await slug.query(SELECT_ENTRY_BY_KEY, ['flat']);
+    expect(flat[0]).toMatchObject({definition: 'plain text', format: 'plain'});
+  });
+
+  it("sts-PRESENT 'h' with NO sidecar format: rows are format='html' and bodies are the WHOLE slice (PR #31 regression guard)", async () => {
+    // sts is PRESENT -> NO per-entry type prefix and NO terminator; the
+    // body IS the whole slice. With no sidecar override the row format
+    // must STILL derive from sts[0]='h' (the v1.3.0 .ifo-level HTML
+    // behaviour) — regressing this would render <i>/<ol>/<li> as literal
+    // text. This is the device-bug guard the suite was missing.
+    const h = await makeHarness({
+      // SIDECAR (default) omits `format`, so no override reaches native.
+      nativeRawEntries: {
+        sts: 'h',
+        entries: [
+          {key: 'rich', word: 'rich', raw: enc('<b>bold</b>')},
+          {key: 'list', word: 'list', raw: enc('<ol><li>a</li></ol>')},
+        ],
+      },
+    });
+    // No sidecar override is forwarded to native (the .ifo drives format).
+    await importStardict(h.ports);
+    expect(h.runNativeImport.mock.calls[0][0].format).toBeUndefined();
+    const slug = h.slugFiles.get('my-dict.en.db')!;
+    const rich = await slug.query(SELECT_ENTRY_BY_KEY, ['rich']);
+    expect(rich[0]).toEqual({
+      word: 'rich',
+      definition: '<b>bold</b>', // whole slice, NOT stripped
+      format: 'html',
+      phonetic: null,
+    });
+    const list = await slug.query(SELECT_ENTRY_BY_KEY, ['list']);
+    expect(list[0]).toMatchObject({
+      definition: '<ol><li>a</li></ol>',
+      format: 'html',
+    });
+  });
+
+  it('sidecar format override wins over the per-entry type char', async () => {
+    const h = await makeHarness({
+      sidecarText: JSON.stringify({name: 'My Dict', language: 'en', format: 'html'}),
+      nativeRawEntries: {
+        sts: null,
+        formatOverride: 'html',
+        entries: [
+          {key: 'flat', word: 'flat', raw: rawEntry('m', 'plain text', false)},
+        ],
+      },
+    });
+    await importStardict(h.ports);
+    const slug = h.slugFiles.get('my-dict.en.db')!;
+    const flat = await slug.query(SELECT_ENTRY_BY_KEY, ['flat']);
+    // 'm' type would derive 'plain', but the sidecar override forces html.
+    expect(flat[0]).toMatchObject({definition: 'plain text', format: 'html'});
   });
 });
 

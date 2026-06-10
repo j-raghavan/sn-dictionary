@@ -57,6 +57,23 @@ describe('stardictDict', () => {
     expect(lookupDict(parsed, '   ')).toBeNull();
   });
 
+  test('sametypesequence-absent dict: type byte + trailing NUL are stripped from the body (issue #28)', async () => {
+    // A StarDict with no sametypesequence stores each entry as
+    // <type-byte><payload>[0x00]. lookupDict must strip the prefix and
+    // the trailing NUL so the user sees the clean definition, not a
+    // leading 'm'/'h' or a trailing control char.
+    const {ifo, idx, dict} = buildSyntheticStarDict(
+      {apple: 'a fruit', banana: 'a yellow fruit'},
+      {omitSametypesequence: true},
+    );
+    const parsed = await buildDict(ifo, idx, dict);
+    expect(parsed.meta.sametypesequence).toBeUndefined();
+    // apple is NOT the last entry -> had a 0x00 terminator that must go.
+    expect(lookupDict(parsed, 'apple')?.definition).toBe('a fruit');
+    // banana is the last entry -> no terminator, only the type byte.
+    expect(lookupDict(parsed, 'banana')?.definition).toBe('a yellow fruit');
+  });
+
   test('decodes UTF-8 multibyte definitions correctly', async () => {
     const {ifo, idx, dict} = buildSyntheticStarDict({
       café: '咖啡 (coffee)',
