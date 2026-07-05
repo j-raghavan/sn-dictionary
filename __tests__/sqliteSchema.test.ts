@@ -6,12 +6,19 @@
 
 import {createSeededDb} from './_helpers/betterSqliteDb';
 import {
+  ALTER_IMPORTS_ADD_IMPORTER_VERSION,
   CREATE_ENTRIES_INDEX,
   CREATE_ENTRIES_TABLE,
+  CREATE_IMPORTS_IDENTITY_INDEX,
+  CREATE_IMPORTS_TABLE,
   CREATE_META_TABLE,
   DEFINITION_FORMATS,
+  DELETE_IMPORTS_DUPLICATES,
+  IMPORTER_VERSION,
   INSERT_META,
   SELECT_ENTRY_BY_KEY,
+  SELECT_IMPORT_BY_NAME_LANG,
+  UPSERT_IMPORT,
   SELECT_META_VERSION,
   CREATE_THESAURUS_INDEX,
   CREATE_THESAURUS_TABLE,
@@ -128,6 +135,107 @@ describe('meta schema (TF3-FR3)', () => {
     const rows = await db.query<{schema_version: number}>(SELECT_META_VERSION);
     expect(rows[0].schema_version).toBe(0);
     await db.close();
+  });
+});
+
+describe('imports schema (TF5-FR5) — importer_version stamping', () => {
+  it('CREATE_IMPORTS_TABLE carries importer_version INTEGER NOT NULL DEFAULT 0', () => {
+    expect(CREATE_IMPORTS_TABLE).toContain(
+      'importer_version INTEGER NOT NULL DEFAULT 0',
+    );
+  });
+
+  it('the ALTER literal adds importer_version with the same default (existing DBs)', () => {
+    expect(ALTER_IMPORTS_ADD_IMPORTER_VERSION).toBe(
+      'ALTER TABLE imports ADD COLUMN importer_version INTEGER NOT NULL DEFAULT 0',
+    );
+  });
+
+  it('a fresh CREATE defaults a 5-value insert to importer_version 0', async () => {
+    // A row inserted with the legacy 5-value shape (no explicit stamp) reads
+    // back 0 — the pre-versioning "stale by definition" value.
+    const db = await createSeededDb(async d => {
+      await d.run(CREATE_IMPORTS_TABLE);
+      await d.run(
+        'INSERT INTO imports (name, lang, entry_count, imported_at, filename) VALUES (?, ?, ?, ?, ?)',
+        ['A', 'en', 1, 't', 'a.en.db'],
+      );
+    });
+    const rows = await db.query<{importer_version: number}>(
+      SELECT_IMPORT_BY_NAME_LANG,
+      ['A', 'en'],
+    );
+    expect(rows[0].importer_version).toBe(0);
+    await db.close();
+  });
+
+  it('UPSERT_IMPORT binds six values (name, lang, count, at, filename, version)', async () => {
+    const db = await createSeededDb(async d => {
+      await d.run(CREATE_IMPORTS_TABLE);
+      await d.run(UPSERT_IMPORT, ['A', 'en', 1, 't', 'a.en.db', 3]);
+    });
+    const rows = await db.query<{importer_version: number}>(
+      SELECT_IMPORT_BY_NAME_LANG,
+      ['A', 'en'],
+    );
+    expect(rows[0].importer_version).toBe(3);
+    await db.close();
+  });
+
+  it('UPSERT_IMPORT is a single-statement atomic swap over the UNIQUE (name, lang) index', async () => {
+    // With the UNIQUE index present, INSERT OR REPLACE keeps exactly ONE row
+    // per identity, updating its values in place — no delete+insert transaction.
+    const db = await createSeededDb(async d => {
+      await d.run(CREATE_IMPORTS_TABLE);
+      await d.run(CREATE_IMPORTS_IDENTITY_INDEX);
+      await d.run(UPSERT_IMPORT, ['A', 'en', 1, 't1', 'a.en.db', 1]);
+      await d.run(UPSERT_IMPORT, ['A', 'en', 9, 't2', 'a.en.alt.db', 2]);
+    });
+    const rows = await db.query<{
+      entry_count: number;
+      filename: string;
+      importer_version: number;
+    }>(SELECT_IMPORT_BY_NAME_LANG, ['A', 'en']);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      entry_count: 9,
+      filename: 'a.en.alt.db',
+      importer_version: 2,
+    });
+    await db.close();
+  });
+
+  it('CREATE_IMPORTS_IDENTITY_INDEX is a UNIQUE index on (name, lang)', () => {
+    expect(CREATE_IMPORTS_IDENTITY_INDEX).toBe(
+      'CREATE UNIQUE INDEX IF NOT EXISTS idx_imports_name_lang ON imports(name, lang)',
+    );
+  });
+
+  it('DELETE_IMPORTS_DUPLICATES keeps the NEWEST row per (name, lang)', async () => {
+    // Simulate a pre-index table holding duplicate identities; the dedupe keeps
+    // the max-rowid (newest) row so CREATE UNIQUE INDEX can then be built.
+    const db = await createSeededDb(async d => {
+      await d.run(CREATE_IMPORTS_TABLE);
+      await d.run(UPSERT_IMPORT, ['A', 'en', 1, 'old', 'a.en.db', 0]);
+      // A raw second insert (no unique index yet) creates a duplicate identity.
+      await d.run(
+        'INSERT INTO imports (name, lang, entry_count, imported_at, filename, importer_version) VALUES (?, ?, ?, ?, ?, ?)',
+        ['A', 'en', 2, 'new', 'a.en.alt.db', 1],
+      );
+    });
+    await db.run(DELETE_IMPORTS_DUPLICATES);
+    const rows = await db.query<{imported_at: string}>(SELECT_IMPORT_BY_NAME_LANG, [
+      'A',
+      'en',
+    ]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].imported_at).toBe('new');
+    await db.close();
+  });
+
+  it('IMPORTER_VERSION is a positive integer (>= 1)', () => {
+    expect(Number.isInteger(IMPORTER_VERSION)).toBe(true);
+    expect(IMPORTER_VERSION).toBeGreaterThanOrEqual(1);
   });
 });
 

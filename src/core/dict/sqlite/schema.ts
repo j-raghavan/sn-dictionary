@@ -186,33 +186,74 @@ export interface ThesaurusRow {
 // same name+lang replaces the prior row (upsertImport). filename is the
 // per-dict DB file the rows were written into.
 
+// The import PIPELINE version — bump +1 on any import- or render-affecting
+// change in the TS import path (importCsvRows, splitDictEntry/formatFrom
+// TypeChar, produce-step) OR the Kotlin StarDictImporter.kt, so a stale
+// user-dict DB built by an older pipeline is re-imported at bootstrap.
+// DISTINCT from SCHEMA_VERSION (which stamps table SHAPE): a DB can have
+// the current table shape yet stale CONTENT (e.g. HTML stored as raw tags
+// because an old app forced format='plain'). 0 is reserved for
+// pre-versioning rows — always stale by definition, so they re-import.
+export const IMPORTER_VERSION = 1;
+
 export const CREATE_IMPORTS_TABLE =
   'CREATE TABLE IF NOT EXISTS imports (' +
   'name TEXT NOT NULL, ' +
   'lang TEXT NOT NULL, ' +
   'entry_count INTEGER NOT NULL, ' +
   'imported_at TEXT NOT NULL, ' +
-  'filename TEXT NOT NULL)';
+  'filename TEXT NOT NULL, ' +
+  'importer_version INTEGER NOT NULL DEFAULT 0)';
+
+// Additive migration to bring an EXISTING (pre-versioning) imports table
+// up to the current shape. CREATE ... IF NOT EXISTS never alters an
+// existing table, so an old user.db keeps the 5-col imports table and its
+// rows default to importer_version 0 (stale). Idempotent: on a table that
+// already has the column SQLite raises "duplicate column name", which the
+// caller swallows (mirrors ALTER_USER_ENTRIES_ADD_PHONETIC).
+export const ALTER_IMPORTS_ADD_IMPORTER_VERSION =
+  'ALTER TABLE imports ADD COLUMN importer_version INTEGER NOT NULL DEFAULT 0';
+
+// UNIQUE index on the logical identity (name, lang). It is what makes
+// UPSERT_IMPORT's INSERT OR REPLACE a single-statement delete+insert atomic
+// swap — essential on device, where every statement is its own autocommit (no
+// wrapping transaction survives). Created AFTER the dedupe below (a UNIQUE
+// index fails to build over duplicate rows).
+export const CREATE_IMPORTS_IDENTITY_INDEX =
+  'CREATE UNIQUE INDEX IF NOT EXISTS idx_imports_name_lang ON imports(name, lang)';
+
+// Collapse any pre-existing duplicate (name, lang) rows to the NEWEST (max
+// rowid) before the UNIQUE index is created — an old on-device table may hold
+// duplicates from the pre-index era, which would make CREATE UNIQUE INDEX
+// throw. No-op on a clean table.
+export const DELETE_IMPORTS_DUPLICATES =
+  'DELETE FROM imports WHERE rowid NOT IN ' +
+  '(SELECT MAX(rowid) FROM imports GROUP BY name, lang)';
 
 // All audit rows — read at bootstrap to reconcile against on-disk
 // descriptors.
 export const SELECT_IMPORT_ALL =
-  'SELECT name, lang, entry_count, imported_at, filename FROM imports';
+  'SELECT name, lang, entry_count, imported_at, filename, importer_version FROM imports';
 
 export const SELECT_IMPORT_BY_NAME_LANG =
-  'SELECT name, lang, entry_count, imported_at, filename ' +
+  'SELECT name, lang, entry_count, imported_at, filename, importer_version ' +
   'FROM imports WHERE name = ? AND lang = ?';
 
 export const SELECT_IMPORT_BY_FILENAME =
-  'SELECT name, lang, entry_count, imported_at, filename ' +
+  'SELECT name, lang, entry_count, imported_at, filename, importer_version ' +
   'FROM imports WHERE filename = ?';
 
 export const DELETE_IMPORT_BY_NAME_LANG =
   'DELETE FROM imports WHERE name = ? AND lang = ?';
 
-export const INSERT_IMPORT =
-  'INSERT INTO imports (name, lang, entry_count, imported_at, filename) ' +
-  'VALUES (?, ?, ?, ?, ?)';
+// The atomic audit swap. With the UNIQUE (name, lang) index present, INSERT OR
+// REPLACE is a delete-then-insert executed as ONE statement — so on device,
+// where each statement autocommits independently, the audit row is repointed
+// to the new slug in a single indivisible step (never a torn "deleted, not yet
+// inserted" window). This is why upsertImport needs no transaction().
+export const UPSERT_IMPORT =
+  'INSERT OR REPLACE INTO imports (name, lang, entry_count, imported_at, filename, importer_version) ' +
+  'VALUES (?, ?, ?, ?, ?, ?)';
 
 // Projected shape of the SELECT_IMPORT_* queries.
 export interface ImportRow {
@@ -221,7 +262,22 @@ export interface ImportRow {
   entry_count: number;
   imported_at: string;
   filename: string;
+  // The IMPORTER_VERSION that produced this slug DB. ALWAYS populated: the
+  // column is NOT NULL DEFAULT 0, and ensureImportsTable (CREATE + additive
+  // ALTER) runs before any imports SELECT, so a row read from the table never
+  // carries this undefined. Callers compare it directly (isStaleImport) with
+  // no `?? 0` guard — the honest invariant, not a defensive fallback.
+  importer_version: number;
 }
+
+// A slug DB is stale when it was produced by an importer OLDER than the current
+// pipeline (its content may be behind — e.g. HTML stored as raw tags by an app
+// that forced format='plain'). Version 0 (a pre-versioning row) is stale by
+// definition. Lives here beside IMPORTER_VERSION + ImportRow (the invariant it
+// relies on); relies on importer_version always being populated, so it compares
+// directly with no `?? 0` guard.
+export const isStaleImport = (row: ImportRow): boolean =>
+  row.importer_version < IMPORTER_VERSION;
 
 // --- settings tables (F1, ADR-0009) — user.db only ------------------
 // All Settings-Panel preferences persist in the WRITABLE user.db via
@@ -240,15 +296,18 @@ export const CREATE_DICT_PREFS_TABLE =
 export const SELECT_DICT_PREFS_ALL =
   'SELECT pref_key, name, enabled, sort_order FROM dict_prefs ORDER BY sort_order';
 export const DELETE_DICT_PREF = 'DELETE FROM dict_prefs WHERE pref_key = ?';
-export const INSERT_DICT_PREF =
-  'INSERT INTO dict_prefs (pref_key, name, enabled, sort_order) VALUES (?, ?, ?, ?)';
+// Single-statement upsert: dict_prefs.pref_key is a TEXT PRIMARY KEY (since F1),
+// so INSERT OR REPLACE is an atomic delete+insert in ONE statement — no
+// transaction needed (device statements autocommit independently).
+export const UPSERT_DICT_PREF =
+  'INSERT OR REPLACE INTO dict_prefs (pref_key, name, enabled, sort_order) VALUES (?, ?, ?, ?)';
 export const CREATE_APP_SETTINGS_TABLE =
   'CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)';
 export const SELECT_APP_SETTING =
   'SELECT value FROM app_settings WHERE key = ? LIMIT 1';
-export const DELETE_APP_SETTING = 'DELETE FROM app_settings WHERE key = ?';
-export const INSERT_APP_SETTING =
-  'INSERT INTO app_settings (key, value) VALUES (?, ?)';
+// Single-statement upsert over app_settings.key (TEXT PRIMARY KEY since F1).
+export const UPSERT_APP_SETTING =
+  'INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)';
 export const CREATE_USER_META_TABLE =
   'CREATE TABLE IF NOT EXISTS user_meta (schema_version INTEGER NOT NULL)';
 

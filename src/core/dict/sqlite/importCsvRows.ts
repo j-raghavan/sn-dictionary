@@ -31,8 +31,11 @@ export const csvFileTooLargeMessage = (byteLength: number): string =>
 
 export interface CsvImportPorts {
   // Read the CSV bytes (fetch port). null = the file vanished between
-  // discovery and import → treated as an empty import (0 entries) so the
-  // spine's verify still runs deterministically.
+  // discovery and import → produceCsvSlugDb THROWS ('csv source vanished'),
+  // so the spine fails the import (discards the build target, leaves the old
+  // DB + audit row intact) rather than producing an empty 0-row DB that would
+  // verify clean and replace a healthy slug. This matches the native StarDict
+  // importer, which also errors on a missing source.
   loadBytes(): Promise<ArrayBuffer | null>;
   // Open a WRITABLE handle to the slug DB the rows are inserted into
   // (resolved from `filename` by the host/runtime adapter).
@@ -52,38 +55,49 @@ export const produceCsvSlugDb = async (
 ): Promise<{entryCount: number}> => {
   const maxBytes = ports.maxBytes ?? CSV_MAX_BYTES;
   const buf = await ports.loadBytes();
-  // Open the slug DB even for an absent/empty file so the spine always
-  // has a DB to verify against (0 rows -> 0 expected -> verifies clean).
+  // A vanished source FAILS the import (never a silent 0-row DB): the spine
+  // discards the build target and leaves the old DB + audit row untouched.
+  if (buf === null) {
+    throw new Error('csv source vanished');
+  }
+  if (buf.byteLength > maxBytes) {
+    throw new Error(csvFileTooLargeMessage(buf.byteLength));
+  }
+  // Two-layer start-clean, by design (R3-2). The spine (runImport) discards the
+  // build target FILE before calling us — the cross-format guarantee that clears
+  // corrupt / wrong-schema leftovers a DELETE FROM can't touch. This DELETE FROM
+  // is the AUTHORITATIVE CSV ROW-level clean: it guarantees exactly the new rows
+  // even if the spine's best-effort file discard was a no-op (a NO-OP discard
+  // port, or an openable-but-dirty slot). Accepted residual: a slot that is BOTH
+  // corrupt AND persistently un-unlinkable fails verify each boot — bounded
+  // retry, old DB stays served.
   const db = await ports.openWritableSlug(filename);
   try {
-    if (buf !== null && buf.byteLength > maxBytes) {
-      throw new Error(csvFileTooLargeMessage(buf.byteLength));
-    }
     await db.run(CREATE_ENTRIES_TABLE);
 
+    const rows = await parseCsvRows(new Uint8Array(buf), config);
+    const seen = new Set<string>();
     let entryCount = 0;
-    if (buf !== null) {
-      const rows = await parseCsvRows(new Uint8Array(buf), config);
-      const seen = new Set<string>();
-      await db.transaction(async tx => {
-        for (const r of rows) {
-          const key = normalizeKey(r.word);
-          // Empty key (folds away) or duplicate (first-wins) -> skip.
-          if (key.length === 0 || seen.has(key)) {
-            continue;
-          }
-          seen.add(key);
-          await tx.run(INSERT_CSV_ENTRY, [
-            key,
-            r.word,
-            r.definition,
-            'plain',
-            r.phonetic ?? null,
-          ]);
-          entryCount++;
+    await db.transaction(async tx => {
+      // Row-level start-clean (see above): clear any prior rows before inserting.
+      await tx.run('DELETE FROM entries');
+      for (const r of rows) {
+        const key = normalizeKey(r.word);
+        // Empty key (folds away) or duplicate (first-wins) -> skip.
+        if (key.length === 0 || seen.has(key)) {
+          continue;
         }
-      });
-    }
+        seen.add(key);
+        await tx.run(INSERT_CSV_ENTRY, [
+          key,
+          r.word,
+          r.definition,
+          'plain',
+          r.phonetic ?? null,
+        ]);
+        entryCount++;
+      }
+    });
 
     await db.run(CREATE_ENTRIES_INDEX);
     return {entryCount};

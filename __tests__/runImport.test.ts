@@ -6,9 +6,17 @@
 // the spine through the native produce-step.
 
 import {createSeededDb} from './_helpers/betterSqliteDb';
-import {ensureImportsTable, findImportByNameLang} from '../src/core/dict/sqlite/importAudit';
+import {
+  ensureImportsTable,
+  findImportByNameLang,
+  upsertImport,
+} from '../src/core/dict/sqlite/importAudit';
 import {runImport, type RunImportPorts} from '../src/core/dict/sqlite/runImport';
-import {CREATE_ENTRIES_TABLE, INSERT_CSV_ENTRY} from '../src/core/dict/sqlite/schema';
+import {
+  CREATE_ENTRIES_TABLE,
+  IMPORTER_VERSION,
+  INSERT_CSV_ENTRY,
+} from '../src/core/dict/sqlite/schema';
 import type {SqliteDb} from '../src/core/dict/sqlite/db';
 
 const SIDECAR = JSON.stringify({name: 'My Dict', language: 'en'});
@@ -34,6 +42,8 @@ type Opts = {
   // F4-FR9: a `.refresh` sentinel path + its (best-effort) deleter.
   refreshPath?: string;
   deleteRefreshThrows?: Error;
+  // A/B slot: build into this filename instead of resolving one (refresh).
+  targetFilename?: string;
 };
 
 type Harness = {
@@ -133,6 +143,9 @@ const makeHarness = async (opts: Opts = {}): Promise<Harness> => {
     ports.refreshPath = opts.refreshPath;
     ports.deleteRefreshSentinel = deleteRefreshSentinel;
   }
+  if (opts.targetFilename !== undefined) {
+    ports.targetFilename = opts.targetFilename;
+  }
   return {
     ports,
     produceSlugDb,
@@ -162,9 +175,128 @@ describe('runImport — happy path', () => {
       entry_count: 2,
       filename: 'my-dict.en.db',
     });
-    // Sources deleted; slug DB kept.
+    // Sources deleted; the built slug DB is retained (the spine pre-cleans the
+    // target before produce, but never discards the verified DB afterward).
     expect(h.deleteFile.mock.calls.map(c => c[0])).toEqual(['a.csv', 'a.meta.json']);
-    expect(h.discard).not.toHaveBeenCalled();
+    expect(h.slugFiles.has('my-dict.en.db')).toBe(true);
+  });
+
+  it('stamps the audit row with the current IMPORTER_VERSION', async () => {
+    const h = await makeHarness();
+    await runImport(h.ports);
+    expect(await findImportByNameLang(h.audit, 'My Dict', 'en')).toMatchObject({
+      importer_version: IMPORTER_VERSION,
+    });
+  });
+});
+
+describe('runImport — version stamp failure semantics', () => {
+  it('a FAILED produce over a seeded old row leaves version + filename untouched', async () => {
+    // Seed a stale prior row (older stamp, different filename). A failing
+    // import (produce throws BEFORE the audit write) must NOT overwrite it —
+    // the prior row is the retryable record.
+    const h = await makeHarness({produceThrows: new Error('parse boom')});
+    await upsertImport(h.audit, {
+      name: 'My Dict',
+      lang: 'en',
+      entry_count: 5,
+      imported_at: 'old',
+      filename: 'prior.en.db',
+      importer_version: 0,
+    });
+    const res = await runImport(h.ports);
+    expect(res.ok).toBe(false);
+    // The old row survives verbatim (old stamp, old filename) — nothing
+    // re-stamped, so a later successful retry is what advances the version.
+    expect(await findImportByNameLang(h.audit, 'My Dict', 'en')).toMatchObject({
+      importer_version: 0,
+      filename: 'prior.en.db',
+      imported_at: 'old',
+    });
+  });
+});
+
+describe('runImport — A/B slot targetFilename (refresh)', () => {
+  it('honors targetFilename: produce builds into it, resolveSlugCollision NOT consulted, audit records it', async () => {
+    // Seed a DIFFERENT dict already owning the natural slug name — normally
+    // resolveSlugCollision would suffix to 'my-dict-2.en.db'. With an injected
+    // target, that resolution is bypassed entirely.
+    const h = await makeHarness({targetFilename: 'my-dict.en.alt.db'});
+    await upsertImport(h.audit, {
+      name: 'Other',
+      lang: 'en',
+      entry_count: 1,
+      imported_at: 't',
+      filename: 'my-dict.en.db',
+      importer_version: IMPORTER_VERSION,
+    });
+    const res = await runImport(h.ports);
+    expect(res).toMatchObject({ok: true, filename: 'my-dict.en.alt.db'});
+    // produce received the target (not a collision-suffixed name).
+    expect(h.produceSlugDb).toHaveBeenCalledWith('my-dict.en.alt.db');
+    // The audit row records the target filename (the atomic swap pointer).
+    expect(await findImportByNameLang(h.audit, 'My Dict', 'en')).toMatchObject({
+      filename: 'my-dict.en.alt.db',
+      importer_version: IMPORTER_VERSION,
+    });
+  });
+
+  it('a failed produce discards the TARGET filename (never a prior/served file)', async () => {
+    const h = await makeHarness({
+      targetFilename: 'my-dict.en.alt.db',
+      produceThrows: new Error('parse boom'),
+    });
+    const res = await runImport(h.ports);
+    expect(res.ok).toBe(false);
+    // The discard targets the build slot — the served file is never touched.
+    expect(h.discard).toHaveBeenCalledWith('my-dict.en.alt.db');
+  });
+});
+
+describe('runImport — spine start-clean (C4)', () => {
+  it('pre-cleans the build target via discard BEFORE produce', async () => {
+    const h = await makeHarness();
+    await runImport(h.ports);
+    // discard(target) ran, and it ran BEFORE produceSlugDb (invocation order).
+    expect(h.discard).toHaveBeenCalledWith('my-dict.en.db');
+    expect(h.discard.mock.invocationCallOrder[0]).toBeLessThan(
+      h.produceSlugDb.mock.invocationCallOrder[0],
+    );
+  });
+
+  it('a discard failure is swallowed — produce still runs and the import succeeds', async () => {
+    const h = await makeHarness();
+    h.discard.mockImplementationOnce(async () => {
+      throw new Error('pre-clean unlink failed');
+    });
+    const res = await runImport(h.ports);
+    expect(res.ok).toBe(true);
+    expect(h.produceSlugDb).toHaveBeenCalledWith('my-dict.en.db');
+  });
+});
+
+describe('runImport — isCancelled (Remove-vs-refresh race, NEW-3)', () => {
+  it('cancelled just before the upsert -> discards target, NO audit row, ok:false', async () => {
+    const h = await makeHarness();
+    h.ports.isCancelled = () => true;
+    const res = await runImport(h.ports);
+    expect(res).toEqual({
+      ok: false,
+      reason: 'cancelled: dict removed during import',
+    });
+    // No audit row written (the removed dict is not resurrected)...
+    expect(await findImportByNameLang(h.audit, 'My Dict', 'en')).toBeNull();
+    // ...and the verified-but-unrecorded target was discarded.
+    expect(h.discard).toHaveBeenCalledWith('my-dict.en.db');
+    expect(h.slugFiles.has('my-dict.en.db')).toBe(false);
+  });
+
+  it('isCancelled false -> normal success (audit written)', async () => {
+    const h = await makeHarness();
+    h.ports.isCancelled = () => false;
+    const res = await runImport(h.ports);
+    expect(res.ok).toBe(true);
+    expect(await findImportByNameLang(h.audit, 'My Dict', 'en')).not.toBeNull();
   });
 });
 
@@ -219,8 +351,9 @@ describe('runImport — data safety', () => {
     const h = await makeHarness({deleteThrowsOn: 'a.csv'});
     const res = await runImport(h.ports);
     expect(res.ok).toBe(false);
-    // The slug DB is NOT discarded (committedAndAudited latch).
-    expect(h.discard).not.toHaveBeenCalled();
+    // The verified slug DB survives (committedAndAudited latch — a post-audit
+    // delete failure never discards it; the pre-clean discard ran before build).
+    expect(h.slugFiles.has('my-dict.en.db')).toBe(true);
     // The audit row survives -> next discovery self-heals the leftover source.
     expect(await findImportByNameLang(h.audit, 'My Dict', 'en')).toMatchObject({
       filename: 'my-dict.en.db',
@@ -261,7 +394,7 @@ describe('runImport — source folder cleanup (FR3)', () => {
     const res = await runImport(h.ports, {warn: jest.fn()});
     // The verified+audited import is unaffected by the folder-cleanup fail.
     expect(res).toMatchObject({ok: true, filename: 'my-dict.en.db'});
-    expect(h.discard).not.toHaveBeenCalled();
+    expect(h.slugFiles.has('my-dict.en.db')).toBe(true);
     expect(await findImportByNameLang(h.audit, 'My Dict', 'en')).toMatchObject({
       filename: 'my-dict.en.db',
     });
@@ -290,8 +423,7 @@ describe('runImport — F4 opt-in source deletion (keepSources)', () => {
       entry_count: 2,
       filename: 'my-dict.en.db',
     });
-    // ...slug DB kept (never discarded)...
-    expect(h.discard).not.toHaveBeenCalled();
+    // ...slug DB kept (the verified DB is never discarded)...
     expect(h.slugFiles.has('my-dict.en.db')).toBe(true);
     // ...and NO source deletion happened (the whole point of keep).
     expect(h.deleteFile).not.toHaveBeenCalled();

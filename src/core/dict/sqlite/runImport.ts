@@ -26,6 +26,7 @@
 import type {SqliteDb} from './db';
 import {parseSidecar, slugDbFilename} from './importSidecar';
 import {ensureImportsTable, resolveSlugCollision, upsertImport} from './importAudit';
+import {IMPORTER_VERSION} from './schema';
 
 // Lifecycle of the per-dict slug DB. produceSlugDb WRITES it; JS reopens
 // a DISTINCT handle to verify committed state and discards a failed one.
@@ -45,6 +46,14 @@ export interface RunImportPorts {
   // slug DB (`filename`) and resolve the committed entry count. Throwing
   // is a failed import (discard + leave sources).
   produceSlugDb(filename: string): Promise<{entryCount: number}>;
+  // A/B slot (refresh) override: when set, the import builds into THIS
+  // filename instead of resolving one via resolveSlugCollision. Bootstrap
+  // passes refreshTargetFilename(prior.filename) for a re-import that has a
+  // prior audit row, so the build never touches the still-serving audited
+  // file — produce writes here, verify reopens here, discard-on-failure
+  // deletes here, and upsertImport records here (the atomic swap). A fresh
+  // import (no prior row) leaves this unset and resolves as before.
+  targetFilename?: string;
   // Optional free-space probe (bytes) + the estimated bytes the import
   // needs. When BOTH are present the import is space-gated; otherwise the
   // guard is a no-op (e.g. CSV, capped at 10 MB, skips it).
@@ -82,6 +91,13 @@ export interface RunImportPorts {
   audit: SqliteDb;
   // Deterministic timestamp source (imported_at).
   now(): string;
+  // NEW-3 (Remove-vs-refresh race): checked IMMEDIATELY before the audit
+  // upsert. When it returns true, the dict was removed while this import ran —
+  // discard the build target and fail, so the upsert never re-creates the audit
+  // row the delete is tearing down. Optional (fresh callers never cancel). The
+  // check->upsert gap is one statement; the delete's own audit-DELETE runs
+  // after its flag and mops up anything that squeaks through (see call site).
+  isCancelled?(): boolean;
 }
 
 export type ImportResult =
@@ -149,13 +165,34 @@ export const runImport = async (
   // durably recorded and the catch must never discard it (data-safety).
   let committedAndAudited = false;
   try {
+    // Idempotent; bootstrap already ran this — kept so the spine is
+    // standalone-correct (any caller wiring RunImportPorts gets a valid table).
     await ensureImportsTable(ports.audit);
-    filename = await resolveSlugCollision(
-      slugDbFilename(name, lang),
-      name,
-      lang,
-      ports.audit,
-    );
+    // A refresh (prior audit row) builds into the injected sibling slot; a
+    // fresh import resolves a collision-free filename. Everything downstream
+    // (produce, verify, discard-on-failure, upsertImport) uses this ONE name,
+    // so the audited/served file is untouched until the upsert swaps to it.
+    filename =
+      ports.targetFilename ??
+      (await resolveSlugCollision(
+        slugDbFilename(name, lang),
+        name,
+        lang,
+        ports.audit,
+      ));
+
+    // Start-clean layer 1 of 2 (R3-2): the spine's cross-format FILE-level
+    // clean. Discard any stale file at the target path so produce writes into a
+    // fresh slot — this is what clears a corrupt / wrong-schema leftover that a
+    // row-level DELETE FROM can't touch. A fresh import's resolved name doesn't
+    // exist (no-op); a refresh's sibling may hold a dead generation. Best-effort:
+    // a discard failure isn't fatal because each produce step ALSO does its own
+    // authoritative row-level clean (CSV: DELETE FROM; StarDict: File.delete()).
+    try {
+      await ports.slugDb.discard(filename);
+    } catch {
+      // Best-effort pre-clean; the produce step's own start-clean still runs.
+    }
 
     const {entryCount} = await ports.produceSlugDb(filename);
 
@@ -176,18 +213,37 @@ export const runImport = async (
       };
     }
 
+    // NEW-3: last-moment cancellation. If the dict was Removed while this
+    // import ran, DON'T write the audit row (that would resurrect a row the
+    // delete is tearing down) — discard the verified-but-unrecorded target and
+    // fail. The residual micro-window is tiny and self-healing: this check and
+    // the upsert are effectively adjacent (one statement), whereas Remove sets
+    // its flag and then spends the whole file-deletion sequence before its own
+    // audit-DELETE — so an upsert that squeaks past the flag is still mopped up
+    // by that later DELETE. No compensating post-upsert path is needed.
+    if (ports.isCancelled?.() === true) {
+      await ports.slugDb.discard(filename);
+      return {ok: false, reason: 'cancelled: dict removed during import'};
+    }
+
     // 5. MATCH — AUDIT THEN DELETE (data-safety ordering). The audit row
     //    is the only durable record of the verified slug DB; write it
     //    FIRST so a failure here can still discard the (not-yet-recorded)
     //    DB and leave the sources for a clean retry. Only AFTER the audit
     //    commits do we delete the sources — and from that point a failure
     //    must NOT discard the DB.
+    // The SINGLE stamp-write site for BOTH StarDict and CSV: record the
+    // pipeline version that produced this slug DB so bootstrap can detect a
+    // stale one built by an older importer and re-import it. Failure
+    // semantics are automatic — any failure above returns before this line,
+    // so the prior audit row (with its OLD stamp) is left untouched.
     await upsertImport(ports.audit, {
       name,
       lang,
       entry_count: expected,
       imported_at: ports.now(),
       filename,
+      importer_version: IMPORTER_VERSION,
     });
     committedAndAudited = true;
 

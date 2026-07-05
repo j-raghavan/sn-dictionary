@@ -27,14 +27,14 @@ const wrap = (db: RawDb): SqliteDb => ({
     return {changes: Number(info.changes)};
   },
   async transaction(fn: (tx: SqliteDb) => Promise<void>): Promise<void> {
-    db.exec('BEGIN');
-    try {
-      await fn(wrap(db));
-      db.exec('COMMIT');
-    } catch (e) {
-      db.exec('ROLLBACK');
-      throw e;
-    }
+    // DEVICE-FAITHFUL: react-native-sqlite-storage autocommits every statement
+    // independently on its single connection — no multi-statement BEGIN/COMMIT
+    // survives across awaits. So this fake runs the body sequentially with NO
+    // BEGIN/COMMIT/ROLLBACK: statements commit as they execute, and a
+    // mid-transaction failure does NOT roll back earlier ones. Code that needs
+    // atomicity must achieve it in a SINGLE statement (e.g. upsertImport's
+    // INSERT OR REPLACE), never by relying on transactional rollback.
+    await fn(wrap(db));
   },
   async close(): Promise<void> {
     db.close();

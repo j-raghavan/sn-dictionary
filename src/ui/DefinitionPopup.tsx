@@ -1,14 +1,24 @@
 import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
-import {Pressable, ScrollView, Text, TextInput, View} from 'react-native';
+import {
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 import {PluginManager} from 'sn-plugin-lib';
 import {
+  closeSettings,
   getCurrentState,
   getPopupActions,
   hideDefinition,
+  shouldDismissOnBackdropTap,
   showSettings,
   subscribe,
   type PopupState,
 } from './popupController';
+import {getPenToolObserver} from '../native/penToolObserver';
 import SettingsPanel from './SettingsPanel';
 import {SourceSection} from './SourceSection';
 import {popupStyles as styles} from './popupStyles';
@@ -115,6 +125,17 @@ export default function DefinitionPopup(): React.JSX.Element {
   // of truth; `thesaurus` state only drives rendering.
   const fetchedHeadwordRef = useRef<string | null>(null);
 
+  // #32 — the last backdrop-layer ACTION_DOWN as a STAMPED reading
+  // {tool, at}, populated by the native observer's onToolDown. Ordering:
+  // toolDown fires at ACTION_DOWN, ahead of the backdrop Pressable's
+  // onPress (which fires after ACTION_UP) on Paper's FIFO event queue, so
+  // the ref is set before onPress reads it; if the native signal never
+  // arrives it stays null and shouldDismissOnBackdropTap fails safe (no
+  // close). The `at` timestamp is what makes a STALE reading fail safe:
+  // the recency gate rejects an old tool value left over from an earlier
+  // gesture. It is also a ONE-SHOT: cleared after every press.
+  const lastToolTypeRef = useRef<{tool: string; at: number} | null>(null);
+
   // A new headword resets to the Definition tab and drops any cached
   // thesaurus (single-fetch is per-headword). EXCEPT when the result was
   // restored from Settings (Back) carrying an activeTab — then honour it
@@ -198,6 +219,44 @@ export default function DefinitionPopup(): React.JSX.Element {
       /* ignore — overlay is going away regardless */
     });
   }, []);
+
+  // #32 — the pen-only tap-outside-to-close layer. It sits UNDER the card
+  // (rendered as the backdrop's first child) so the card occludes it for
+  // inside-card taps; only taps that land OUTSIDE the card reach it. The
+  // native observer reports the tool type via onToolDown WITHOUT stealing
+  // the touch, and the Pressable's onPress runs the caller's `onDismiss`
+  // ONLY for a recent stylus (shouldDismissOnBackdropTap). Parametrised on
+  // `onDismiss` so each branch supplies its own non-destructive dismiss:
+  // the result view closes (handleClose), the Settings panel goes Back
+  // (closeSettings). Returns null off-device (no native component) → no
+  // layer, existing behaviour unchanged. This is a SECOND, additive
+  // dismiss path — the top-right Close/Back buttons are untouched.
+  function renderDismissLayer(
+    onDismiss: () => void,
+  ): React.JSX.Element | null {
+    const PenToolObserver = getPenToolObserver();
+    if (PenToolObserver === null) {
+      return null;
+    }
+    return (
+      <PenToolObserver
+        style={StyleSheet.absoluteFill}
+        onToolDown={e => {
+          lastToolTypeRef.current = {tool: e.nativeEvent.toolType, at: Date.now()};
+        }}
+        importantForAccessibility="no-hide-descendants">
+        <Pressable
+          style={styles.dismissLayer}
+          onPress={() => {
+            if (shouldDismissOnBackdropTap(lastToolTypeRef.current, Date.now())) {
+              onDismiss();
+            }
+            lastToolTypeRef.current = null;
+          }}
+        />
+      </PenToolObserver>
+    );
+  }
 
   const handleSmaller = useCallback(
     () => setFontSize(s => stepDown(s)),
@@ -318,6 +377,7 @@ export default function DefinitionPopup(): React.JSX.Element {
     // stashed result via closeSettings).
     return (
       <View style={styles.backdrop}>
+        {renderDismissLayer(closeSettings)}
         <SettingsPanel resume={state.resume} />
       </View>
     );
@@ -385,6 +445,7 @@ export default function DefinitionPopup(): React.JSX.Element {
 
   return (
     <View style={styles.backdrop}>
+      {renderDismissLayer(handleClose)}
       <View style={styles.card}>
         <View style={styles.headerRow}>
           <Text style={[styles.word, styles.headerWordWrap]} numberOfLines={1}>

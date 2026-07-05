@@ -153,14 +153,22 @@ describe('produceCsvSlugDb', () => {
     ).rejects.toThrow(csvFileTooLargeMessage(11 * 1024 * 1024));
   });
 
-  it('an absent file produces an empty (0-entry) slug DB, not a crash', async () => {
-    const {ports, dbPath} = portsFor(null);
-    const {entryCount} = await produceCsvSlugDb(ports, DEFAULTS, 'gone.en.db');
-    expect(entryCount).toBe(0);
-    // The entries table still exists (verify can COUNT it -> 0).
-    const db = await reopen(dbPath);
-    const rows = await db!.query<{n: number}>('SELECT COUNT(*) AS n FROM entries');
-    await db!.close();
-    expect(rows[0].n).toBe(0);
+  it('a vanished source (loadBytes null) THROWS — never a silent 0-row DB', async () => {
+    // A/B slots + aligned host/device semantics: a missing source FAILS the
+    // import so the spine discards the build target and leaves the served DB +
+    // audit row intact, rather than producing an empty DB that verifies clean
+    // and would replace a healthy slug.
+    const {ports} = portsFor(null);
+    await expect(
+      produceCsvSlugDb(ports, DEFAULTS, 'gone.en.db'),
+    ).rejects.toThrow('csv source vanished');
   });
 });
+
+// NOTE: start-clean is TWO layers (R3-2). produceCsvSlugDb owns the
+// AUTHORITATIVE row-level clean (its DELETE FROM, reinstated); the spine
+// (runImport) owns the cross-format FILE-level clean (discard, for corrupt /
+// wrong-schema leftovers). The stronger, end-to-end dirty-slot verification —
+// a dirty-but-openable slot with a NO-OP file discard verifying clean in ONE
+// pass — lives at spine level: see csvImportE2E.test.ts "spine start-clean: a
+// DIRTY-but-openable slot verifies clean in ONE pass with a NO-OP discard".

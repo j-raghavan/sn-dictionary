@@ -13,6 +13,10 @@ export const popupStyles = StyleSheet.create({
     justifyContent: 'center',
     padding: 24,
   },
+  // #32 — the transparent pen-only tap-outside-to-close layer. Fills the
+  // backdrop UNDER the card (rendered as the backdrop's first child), so
+  // the card occludes it for inside-card taps and only outside taps land.
+  dismissLayer: {flex: 1},
   card: {
     // FIXED width (not min/max) so the popup is the SAME size on every tab and
     // state. With a min/max range the card sized to its content, so switching

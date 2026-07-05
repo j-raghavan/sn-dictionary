@@ -13,15 +13,18 @@ import type {DictLookup, DictSource} from '../../lookup';
 import {createMultiDictLookup} from '../multiDictLookup';
 import {createSqliteDictSource} from './sqliteDictSource';
 import type {OpenSqliteDb, SqliteDb} from './db';
+import {runAdditiveColumnMigration} from './db';
 import type {ProvisionPorts} from './provision';
 import {provisionBaseDb} from './provision';
 import {
   CREATE_USER_ENTRIES_TABLE,
   CREATE_USER_ENTRIES_INDEX,
   ALTER_USER_ENTRIES_ADD_PHONETIC,
+  isStaleImport,
   SELECT_IMPORT_ALL,
   type ImportRow,
 } from './schema';
+import {refreshTargetFilename, slugForName} from './importSidecar';
 import {ensureImportsTable} from './importAudit';
 import {
   ensureSettingsTables,
@@ -39,72 +42,29 @@ import {
 import {removeImport} from './importAudit';
 import {runImport, type RunImportPorts} from './runImport';
 import type {ImportJobDescriptor} from '../userDictDiscovery';
+// C5 — the PURE reconcile layer now lives in reconcile.ts. Imported here for
+// bootstrap's own use AND re-exported below so existing importers/tests that
+// reference these off bootstrap.ts keep working unchanged (zero behaviour change).
+import {
+  deriveLiveSources,
+  dictPrefKey,
+  identityKey,
+  reconcileImports,
+  sourcePathsOf,
+  type ReconcileItem,
+  type ReconcileOpts,
+} from './reconcile';
+
+export {
+  deriveLiveSources,
+  dictPrefKey,
+  identityKey,
+  reconcileImports,
+  sourcePathsOf,
+};
+export type {ReconcileItem, ReconcileOpts};
 
 type Logger = {warn: (msg: string) => void; log?: (msg: string) => void};
-
-// --- reconcileImports (PURE) ----------------------------------------
-// Decide, from the descriptors found on disk and the audit rows in
-// user.db, what to do with each. Pure — NO file-existence probe inside
-// the function (review fix 6 / F4-FR3): the slug-DB health probe runs in
-// bootstrap, which passes the precomputed `slugHealthy` Set + `keepSources`
-// flag. A missing/corrupt slug DB without an audit hit is still not a
-// bucket here; the lazy source handles it as 'absent'/'failed' (Designer
-// ruling 1).
-//
-//   'import' — a descriptor to (re)import. NEW (no audit hit) or RE-ADD
-//              (audit hit -> the prior slug is overwritten in place, since
-//              resolveSlugCollision returns the same filename for the same
-//              (name, lang) and upsertImport replaces the audit row).
-//   'open'   — an audit row with no matching descriptor on disk
-//              (already imported; just open its slug DB), OR — F4-FR3 — an
-//              audit-hit descriptor whose sources were KEPT and whose slug
-//              DB is healthy (skip the re-import; the kept-source loop is
-//              broken here).
-//   'skip'   — a duplicate (name, lang) descriptor (first wins as
-//              'import', the rest skip — Designer flag 1).
-
-export type ReconcileItem =
-  | {bucket: 'import'; descriptor: ImportJobDescriptor}
-  | {bucket: 'open'; row: ImportRow}
-  | {bucket: 'skip'; reason: string; descriptor?: ImportJobDescriptor};
-
-// Precomputed (I/O-free) inputs to keep reconcileImports pure (F4-FR3 /
-// review fix 6). `keepSources` is the resolved keepSourcesAfterImport flag;
-// `slugHealthy` is the set of audit `filename`s whose slug DB bootstrap
-// has verified exists+opens. When keep=false (or the flag is unset and a
-// caller passes false), the legacy RE-ADD-on-re-drop behaviour holds.
-export type ReconcileOpts = {
-  keepSources: boolean;
-  slugHealthy: Set<string>;
-};
-
-// Composite (name, lang) identity, used as the dict_prefs PRIMARY KEY for
-// imported sources. The separator must be a byte that can't occur in a real
-// dict name or language code (so "ab"+"c" never collides with "a"+"bc") AND
-// must survive being stored as SQLite TEXT through the native bridge. NUL
-// (\u0000) satisfies the first but FAILS the second: on-device,
-// react-native-sqlite-storage stores TEXT with C-string semantics, so an
-// embedded NUL TRUNCATES the value at the separator — "Dune\u0000und" was
-// persisted as just "Dune". The live source recomputes the FULL key on the
-// next open, so the truncated stored row never matches back, mergeDictPrefs
-// falls through to its enabled-by-default branch, and every imported dict's
-// saved enable/order silently reverts on reopen (the "settings not saved" bug
-// — confirmed in the on-device [settings] logs, themselves cut off at the NUL).
-// \u001f (ASCII Unit Separator) is just as absent from names/lang codes but is
-// an ordinary byte that round-trips through TEXT untouched.
-export const identityKey = (name: string, lang: string): string =>
-  `${name}\u001f${lang}`;
-
-// dict_prefs primary key for a source (resolution #6 / F3): an IMPORTED
-// dict keys on its audit identity (identityKey(name,lang)) so two dicts
-// sharing a display name in different languages get distinct prefs; the
-// built-in base (WordNet) and User sources have no language ambiguity, so
-// their bare name is the key (matching how sourceLang special-cases them).
-export const dictPrefKey = (
-  name: string,
-  lang: string,
-  removable: boolean,
-): string => (removable ? identityKey(name, lang) : name);
 
 // F7 — per imported (removable) source, the bookkeeping deleteImportedDict
 // needs beyond the dict_prefs identity: the OPEN slug `SqliteDb` handle (so
@@ -120,146 +80,6 @@ export type ImportedSourceRecord = {
   lang: string;
   filename: string;
   handle: SqliteDb | null;
-};
-
-// F7 — the on-disk source files + optional containing folder for one
-// discovered descriptor, exactly the set runImport would have deleted
-// (StarDict: ifo/idx/dict/syn + sidecar, then rmdir the setPath folder;
-// CSV: the loose .csv + its per-file sidecar, no folder). PURE: maps a
-// descriptor to paths; the caller does the I/O. `forceRefresh`/`refresh`
-// sentinels are NOT included (they self-clean on the next import).
-export const sourcePathsOf = (
-  d: ImportJobDescriptor,
-): {files: string[]; folder?: string} => {
-  if (d.kind === 'csv') {
-    const files = [d.csvPath];
-    if (d.sidecarPath !== undefined) {
-      files.push(d.sidecarPath);
-    }
-    return {files};
-  }
-  const files = [d.ifoPath, d.idxPath, d.dictPath];
-  if (d.synPath !== undefined) {
-    files.push(d.synPath);
-  }
-  if (d.sidecarPath !== undefined) {
-    files.push(d.sidecarPath);
-  }
-  return {files, folder: d.setPath};
-};
-
-export const reconcileImports = (
-  descriptors: ImportJobDescriptor[],
-  auditRows: ImportRow[],
-  opts: ReconcileOpts,
-): ReconcileItem[] => {
-  const auditByKey = new Map<string, ImportRow>();
-  for (const row of auditRows) {
-    auditByKey.set(identityKey(row.name, row.lang), row);
-  }
-
-  const items: ReconcileItem[] = [];
-  const seen = new Set<string>();
-  // Keys whose audit row is already consumed by a descriptor (as an
-  // 'import' RE-ADD or a kept 'open') so the trailing audit-only pass
-  // doesn't double-open them.
-  const consumedKeys = new Set<string>();
-
-  // Descriptors first: NEW + RE-ADD become 'import'; duplicates skip.
-  for (const descriptor of descriptors) {
-    const {name, language: lang} = descriptor.sidecar;
-    const key = identityKey(name, lang);
-    if (seen.has(key)) {
-      items.push({
-        bucket: 'skip',
-        reason: 'duplicate name+lang on disk',
-        descriptor,
-      });
-      continue;
-    }
-    seen.add(key);
-    consumedKeys.add(key);
-    const prior = auditByKey.get(key);
-    if (prior === undefined) {
-      // NEW dict (no audit hit) -> always import.
-      items.push({bucket: 'import', descriptor});
-      continue;
-    }
-    // F4-FR3: an audit-hit descriptor whose sources were KEPT and whose
-    // slug DB is healthy is "done" — 'open' the existing slug, skip the
-    // re-import (this is what breaks the kept-source re-import loop). A
-    // `.refresh` sentinel (forceRefresh) overrides this back to RE-ADD
-    // (F4-FR9), as does keep=false or an unhealthy slug.
-    const forceRefresh =
-      descriptor.kind === 'stardict' || descriptor.kind === 'csv'
-        ? descriptor.forceRefresh === true
-        : false;
-    if (
-      opts.keepSources &&
-      opts.slugHealthy.has(prior.filename) &&
-      !forceRefresh
-    ) {
-      items.push({bucket: 'open', row: prior});
-    } else {
-      // RE-ADD: re-import in place — resolveSlugCollision yields the same
-      // slug filename for the same (name, lang) and upsertImport overwrites
-      // the audit row, so no prior-filename bookkeeping is needed.
-      items.push({bucket: 'import', descriptor});
-    }
-  }
-
-  // Audit rows with no descriptor on disk -> 'open' the existing slug.
-  for (const row of auditRows) {
-    const key = identityKey(row.name, row.lang);
-    if (!consumedKeys.has(key)) {
-      items.push({bucket: 'open', row});
-    }
-  }
-
-  return items;
-};
-
-// --- live `sources` derivation (F3) ---------------------------------
-//
-// The live `sources` array (the one multiDictLookup snapshots per
-// lookup) is DERIVED from `allSources` (the full opened registry) by
-// applying dict_prefs: keep only enabled sources, ordered by sort_order.
-// `identities` resolves each source's prefKey/removable (base/User vs
-// imported). Recomputed IN PLACE (clear + push) so the array reference
-// the lookup closed over stays valid — a disabled source leaves
-// `sources` but stays in `allSources`, so re-enabling needs no reopen.
-//
-// PURE save for the in-place mutation of `live`: given the same inputs it
-// always produces the same ordered enabled set. Sources absent from
-// `identities` (defensive) are treated as enabled at their natural index.
-export const deriveLiveSources = (
-  live: DictSource[],
-  allSources: DictSource[],
-  identities: Map<DictSource, DictSourceIdentity>,
-  persisted: DictPref[],
-): void => {
-  const identityList: DictSourceIdentity[] = allSources.map(
-    source =>
-      identities.get(source) ?? {
-        name: source.name,
-        prefKey: source.name,
-        removable: false,
-      },
-  );
-  const merged = mergeDictPrefs(identityList, persisted);
-  const sourceByKey = new Map<string, DictSource>();
-  allSources.forEach((source, index) => {
-    sourceByKey.set(identityList[index].prefKey, source);
-  });
-  const next: DictSource[] = [];
-  for (const pref of merged) {
-    const source = sourceByKey.get(pref.prefKey);
-    if (source && pref.enabled) {
-      next.push(source);
-    }
-  }
-  live.length = 0;
-  live.push(...next);
 };
 
 // --- bootstrap ------------------------------------------------------
@@ -285,6 +105,23 @@ export interface DeletePorts {
   deleteFile(path: string): Promise<void>;
   deleteFolder(path: string): Promise<boolean>;
 }
+
+// C3 — best-effort unlink of ONE slug slot (resolve path + delete + swallow).
+// ONE definition, two callers: deleteImportedDict awaits it for BOTH A/B slots
+// (base + sibling), and the step-5 sweep fires it un-awaited. Returns true iff
+// the file was actually deleted (deleteImportedDict uses that for removed.slugDb;
+// the sweep ignores it).
+const unlinkSlugSlot = async (
+  del: DeletePorts,
+  filename: string,
+): Promise<boolean> => {
+  try {
+    await del.deleteFile(del.resolveSlugPath(filename));
+    return true;
+  } catch {
+    return false;
+  }
+};
 
 export interface BootstrapPorts {
   provision: ProvisionPorts;
@@ -405,6 +242,13 @@ export const bootstrap = async (
   ports: BootstrapPorts,
   logger?: Logger,
 ): Promise<RuntimeHandle> => {
+  // NEW-3 (Remove-vs-refresh race): identity keys the user Removed THIS session.
+  // deleteImportedDict adds a key as its FIRST action (before any splice); each
+  // dispatched import's isCancelled port reads this set immediately before its
+  // audit upsert, so a Remove concurrent with a refresh cancels the upsert and
+  // the removed dict never resurrects.
+  const removedKeys = new Set<string>();
+
   // 1. Provision base.db. A provision failure REJECTS bootstrap and the
   //    buttons are NEVER enabled (Designer ruling 4 / flag 4). base.db is
   //    bundled in the .snplg + host-extracted; provision opens + verifies
@@ -439,18 +283,12 @@ export const bootstrap = async (
     await userDb.run(CREATE_USER_ENTRIES_TABLE);
     await userDb.run(CREATE_USER_ENTRIES_INDEX);
     // v3 additive migration (M17-FR2): CREATE ... IF NOT EXISTS does NOT
-    // alter an EXISTING (pre-v3) user.db, so an old 6-col table would
-    // still lack `phonetic` and the v3 SELECT would throw "no such
-    // column" on every lookup. ALTER it in; on a fresh 7-col table SQLite
-    // raises "duplicate column name" which we swallow (idempotent).
-    try {
-      await userDb.run(ALTER_USER_ENTRIES_ADD_PHONETIC);
-    } catch (e) {
-      const msg = (e as Error).message;
-      if (!/duplicate column name/i.test(msg)) {
-        throw e;
-      }
-    }
+    // alter an EXISTING (pre-v3) user.db, so an old 6-col table would still
+    // lack `phonetic` and the v3 SELECT would throw "no such column" on
+    // every lookup. runAdditiveColumnMigration ALTERs it in, swallowing the
+    // idempotent "duplicate column name" on a fresh 7-col table and rethrowing
+    // any real failure (shared with ensureImportsTable's own migration).
+    await runAdditiveColumnMigration(userDb, ALTER_USER_ENTRIES_ADD_PHONETIC);
     await ensureImportsTable(userDb);
     // Settings-Panel preference tables (F1, ADR-0009). Additive +
     // idempotent like the imports table; a throw here degrades user.db
@@ -495,10 +333,14 @@ export const bootstrap = async (
     const flagSet = await hasKeepSourcesSetting(userDb);
     if (!flagSet && ports.promptKeepDelete !== undefined) {
       // Would any descriptor import under the current (default keep) rule?
+      // EXCLUDE refresh-in-place rebuilds: a pure version-bump upgrade of an
+      // already-imported dict must not trigger the keep/delete prompt (the
+      // sources are staying either way). A genuinely NEW / re-dropped /
+      // unhealthy import still counts.
       const wouldImport = reconcileImports(descriptors, auditRows, {
         keepSources,
         slugHealthy,
-      }).some(i => i.bucket === 'import');
+      }).some(i => i.bucket === 'import' && i.refreshInPlace !== true);
       if (wouldImport) {
         try {
           keepSources = await ports.promptKeepDelete();
@@ -537,8 +379,33 @@ export const bootstrap = async (
     filename: string;
     handle: SqliteDb | null;
   }[] = [];
+  // Identities that have a refresh-in-place rebuild dispatched this boot (step
+  // 7). A stale 'open' row for one of these is AUTO-healing, so it must NOT
+  // draw the "re-drop / Remove + re-add" warning — only a stale AUDIT-ONLY row
+  // (no descriptor, nothing rebuilding it) does.
+  const refreshingKeys = new Set(
+    reconciled
+      .filter(
+        (i): i is Extract<ReconcileItem, {bucket: 'import'}> =>
+          i.bucket === 'import' && i.refreshInPlace === true,
+      )
+      .map(i => identityKey(i.descriptor.sidecar.name, i.descriptor.sidecar.language)),
+  );
   for (const item of reconciled) {
     if (item.bucket === 'open') {
+      // A stale AUDIT-ONLY row (sources gone, nothing rebuilding it) is served
+      // as-is — its content is behind the current pipeline (e.g. raw HTML
+      // tags). Warn so the user knows to re-drop the sources or Remove +
+      // re-add the dict to refresh it. (A stale row that IS being refreshed
+      // this boot heals on its own next launch, so it stays silent.)
+      if (
+        isStaleImport(item.row) &&
+        !refreshingKeys.has(identityKey(item.row.name, item.row.lang))
+      ) {
+        logger?.warn(
+          `[bootstrap] serving old DB for "${item.row.name}" (${item.row.lang}): built by an older importer — re-drop its sources or Remove + re-add to refresh`,
+        );
+      }
       let handle: SqliteDb | null = null;
       try {
         handle = await ports.db.openImportedDb(item.row.filename)();
@@ -546,6 +413,31 @@ export const bootstrap = async (
         logger?.warn(
           `[bootstrap] open imported "${item.row.name}" (${item.row.filename}) threw: ${(e as Error).message} — source stays lazy`,
         );
+      }
+      // A/B slot sweep (C2): the audit points at this filename, so its sibling
+      // slot is dead by definition — FIRE-AND-FORGET unlink it (an old
+      // generation or a prior refresh left it behind). SKIPPED for an identity
+      // being refreshed this boot: the ONLY other writer of that sibling is that
+      // refresh's build for the SAME identity, which owns the slot via the spine
+      // pre-clean — so excluding refreshing keys makes the un-awaited unlink
+      // race-free. With no delete port, at most one dead sibling per dict
+      // lingers until the next refresh overwrites it — acceptable.
+      //
+      // PLAUSIBLE-5 (reload mid-refresh cannot serve a corrupt DB): (1) serving
+      // follows the audit filename, which repoints only AFTER a fresh verify of
+      // the build target; (2) this unlink/start-clean isolates any orphaned old
+      // writer onto an unlinked inode — invisible at the path, and its JS
+      // continuation died with the old context so it can never upsert; (3) worst
+      // case is a half-built target that fails the next verify or is
+      // start-cleaned before the next build, i.e. a retry next boot.
+      if (
+        handle !== null &&
+        ports.delete !== undefined &&
+        !refreshingKeys.has(identityKey(item.row.name, item.row.lang))
+      ) {
+        // Fire-and-forget: unlinkSlugSlot never rejects (swallows internally),
+        // so the un-awaited promise is safe to drop.
+        unlinkSlugSlot(ports.delete, refreshTargetFilename(item.row.filename));
       }
       const openDb =
         handle !== null
@@ -641,18 +533,56 @@ export const bootstrap = async (
         i.bucket === 'import',
     );
     const audit = userDb;
-    importsSettled = Promise.all(
-      toImport.map(async item => {
-        try {
-          // Format-agnostic: importPortsFor wires the kind-appropriate
-          // produceSlugDb; runImport drives the shared spine for both.
-          // keepSources (F4) gates the delete step inside runImport.
-          const result = await runImport(
-            ports.importPortsFor(item.descriptor, audit, keepSources),
-            logger,
+    // R3-0: the per-item dispatch body, extracted so same-stem imports can be
+    // serialized (below) instead of racing resolveSlugCollision.
+    const dispatchOne = async (
+      item: Extract<ReconcileItem, {bucket: 'import'}>,
+    ): Promise<void> => {
+      try {
+        // Format-agnostic: importPortsFor wires the kind-appropriate
+        // produceSlugDb; runImport drives the shared spine for both.
+        // keepSources (F4) gates the delete step inside runImport — BUT a
+        // refresh-in-place rebuild ALWAYS keeps its sources: deleting the
+        // sources of a version-bump refresh would permanently foreclose all
+        // future healing (belt-and-braces beside the wouldImport exclusion).
+        const keep = item.refreshInPlace === true ? true : keepSources;
+        const runPorts = ports.importPortsFor(item.descriptor, audit, keep);
+        // A re-import with a prior audit row builds into the A/B sibling slot
+        // (never the still-serving audited file); a fresh import leaves this
+        // unset and resolves its own collision-free name.
+        if (item.prior !== undefined) {
+          runPorts.targetFilename = refreshTargetFilename(item.prior.filename);
+        }
+        // NEW-3: cancel the audit upsert if the user Removes this dict while
+        // the import is in flight — so a Remove during a refresh doesn't get
+        // resurrected by a late upsert.
+        runPorts.isCancelled = () =>
+          removedKeys.has(
+            identityKey(item.descriptor.sidecar.name, item.descriptor.sidecar.language),
           );
-          if (result.ok) {
-            const lang = item.descriptor.sidecar.language;
+        const result = await runImport(runPorts, logger);
+        if (result.ok) {
+          const lang = item.descriptor.sidecar.language;
+          if (item.refreshInPlace === true) {
+            // The dict is ALREADY registered (paired 'open' at boot) and
+            // served from the OLD slug all session. runImport has repointed +
+            // restamped the audit row to the sibling; the NEW content serves
+            // from the NEXT bootstrap (bounded 2-boot convergence). Do NOT
+            // splice a second source — that would double-register the dict
+            // and double the lookup fan-out. Just repoint the live F7 record
+            // to the sibling so a same-session Remove unlinks the file the
+            // audit now names.
+            const prefKey = dictPrefKey(result.name, lang, true);
+            for (const record of imported.values()) {
+              if (record.prefKey === prefKey) {
+                record.filename = result.filename;
+                break;
+              }
+            }
+            logger?.log?.(
+              `[bootstrap] refreshed "${result.name}" (${lang}) into ${result.filename} — new content serves next launch`,
+            );
+          } else {
             // EAGER-open the slug handle (as the 'open' bucket does) so F7
             // can close() it before unlinking; an absent/failed open keeps
             // the source lazy (handle null — nothing to close).
@@ -697,15 +627,46 @@ export const bootstrap = async (
             // Register the new source's language LIVE so its thesaurus
             // resolves this session (no reload). Same object index.js reads.
             sourceLang[result.name] = lang;
-          } else {
-            logger?.warn(
-              `[bootstrap] import "${item.descriptor.sidecar.name}" failed: ${result.reason}`,
-            );
           }
-        } catch (e) {
+        } else {
           logger?.warn(
-            `[bootstrap] import "${item.descriptor.sidecar.name}" threw: ${(e as Error).message}`,
+            `[bootstrap] import "${item.descriptor.sidecar.name}" failed: ${result.reason}`,
           );
+        }
+      } catch (e) {
+        logger?.warn(
+          `[bootstrap] import "${item.descriptor.sidecar.name}" threw: ${(e as Error).message}`,
+        );
+      }
+    };
+
+    // R3-0: group items whose descriptors would resolve to the SAME prospective
+    // slug stem AND lang, and run each group SEQUENTIALLY. The stem key mirrors
+    // slugDbFilename's empty-slug fallback (`dict-<lang>`) so two all-symbol
+    // names ("Foo!"/"Foo?" -> "foo", or two unslugables) also serialize. Without
+    // this, two concurrent FRESH same-stem imports both resolveSlugCollision to
+    // the base filename before either writes its audit row -> collision. Distinct
+    // stems still run fully concurrently. Items carrying `prior` group by stem
+    // too (harmless extra serialization — their build target is already the
+    // sibling, but grouping is keyed only on the prospective stem).
+    const groups = new Map<
+      string,
+      Array<Extract<ReconcileItem, {bucket: 'import'}>>
+    >();
+    for (const item of toImport) {
+      const {name, language: lang} = item.descriptor.sidecar;
+      const groupKey = `${slugForName(name) || `dict-${lang}`}|${lang}`;
+      const existing = groups.get(groupKey);
+      if (existing === undefined) {
+        groups.set(groupKey, [item]);
+      } else {
+        existing.push(item);
+      }
+    }
+    importsSettled = Promise.all(
+      [...groups.values()].map(async group => {
+        for (const item of group) {
+          await dispatchOne(item);
         }
       }),
     ).then(() => undefined);
@@ -754,6 +715,11 @@ export const bootstrap = async (
   const deleteImportedDict = async (
     prefKey: string,
   ): Promise<DeleteResult> => {
+    // NEW-3: FIRST action — flag this identity as removed so any in-flight
+    // refresh import for it cancels its audit upsert (isCancelled) rather than
+    // resurrecting the row we are about to drop. Set before the splice and
+    // before the base/User reject (harmless for a non-importing key).
+    removedKeys.add(prefKey);
     const removed = {slugDb: false, audit: false, pref: false, sources: false};
     // F7-AC3: set true ONLY when a source descriptor matched on disk but a file
     // couldn't be deleted (resurrection risk → warn). Stays false when there
@@ -848,14 +814,17 @@ export const bootstrap = async (
       }
     }
     if (ports.delete !== undefined && filename !== null) {
-      try {
-        await ports.delete.deleteFile(ports.delete.resolveSlugPath(filename));
-        removed.slugDb = true;
-      } catch (e) {
+      // (3) Unlink BOTH A/B slots (C3, awaited): the audited file AND its
+      //     sibling — a refresh this session may have left the old slot on disk
+      //     (audit points at the new one), so neither must survive a Remove.
+      //     removed.slugDb reflects the AUDITED slot's unlink.
+      removed.slugDb = await unlinkSlugSlot(ports.delete, filename);
+      if (!removed.slugDb) {
         logger?.warn(
-          `[bootstrap] delete slug file "${filename}" threw: ${(e as Error).message} — left on disk`,
+          `[bootstrap] delete slug file "${filename}" failed — left on disk`,
         );
       }
+      await unlinkSlugSlot(ports.delete, refreshTargetFilename(filename));
     }
 
     // (4) Remove the leftover on-disk source set so discovery can't

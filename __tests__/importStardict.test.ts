@@ -17,6 +17,7 @@ import {
 } from '../src/core/dict/sqlite/importStardict';
 import {
   CREATE_ENTRIES_TABLE,
+  IMPORTER_VERSION,
   SELECT_ENTRY_BY_KEY,
 } from '../src/core/dict/sqlite/schema';
 import type {SqliteDb} from '../src/core/dict/sqlite/db';
@@ -224,6 +225,7 @@ describe('importStardict — happy path', () => {
       entry_count: 2,
       imported_at: '2026-06-07T00:00:00Z',
       filename: 'my-dict.en.db',
+      importer_version: IMPORTER_VERSION,
     });
   });
 
@@ -375,14 +377,20 @@ describe('importStardict — sametypesequence-absent body/format (issue #28)', (
 
 describe('importStardict — audit-then-delete data safety', () => {
   it('audit write fails AFTER verify -> slug DB discarded, sources RETAINED', async () => {
+    // upsertImport is now a single INSERT OR REPLACE run() (no transaction);
+    // intercept THAT statement to fail the audit write after verify.
     const h = await makeHarness();
+    const realRun = h.audit.run.bind(h.audit);
     h.ports.audit = {
       ...h.audit,
       query: h.audit.query.bind(h.audit),
-      run: h.audit.run.bind(h.audit),
-      transaction: async () => {
-        throw new Error('audit db locked');
+      run: async (sql: string, params?: unknown[]) => {
+        if (/INSERT OR REPLACE INTO imports/i.test(sql)) {
+          throw new Error('audit db locked');
+        }
+        return realRun(sql, params as never);
       },
+      transaction: h.audit.transaction.bind(h.audit),
       close: h.audit.close.bind(h.audit),
     };
     const res = await importStardict(h.ports);
@@ -394,7 +402,7 @@ describe('importStardict — audit-then-delete data safety', () => {
     expect(h.discard).toHaveBeenCalledWith('my-dict.en.db');
   });
 
-  it('delete fails AFTER audit -> audit row PRESENT + slug DB NOT discarded', async () => {
+  it('delete fails AFTER audit -> audit row PRESENT + slug DB retained', async () => {
     const h = await makeHarness();
     h.deleteFile.mockImplementation(async () => {
       throw new Error('deleteFile: permission denied');
@@ -403,22 +411,26 @@ describe('importStardict — audit-then-delete data safety', () => {
     expect(res.ok).toBe(false);
     const audited = await findImportByNameLang(h.audit, 'My Dict', 'en');
     expect(audited).not.toBeNull();
-    expect(h.discard).not.toHaveBeenCalled();
+    // The verified slug survives (a post-audit delete failure never discards it;
+    // the pre-clean discard ran before the build).
     expect(h.slugFiles.has('my-dict.en.db')).toBe(true);
   });
 
   it('happy path writes the audit row BEFORE deleting sources (ordering)', async () => {
     const order: string[] = [];
     const h = await makeHarness();
-    const realTxn = h.audit.transaction.bind(h.audit);
+    const realRun = h.audit.run.bind(h.audit);
     h.ports.audit = {
       ...h.audit,
       query: h.audit.query.bind(h.audit),
-      run: h.audit.run.bind(h.audit),
-      transaction: async fn => {
-        order.push('audit');
-        return realTxn(fn);
+      run: async (sql: string, params?: unknown[]) => {
+        // The audit write is now a single INSERT OR REPLACE statement.
+        if (/INSERT OR REPLACE INTO imports/i.test(sql)) {
+          order.push('audit');
+        }
+        return realRun(sql, params as never);
       },
+      transaction: h.audit.transaction.bind(h.audit),
       close: h.audit.close.bind(h.audit),
     };
     h.deleteFile.mockImplementation(async () => {
