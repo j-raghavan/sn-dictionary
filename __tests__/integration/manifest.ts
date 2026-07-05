@@ -59,7 +59,7 @@ export const MANIFEST: DictManifest[] = [
     name: 'wikdict-de-fr',
     url: 'https://download.wikdict.com/dictionaries/stardict/wikdict-de-fr.zip',
     sha256:
-      '023555569aecbe851fa48d030ede0023e4bce012ae1c49d66a90d46b1eafe301',
+      'c621d90c1b3e14e0d11177b0d6d489fb1cc05f7ef68ec5075ed452deb42a36eb',
     description: 'WikDict German→French (Wiktionary-derived, CC-BY-SA)',
     entries: [
       {
@@ -147,19 +147,20 @@ export const MANIFEST: DictManifest[] = [
     name: 'wikdict-fr-de',
     url: 'https://download.wikdict.com/dictionaries/stardict/wikdict-fr-de.zip',
     sha256:
-      '4904042598da7d4c779151ea66f32509bbab348bc45a7166119eb5dc0e3b123d',
+      'e8b6bed82700a95d4a412c19843a387d718514206b1acac9d58492aac28a698c',
     description: 'WikDict French→German (Wiktionary-derived, CC-BY-SA)',
     entries: [
       {
         // The reverse-direction shape. The dict's case-insensitive
-        // first match for "chien" is the (Astrologie) zodiac entry,
-        // not the canine — both are present, and which is "first" is
-        // a property of the .idx ordering pinned by the SHA above.
-        // The glue invariant is what matters: definition body must
-        // not run into the German translation. v1.0.9 expects
-        // em-dash join.
+        // first match for "chien" (pinned by the SHA above) renders
+        // IPA + POS + a "body — translation" line. The glue invariant
+        // is what matters: the definition body must not run into the
+        // German translation — it must join with an em-dash. (Upstream
+        // rebuilds shuffle which sense sorts first and its exact wording,
+        // so `contains` tracks the current pinned content; the em-dash
+        // join and no-glue pins below are the stable regression.)
         word: 'chien',
-        contains: ['ʃjɛ̃', 'Astrologie', 'zodiaque chinois', 'Hund'],
+        contains: ['ʃjɛ̃', 'pronoun, male', 'Zodiaque chinois', 'Hund'],
         notContains: ['chinoisHund'],
         matches: [/chinois\s+—\s+Hund/],
       },
@@ -175,7 +176,7 @@ export const MANIFEST: DictManifest[] = [
     name: 'wikdict-de-en',
     url: 'https://download.wikdict.com/dictionaries/stardict/wikdict-de-en.zip',
     sha256:
-      '7fa4ce566f4000c27ab206fad80bf8b4f6e217cb288b47c8fad5497107f01db1',
+      '4689a737f027720efa589be6590f9eb3b09c13e87ab665c8cf64aebb6097548b',
     description: 'WikDict German→English (Wiktionary-derived, CC-BY-SA)',
     entries: [
       {
