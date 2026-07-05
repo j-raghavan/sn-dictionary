@@ -21,7 +21,7 @@ import {parseSyn} from './parseSyn';
 import type {DictReader} from './dictReader';
 import {createDictReader} from './dictReader';
 import {decodeUtf8} from '../../../sdk/utf8';
-import {splitDictEntry} from './dictEntry';
+import {splitDictEntry, sanitizeDefinition} from './dictEntry';
 import {normalizeKey} from '../normalizeKey';
 import {shouldYield, yieldToEventLoop} from '../yieldOften';
 
@@ -108,6 +108,8 @@ export const lookupDict = (
   // Strip the sts-absent per-entry type byte + trailing NUL before
   // decode (issue #28); a no-op when sametypesequence is present.
   const {payload} = splitDictEntry(dict.meta.sametypesequence ?? null, slice);
-  const definition = decodeUtf8(payload);
+  // Drop edge U+FFFD left by a .idx-overrun mis-split (issue: corrupt
+  // dict graceful degradation). Interior U+FFFD is preserved.
+  const definition = sanitizeDefinition(decodeUtf8(payload));
   return {canonicalWord: entry.word, definition};
 };

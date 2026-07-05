@@ -45,14 +45,52 @@ export type HtmlVisitor = {
   onTag(tag: TagInfo): void;
 };
 
-const ENTITY_MAP: Record<string, string> = {
+// Named entities dict bodies actually emit. Keys are case-SENSITIVE:
+// `Dagger`/`prime` etc. are distinct entities from `dagger`/`Prime`,
+// so decodeEntity tries an exact-case hit before folding to lowercase.
+//
+// NULL-PROTOTYPE map: a plain object literal inherits `toString`,
+// `constructor`, `valueOf`, `__proto__`, … from Object.prototype, so
+// `ENTITY_MAP['toString']` would resolve a truthy function and make
+// `&toString;` render its source. Object.create(null) has no prototype
+// chain, so a missing key is always `undefined` and folds to '' below.
+const ENTITY_MAP: Record<string, string> = Object.assign(
+  Object.create(null) as Record<string, string>,
+  {
   amp: '&',
   lt: '<',
   gt: '>',
   quot: '"',
   apos: "'",
+  bull: '•',
+  middot: '·',
+  hellip: '…',
+  mdash: '—',
+  ndash: '–',
+  lsquo: '‘',
+  rsquo: '’',
+  ldquo: '“',
+  rdquo: '”',
+  laquo: '«',
+  raquo: '»',
+  times: '×',
+  divide: '÷',
+  deg: '°',
+  copy: '©',
+  reg: '®',
+  trade: '™',
+  para: '¶',
+  sect: '§',
+  dagger: '†',
+  Dagger: '‡',
+  prime: '′',
+  Prime: '″',
+  larr: '←',
+  rarr: '→',
+  harr: '↔',
   nbsp: ' ',
-};
+  },
+);
 
 const decodeEntity = (entity: string): string => {
   if (entity.length === 0) {
@@ -72,7 +110,10 @@ const decodeEntity = (entity: string): string => {
     }
     return '';
   }
-  return ENTITY_MAP[entity.toLowerCase()] ?? '';
+  // Exact case first (so `Dagger`/`Prime` stay distinct from
+  // `dagger`/`prime`), then fold. Unknown -> '' (never echo the
+  // literal `&foo;` back into the body).
+  return ENTITY_MAP[entity] ?? ENTITY_MAP[entity.toLowerCase()] ?? '';
 };
 
 const HAS_HTML_TAG = /<\/?[a-zA-Z][^>]*>/;
@@ -157,6 +198,25 @@ const parseTagAttrs = (rawTag: string): Record<string, string> => {
 // well-formed-looking tag). Lets the popup short-circuit and skip
 // the tokenizer for plain text.
 export const looksLikeHtml = (s: string): boolean => HAS_HTML_TAG.test(s);
+
+// A matched OPEN/CLOSE pair of a known structural tag, e.g.
+// `<b>...</b>`, `<font ...>...</font>`. The backreference \1 forces the
+// close tag to match the open — so a stray standalone pseudo-tag a plain
+// dict emits (`<thgt>`, `<snh>`, `<US>`, `<UL>`, `<latin>`) never fires.
+// Notably the thesaurus's <UL>/<US> are spelling labels, NOT list tags;
+// the paired requirement is exactly what keeps them from being rendered.
+const HTML_PAIR =
+  /<(b|i|strong|em|font|div|span|p|ol|ul|li|a)(?:\s[^>]*)?>[\s\S]*?<\/\1>/i;
+const HTML_BR = /<br\s*\/?>/i;
+
+// Stricter than looksLikeHtml: true only when the string carries HTML
+// a renderer should actually lay out — a matched structural pair or an
+// explicit <br>. Used by the 'plain'-format branch to decide whether a
+// definition that was NOT typed as HTML nonetheless contains real markup
+// worth handing to HtmlText, without misfiring on the standalone
+// pseudo-tags plain dicts pepper through their text.
+export const containsRenderableHtml = (s: string): boolean =>
+  HTML_BR.test(s) || HTML_PAIR.test(s);
 
 // Walk `html` and dispatch text + tag events to `visitor`. Idempotent
 // on input with no tags AND no entities (visitor.onText receives the

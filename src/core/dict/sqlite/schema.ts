@@ -194,7 +194,12 @@ export interface ThesaurusRow {
 // the current table shape yet stale CONTENT (e.g. HTML stored as raw tags
 // because an old app forced format='plain'). 0 is reserved for
 // pre-versioning rows — always stale by definition, so they re-import.
-export const IMPORTER_VERSION = 1;
+//
+// v1 -> v2: the importer now strips edge U+FFFD from definitions
+// (sanitizeDefinition) on a .idx-overrun corrupt dict. A slug DB built by
+// v1 stored the mis-decoded edges; bumping marks it stale so it auto
+// re-imports clean at bootstrap.
+export const IMPORTER_VERSION = 2;
 
 export const CREATE_IMPORTS_TABLE =
   'CREATE TABLE IF NOT EXISTS imports (' +

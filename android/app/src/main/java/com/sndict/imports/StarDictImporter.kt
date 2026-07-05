@@ -1,6 +1,7 @@
 package com.sndict.imports
 
 import android.database.sqlite.SQLiteDatabase
+import android.util.Log
 import java.io.File
 import java.io.FileOutputStream
 import java.nio.ByteBuffer
@@ -71,6 +72,27 @@ object StarDictImporter {
       channel = FileChannel.open(prepared.file.toPath(), StandardOpenOption.READ)
       val size = channel.size()
       val body: MappedByteBuffer = channel.map(FileChannel.MapMode.READ_ONLY, 0, size)
+
+      // Warn (once) when the .idx reaches past the .dict body — a corrupt/
+      // truncated dict (real: star_trungviet, overrun 103 bytes) whose edge
+      // entries slice past the end, leaving mis-decoded U+FFFD that
+      // sanitizeDefinition strips. Host-side this is unit-tested via
+      // dictBodyOverrun in dictEntry.ts (the reader there exposes no body
+      // size); here we HAVE both idxEntries and channel.size(), so it is
+      // emitted device-side.
+      var maxOffsetEnd = 0L
+      for (e in idxEntries) {
+        val end = e.offset + e.length
+        if (end > maxOffsetEnd) maxOffsetEnd = end
+      }
+      val overrun = dictBodyOverrun(maxOffsetEnd, size)
+      if (overrun > 0) {
+        Log.w(
+          "StarDictImporter",
+          "dict \"$dbPath\": .idx overruns .dict body by $overrun bytes; " +
+            "edge entries may be sanitized",
+        )
+      }
 
       return writeDbStreaming(
         dbPath = dbPath,
@@ -182,6 +204,24 @@ object StarDictImporter {
   // NEVER 'wordnet'.
   private fun formatFromTypeChar(typeChar: Char?): String =
     if (typeChar == 'h') "html" else "plain"
+
+  // Mirror dictEntry.ts dictBodyOverrun: bytes the .idx reaches past the
+  // .dict body, clamped at 0. Source of truth is dictEntry.ts.
+  private fun dictBodyOverrun(maxOffsetEnd: Long, bodySize: Long): Long =
+    maxOf(0L, maxOffsetEnd - bodySize)
+
+  // Mirror dictEntry.ts sanitizeDefinition BYTE-IDENTICALLY: strip a run of
+  // U+FFFD from the START and END only; INTERIOR U+FFFD is preserved (real
+  // source corruption, not an edge mis-split). Source of truth is
+  // dictEntry.ts — keep this regex in lockstep with FFFD_EDGES.
+  //
+  // End anchor is `\z` (absolute end), NOT `$`: Java's `$` without
+  // MULTILINE also matches BEFORE a trailing line terminator, so `$` would
+  // strip U+FFFD from "a�\n" while JS `/…$/` (no `m` flag) matches the
+  // absolute end only and keeps it. `\z` matches JS `$`-no-`m` exactly.
+  private val fffdEdges = Regex("^�+|�+\\z")
+
+  private fun sanitizeDefinition(s: String): String = fffdEdges.replace(s, "")
 
   // --- .ifo (mirror parseIfo.ts) -------------------------------------
 
@@ -350,7 +390,13 @@ object StarDictImporter {
           if (key.isNotEmpty() && seen.add(key)) {
             val split = splitDictEntry(sametypesequence, readDef(body, bodySize, e.offset, e.length))
             val rowFormat = formatOverride ?: formatFromTypeChar(split.typeChar)
-            insertRow(stmt, key, e.word, String(split.payload, Charsets.UTF_8), rowFormat)
+            insertRow(
+              stmt,
+              key,
+              e.word,
+              sanitizeDefinition(String(split.payload, Charsets.UTF_8)),
+              rowFormat,
+            )
           }
         }
         // .syn aliases -> canonical .idx entry (its headword + def),
@@ -372,7 +418,7 @@ object StarDictImporter {
                   stmt,
                   key,
                   target.word,
-                  String(split.payload, Charsets.UTF_8),
+                  sanitizeDefinition(String(split.payload, Charsets.UTF_8)),
                   rowFormat,
                 )
               }

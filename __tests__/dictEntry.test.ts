@@ -9,7 +9,10 @@
 import {
   splitDictEntry,
   formatFromTypeChar,
+  dictBodyOverrun,
+  sanitizeDefinition,
 } from '../src/core/dict/stardict/dictEntry';
+import corpus from './_fixtures/renderParityCorpus.json';
 
 const enc = (s: string): Uint8Array => new TextEncoder().encode(s);
 const dec = (b: Uint8Array): string => new TextDecoder().decode(b);
@@ -126,5 +129,61 @@ describe('formatFromTypeChar', () => {
   test('any other char -> plain (never wordnet)', () => {
     expect(formatFromTypeChar('g')).toBe('plain');
     expect(formatFromTypeChar('x')).toBe('plain');
+  });
+});
+
+describe('dictBodyOverrun', () => {
+  test('real star_trungviet corpus: .idx overruns the .dict body by 103 bytes', () => {
+    // The .idx's furthest (offset+length) reaches 23256270 while the
+    // inflated .dict body is 23256167 bytes (both pinned from the corpus).
+    expect(
+      dictBodyOverrun(corpus.overrun.maxOffsetEnd, corpus.overrun.bodySize),
+    ).toBe(103);
+  });
+
+  test('no overrun when the .idx fits the body exactly', () => {
+    expect(dictBodyOverrun(23256167, 23256167)).toBe(0);
+  });
+
+  test('clamps at 0 — an .idx that under-reaches is not "negative overrun"', () => {
+    expect(dictBodyOverrun(100, 500)).toBe(0);
+  });
+});
+
+describe('sanitizeDefinition (real star_trungviet corrupt entries)', () => {
+  const {leading, trailing, bothEdge} = corpus.trungvietFffd;
+
+  test('strips a single leading U+FFFD', () => {
+    expect(sanitizeDefinition(leading.raw)).toBe(leading.sanitized);
+    expect(leading.raw.startsWith('�')).toBe(true);
+    expect(leading.sanitized.startsWith('�')).toBe(false);
+  });
+
+  test('strips a single trailing U+FFFD but preserves a leading space', () => {
+    // The trailing-corrupt entry opens with a real space; only the FFFD
+    // edge goes, the space stays.
+    expect(sanitizeDefinition(trailing.raw)).toBe(trailing.sanitized);
+    expect(trailing.sanitized.startsWith(' ')).toBe(true);
+    expect(trailing.sanitized.endsWith('�')).toBe(false);
+  });
+
+  test('strips a RUN of U+FFFD at both edges (two leading, one trailing)', () => {
+    expect(bothEdge.raw.startsWith('��')).toBe(true);
+    expect(sanitizeDefinition(bothEdge.raw)).toBe(bothEdge.sanitized);
+    expect(bothEdge.sanitized).not.toMatch(/^�|�$/);
+  });
+
+  test('a clean definition is returned unchanged', () => {
+    const clean = (corpus.trungvietClean as Record<string, string>)['中国'];
+    expect(sanitizeDefinition(clean)).toBe(clean);
+  });
+
+  test('preserves INTERIOR U+FFFD (real source corruption, not an edge artefact)', () => {
+    // The corpus has no natural interior-only case, so this pins the
+    // regex's edge-anchored contract directly: a replacement char between
+    // real content must survive — dropping it would silently reflow text.
+    expect(sanitizeDefinition('a�b')).toBe('a�b');
+    // Edges still strip while the interior one stays.
+    expect(sanitizeDefinition('�a�b�')).toBe('a�b');
   });
 });

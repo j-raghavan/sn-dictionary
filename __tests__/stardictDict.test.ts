@@ -3,6 +3,7 @@ import {
   lookupDict,
 } from '../src/core/dict/stardict/stardictDict';
 import {buildSyntheticStarDict} from './_helpers/buildSyntheticStarDict';
+import corpus from './_fixtures/renderParityCorpus.json';
 
 describe('stardictDict', () => {
   test('builds and looks up an entry from raw .dict bytes', async () => {
@@ -72,6 +73,29 @@ describe('stardictDict', () => {
     expect(lookupDict(parsed, 'apple')?.definition).toBe('a fruit');
     // banana is the last entry -> no terminator, only the type byte.
     expect(lookupDict(parsed, 'banana')?.definition).toBe('a yellow fruit');
+  });
+
+  test('lookupDict strips edge U+FFFD left by a corrupt (.idx-overrun) dict', async () => {
+    // Real star_trungviet corrupt bodies: an .idx overrun leaves mis-
+    // decoded U+FFFD on the edges of boundary entries. buildSyntheticStarDict
+    // round-trips these real strings through the .dict bytes, so lookupDict
+    // must return the sanitized body while leaving a clean entry untouched.
+    const {leading, bothEdge} = corpus.trungvietFffd;
+    const cleanDef = (corpus.trungvietClean as Record<string, string>)['中国'];
+    const {ifo, idx, dict} = buildSyntheticStarDict({
+      leadingCorrupt: leading.raw,
+      bothEdgeCorrupt: bothEdge.raw,
+      cleanEntry: cleanDef,
+    });
+    const parsed = await buildDict(ifo, idx, dict);
+    expect(lookupDict(parsed, 'leadingCorrupt')?.definition).toBe(
+      leading.sanitized,
+    );
+    expect(lookupDict(parsed, 'bothEdgeCorrupt')?.definition).toBe(
+      bothEdge.sanitized,
+    );
+    // A clean definition passes through unchanged.
+    expect(lookupDict(parsed, 'cleanEntry')?.definition).toBe(cleanDef);
   });
 
   test('decodes UTF-8 multibyte definitions correctly', async () => {

@@ -19,6 +19,9 @@ import {Text, View} from 'react-native';
 import type {SourceHit} from '../core/lookup';
 import {parseWordNetEntry} from './wordnetFormatter';
 import {SenseList} from './senseBlocks';
+import {parseFvdpEntry} from './fvdpFormatter';
+import {FvdpText} from './fvdpBlocks';
+import {containsRenderableHtml} from './htmlParser';
 import {HtmlText} from './HtmlText';
 import {popupStyles as styles} from './popupStyles';
 
@@ -61,7 +64,16 @@ export const SourceSection = ({
       // numbered lists indented. See HtmlText.tsx + htmlToSpans.ts.
       return <HtmlText html={definition} style={scaledDefinitionStyle} />;
     }
-    // 'plain'
+    // 'plain' — an ordered decision. A plain-typed body may still carry
+    // real HTML (matched tag pair or <br>) or the FVDP marker layout; try
+    // each structured renderer before falling back to verbatim text.
+    if (containsRenderableHtml(definition)) {
+      return <HtmlText html={definition} style={scaledDefinitionStyle} />;
+    }
+    const fvdp = parseFvdpEntry(definition);
+    if (fvdp && !fvdp.parseFailed) {
+      return <FvdpText parsed={fvdp} fontScale={fontScale} />;
+    }
     return <Text style={scaledDefinitionStyle}>{definition}</Text>;
   }, [definition, format, fontScale, scaledDefinitionStyle]);
 

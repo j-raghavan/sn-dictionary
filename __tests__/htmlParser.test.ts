@@ -3,7 +3,12 @@
 // parser-level edge cases (attribute quoting, malformed tags,
 // entity decoding boundaries) are clearer to pin at this layer.
 
-import {parseHtml, looksLikeHtml, type TagInfo} from '../src/ui/htmlParser';
+import {
+  parseHtml,
+  looksLikeHtml,
+  containsRenderableHtml,
+  type TagInfo,
+} from '../src/ui/htmlParser';
 
 type Event =
   | {kind: 'text'; value: string}
@@ -198,6 +203,81 @@ describe('parseHtml — entity decoding', () => {
 
   test('empty entity (&;) emits nothing for the entity', () => {
     expect(collect('a&;b')).toEqual([{kind: 'text', value: 'ab'}]);
+  });
+
+  test('expanded named entities decode to their characters', () => {
+    expect(collect('a&bull;b&mdash;c&hellip;')).toEqual([
+      {kind: 'text', value: 'a•b—c…'},
+    ]);
+    expect(collect('&laquo;x&raquo; &deg; &copy; &rarr;')).toEqual([
+      {kind: 'text', value: '«x» ° © →'},
+    ]);
+  });
+
+  test('case-sensitive entities stay distinct (Dagger vs dagger, Prime vs prime)', () => {
+    // Exact-case hit wins before the lowercase fold, so the two forms
+    // resolve to DIFFERENT glyphs rather than collapsing to one.
+    expect(collect('&dagger;&Dagger;')).toEqual([{kind: 'text', value: '†‡'}]);
+    expect(collect('&prime;&Prime;')).toEqual([{kind: 'text', value: '′″'}]);
+  });
+
+  test('an all-caps spelling of a lowercase entity still folds', () => {
+    // No exact-case key for BULL, so it falls back to the lowercased
+    // lookup — every pre-existing entity keeps resolving.
+    expect(collect('&BULL;')).toEqual([{kind: 'text', value: '•'}]);
+  });
+
+  test('Object.prototype member names are NOT resolved as entities', () => {
+    // The entity map has a null prototype, so `&toString;` / `&constructor;`
+    // / `&__proto__;` don't leak an inherited function/object into the body
+    // (they'd otherwise render "function toString() { … }").
+    expect(collect('a&toString;b')).toEqual([{kind: 'text', value: 'ab'}]);
+    expect(collect('a&constructor;b')).toEqual([{kind: 'text', value: 'ab'}]);
+    expect(collect('a&__proto__;b')).toEqual([{kind: 'text', value: 'ab'}]);
+    expect(collect('a&hasOwnProperty;b')).toEqual([{kind: 'text', value: 'ab'}]);
+    expect(collect('a&valueOf;b')).toEqual([{kind: 'text', value: 'ab'}]);
+  });
+});
+
+describe('containsRenderableHtml', () => {
+  test('true for a matched structural tag pair', () => {
+    expect(containsRenderableHtml('a <b>bold</b> word')).toBe(true);
+    expect(containsRenderableHtml('<font color="green">x</font>')).toBe(true);
+    expect(containsRenderableHtml('<ol><li>one</li></ol>')).toBe(true);
+  });
+
+  test('true for an explicit <br>', () => {
+    expect(containsRenderableHtml('line one<br>line two')).toBe(true);
+    expect(containsRenderableHtml('line one<br/>line two')).toBe(true);
+  });
+
+  test('false for plain text', () => {
+    expect(containsRenderableHtml('a greeting used for most purposes')).toBe(
+      false,
+    );
+  });
+
+  test('false for standalone plain-dict pseudo-tags (no matched pair)', () => {
+    // These appear as lone markers in plain (non-HTML) dicts; the paired
+    // requirement is what stops them being handed to the HTML renderer.
+    expect(containsRenderableHtml('<thgt>a thought marker')).toBe(false);
+    expect(containsRenderableHtml('word <snh> sub-headword')).toBe(false);
+    expect(containsRenderableHtml('<latin> lorem ipsum')).toBe(false);
+  });
+
+  test('false for thesaurus <UL>/<US> spelling labels (NOT list tags)', () => {
+    // The thesaurus uses <UL>/<US> as standalone spelling labels; with no
+    // close tag they must NOT be mistaken for <ul> list markup.
+    expect(containsRenderableHtml('color <US> colour <UL>')).toBe(false);
+  });
+
+  test('false when an open tag is never closed', () => {
+    expect(containsRenderableHtml('<b>bold but never closed')).toBe(false);
+  });
+
+  test('false when open/close tags mismatch', () => {
+    // The backreference forces the SAME tag name; <b>…</i> is not a pair.
+    expect(containsRenderableHtml('<b>text</i>')).toBe(false);
   });
 });
 
