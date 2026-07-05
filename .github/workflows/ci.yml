@@ -60,20 +60,23 @@ jobs:
           retention-days: 30
 
   build-windows:
-    name: Build (windows-2022)
+    name: Build (windows-latest)
     needs: [lint, test]
-    # Pinned off windows-latest: the newer image ships Visual Studio 18,
-    # which node-gyp 10 can't parse ("unknown version undefined"), so the
-    # better-sqlite3 native rebuild during `npm ci` fails. VS 2022 on
-    # windows-2022 is recognised. (better-sqlite3 is a dev/test dep only;
-    # this job just guards buildPlugin.ps1, which doesn't use it.)
-    runs-on: windows-2022
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
+      # windows-latest ships Visual Studio 2026 (v18). node-gyp gained VS
+      # 2026 support in node-gyp 12.1.0 (bundled from npm 11.6.3); Node 20's
+      # default npm bundles node-gyp 10, which reads VS 2026 as "unknown
+      # version undefined" and fails the better-sqlite3 native build during
+      # `npm ci` (better-sqlite3 is a real build dep — scripts/buildBaseDb.mjs
+      # uses it). Upgrade npm so the compile works on the current image
+      # rather than pinning to the soon-retired windows-2022.
+      - run: npm install -g npm@latest
       - run: npm ci
       - name: Build plugin
         shell: pwsh
