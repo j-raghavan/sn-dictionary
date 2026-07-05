@@ -37,9 +37,13 @@ export interface SqliteDb {
   // Parameterized write. Resolves with the number of rows changed so
   // the import/verify pipeline (TF5) can assert affected-row counts.
   run(sql: string, params?: SqlParam[]): Promise<{changes: number}>;
-  // Run `fn` inside a single transaction. The adapter commits when
-  // `fn` resolves and rolls back if it rejects. The `tx` handle is a
-  // SqliteDb scoped to the transaction.
+  // Run `fn` with a `tx` handle for a sequence of writes. NOTE the real
+  // on-device contract (react-native-sqlite-storage): every statement
+  // AUTOCOMMITS independently — there is NO multi-statement rollback. If `fn`
+  // rejects, statements that already ran STAY committed and the rejection
+  // propagates. So this is a convenience grouping, NOT an atomic unit: code that
+  // needs atomicity across writes must achieve it in a SINGLE statement (e.g.
+  // INSERT OR REPLACE over a PRIMARY KEY — see upsertImport / upsertDictPref).
   transaction(fn: (tx: SqliteDb) => Promise<void>): Promise<void>;
   close(): Promise<void>;
 }
@@ -50,3 +54,24 @@ export interface SqliteDb {
 // a transient failure that retries. Open success resolves a handle;
 // open failure (corrupt/locked) throws.
 export type OpenSqliteDb = () => Promise<SqliteDb | null>;
+
+// Additive column migration for an EXISTING table: run an
+// `ALTER TABLE ... ADD COLUMN ... NOT NULL DEFAULT ...` and SWALLOW the
+// idempotent "duplicate column name" error SQLite raises when the column is
+// already present (CREATE ... IF NOT EXISTS never alters an existing table, so
+// this is how a new column reaches an older on-device DB). Any OTHER failure
+// (e.g. disk I/O) is a real error and rethrows so the caller can degrade.
+// Shared by the user.db phonetic migration and the imports importer_version
+// migration (both proved on-device with the same rn-sqlite adapter).
+export const runAdditiveColumnMigration = async (
+  db: SqliteDb,
+  alterSql: string,
+): Promise<void> => {
+  try {
+    await db.run(alterSql);
+  } catch (e) {
+    if (!/duplicate column name/i.test((e as Error).message)) {
+      throw e;
+    }
+  }
+};

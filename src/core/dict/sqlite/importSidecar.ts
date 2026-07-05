@@ -157,3 +157,21 @@ export const slugDbFilename = (name: string, lang: string): string => {
   const slug = slugForName(name) || `dict-${lang}`;
   return `${slug}.${lang}.db`;
 };
+
+// A/B slot toggle for an in-place refresh. A re-import that has a prior audit
+// row NEVER builds into the audited (still-serving) file — it builds into the
+// SIBLING slot, and upsertImport (already transactional) repoints the audit
+// row to it: the upsert IS the atomic swap. The old file is never written by
+// the build and never deleted by a failure path, so it keeps serving until
+// the next bootstrap opens the new slot. Toggles `<stem>.db` <-> `<stem>.alt.db`.
+// Collision-safe by construction: slugForName yields only [a-z0-9-] and langs
+// are two letters or 'und', so no dict's base filename can end '.alt.db', and
+// each stem has exactly one sibling.
+export const refreshTargetFilename = (filename: string): string => {
+  const stem = filename.endsWith('.db')
+    ? filename.slice(0, -'.db'.length)
+    : filename;
+  return stem.endsWith('.alt')
+    ? `${stem.slice(0, -'.alt'.length)}.db`
+    : `${stem}.alt.db`;
+};

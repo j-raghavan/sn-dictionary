@@ -4,6 +4,8 @@ import {
   hideDefinition,
   showSettings,
   closeSettings,
+  shouldDismissOnBackdropTap,
+  BACKDROP_TAP_RECENCY_MS,
   subscribe,
   getCurrentState,
   setPopupActions,
@@ -185,6 +187,50 @@ describe('popupController — settings panel (F1)', () => {
     showDefinition({queriedFor: 'x', hits: [], loading: []});
     closeSettings();
     expect(getCurrentState()).toEqual({visible: false});
+  });
+});
+
+describe('popupController — pen-only backdrop dismiss policy (#32)', () => {
+  // Signature: (reading {tool, at} | null, now, windowMs = 400). ONLY a
+  // RECENT stylus tip dismisses; a stale reading, a non-stylus tool, or a
+  // missing native signal (null) all fail safe. Eraser is deliberately
+  // excluded (the issue asked for the pen TIP). Explicit now/at numbers —
+  // no clock mock.
+  const NOW = 10_000;
+
+  test('a recent stylus reading dismisses', () => {
+    expect(
+      shouldDismissOnBackdropTap({tool: 'stylus', at: NOW - 100}, NOW),
+    ).toBe(true);
+  });
+
+  test('exactly at the recency boundary (now - at === 400) still dismisses', () => {
+    expect(
+      shouldDismissOnBackdropTap(
+        {tool: 'stylus', at: NOW - BACKDROP_TAP_RECENCY_MS},
+        NOW,
+      ),
+    ).toBe(true);
+  });
+
+  test('a stylus reading older than the window does NOT dismiss (stale fail-safe)', () => {
+    expect(
+      shouldDismissOnBackdropTap(
+        {tool: 'stylus', at: NOW - (BACKDROP_TAP_RECENCY_MS + 1)},
+        NOW,
+      ),
+    ).toBe(false);
+  });
+
+  test.each(['finger', 'eraser', 'mouse', 'unknown'])(
+    'a recent %s reading does NOT dismiss',
+    tool => {
+      expect(shouldDismissOnBackdropTap({tool, at: NOW - 10}, NOW)).toBe(false);
+    },
+  );
+
+  test('a null reading (no native signal) does NOT dismiss', () => {
+    expect(shouldDismissOnBackdropTap(null, NOW)).toBe(false);
   });
 });
 

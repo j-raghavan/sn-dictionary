@@ -1,7 +1,9 @@
 // SqliteDb port behaviour, exercised through the host better-sqlite3
 // adapter. These assertions are the contract every adapter (host or
-// device) must honour: parameterized read/write, transactional
-// commit/rollback, nullable open (-> 'absent'), and close.
+// device) must honour: parameterized read/write, DEVICE-FAITHFUL
+// transaction semantics (per-statement autocommit — NO multi-statement
+// rollback, matching react-native-sqlite-storage), nullable open
+// (-> 'absent'), and close.
 
 import {openBetterSqliteDb, createSeededDb} from './_helpers/betterSqliteDb';
 import type {SqliteDb} from '../src/core/dict/sqlite/db';
@@ -63,8 +65,8 @@ describe('SqliteDb port (better-sqlite3 adapter)', () => {
     await db.close();
   });
 
-  describe('transaction', () => {
-    it('commits all writes when the body resolves', async () => {
+  describe('transaction (device-faithful: per-statement autocommit)', () => {
+    it('applies all writes when the body resolves', async () => {
       const db = await createSeededDb(seedTable);
       await db.transaction(async tx => {
         await tx.run('INSERT INTO t (k, v) VALUES (?, ?)', ['a', '1']);
@@ -75,7 +77,7 @@ describe('SqliteDb port (better-sqlite3 adapter)', () => {
       await db.close();
     });
 
-    it('rolls back every write when the body rejects, and rethrows', async () => {
+    it('does NOT roll back earlier writes when the body rejects (autocommit), but rethrows', async () => {
       const db = await createSeededDb(seedTable);
       const boom = new Error('boom');
       await expect(
@@ -85,8 +87,11 @@ describe('SqliteDb port (better-sqlite3 adapter)', () => {
         }),
       ).rejects.toBe(boom);
 
+      // The earlier insert PERSISTS: on device each statement autocommits, so
+      // there is no multi-statement rollback. Code that needs atomicity across
+      // a delete+insert (e.g. upsertImport) must do it in ONE statement.
       const rows = await db.query('SELECT k FROM t');
-      expect(rows).toEqual([]);
+      expect(rows).toEqual([{k: 'a'}]);
       await db.close();
     });
   });

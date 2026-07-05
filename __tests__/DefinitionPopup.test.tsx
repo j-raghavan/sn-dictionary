@@ -24,6 +24,25 @@ jest.mock('../src/native/clipboard', () => ({
   ),
 }));
 
+// The pen-tool observer is device-only (requireNativeComponent). Mock it
+// as a passthrough that renders its children and lets the test drive the
+// native onToolDown event, so the pen-only tap-outside-to-close wiring is
+// host-exercised. Tests that need the off-device path (native component
+// unavailable) override getPenToolObserver to return null.
+jest.mock('../src/native/penToolObserver', () => {
+  const ReactLocal = require('react');
+  const MockPenToolObserver = ({
+    children,
+    onToolDown,
+    ...rest
+  }: {
+    children?: unknown;
+    onToolDown?: (e: {nativeEvent: {toolType: string}}) => void;
+  }) =>
+    ReactLocal.createElement('PenToolObserver', {onToolDown, ...rest}, children);
+  return {getPenToolObserver: jest.fn(() => MockPenToolObserver)};
+});
+
 import React from 'react';
 import {act, create, type ReactTestRenderer} from 'react-test-renderer';
 import {PluginManager} from 'sn-plugin-lib';
@@ -31,9 +50,11 @@ import DefinitionPopup from '../src/ui/DefinitionPopup';
 import {
   showDefinition,
   showRecognizing,
+  showSettings,
   hideDefinition,
   setPopupActions,
   getCurrentState,
+  BACKDROP_TAP_RECENCY_MS,
   type PopupActions,
   __testing__,
 } from '../src/ui/popupController';
@@ -46,10 +67,15 @@ import type {
 } from '../src/core/dict/sqlite/settings';
 
 import {copyToClipboard} from '../src/native/clipboard';
+import {getPenToolObserver} from '../src/native/penToolObserver';
 import {htmlToPlainText} from '../src/ui/htmlToPlainText';
 
 const closePluginView = PluginManager.closePluginView as jest.Mock;
 const copyMock = copyToClipboard as jest.Mock;
+const getObserverMock = getPenToolObserver as jest.Mock;
+// The passthrough component the mock returns by default (captured so the
+// per-test reset can restore it after the null-observer case).
+const passthroughObserver = getObserverMock();
 
 const found = (
   source: string,
@@ -82,6 +108,8 @@ beforeEach(() => {
   copyMock.mockImplementation(() =>
     Promise.resolve({success: true, code: 'OK', message: ''}),
   );
+  // Restore the passthrough observer (the null-observer test overrides it).
+  getObserverMock.mockReturnValue(passthroughObserver);
 });
 
 const renderPopup = (): ReactTestRenderer => {
@@ -2756,5 +2784,156 @@ describe('DefinitionPopup — DB restore (F8)', () => {
       await Promise.resolve();
     });
     expect(collectText(tree)).toContain('hello');
+  });
+});
+
+// --- Pen-only tap-outside-to-close (#32) ---------------------------
+//
+// The GEOMETRY half (inside vs outside the card) is enforced natively by
+// z-order: the card renders ON TOP of the dismiss layer, so an inside-card
+// tap never reaches the backdrop Pressable. react-test-renderer has no
+// layout/hit-testing, so occlusion is NOT host-simulable — it's left to
+// device verification. These tests drive the TOOL-TYPE half: the native
+// onToolDown feeds the stamped lastToolTypeRef, and the backdrop press
+// consults shouldDismissOnBackdropTap(reading, now). The dismiss layer is
+// parametrised per branch: the RESULT view passes handleClose (so a
+// dismiss fires BOTH hideDefinition and PluginManager.closePluginView),
+// the SETTINGS panel passes closeSettings (non-destructive Back), and the
+// RECOGNIZING branch renders no layer at all.
+
+// The observer node the passthrough mock emits (carries onToolDown).
+const fireToolDown = (tree: ReactTestRenderer, toolType: string): void => {
+  const observer = tree.root.find(
+    n => typeof n.props.onToolDown === 'function',
+  );
+  observer.props.onToolDown({nativeEvent: {toolType}});
+};
+
+// The transparent backdrop Pressable under the card (style={{flex: 1}}).
+const pressBackdrop = (tree: ReactTestRenderer): void => {
+  const layer = tree.root.find(
+    n =>
+      n.type === 'Pressable' &&
+      n.props.style &&
+      n.props.style.flex === 1,
+  );
+  layer.props.onPress();
+};
+
+const hasDismissLayer = (tree: ReactTestRenderer): boolean =>
+  tree.root.findAll(n => typeof n.props.onToolDown === 'function').length > 0;
+
+describe('DefinitionPopup — pen-only tap-outside-to-close (#32)', () => {
+  test('a stylus tap outside closes: hideDefinition + closePluginView (handleClose reuse)', () => {
+    const tree = renderPopup();
+    act(() => showDefinition(found('WordNet', 'hello', 'a greeting')));
+    expect(collectText(tree)).toContain('hello');
+    act(() => fireToolDown(tree, 'stylus'));
+    act(() => pressBackdrop(tree));
+    // hideDefinition -> nothing visible; closePluginView -> overlay closed.
+    expect(collectText(tree)).toBe('');
+    expect(closePluginView).toHaveBeenCalledTimes(1);
+  });
+
+  test('a finger tap outside does nothing (popup stays open, no close)', () => {
+    const tree = renderPopup();
+    act(() => showDefinition(found('WordNet', 'hello', 'a greeting')));
+    act(() => fireToolDown(tree, 'finger'));
+    act(() => pressBackdrop(tree));
+    expect(collectText(tree)).toContain('hello');
+    expect(closePluginView).not.toHaveBeenCalled();
+  });
+
+  test('a backdrop press with no prior toolDown does not close (fail-safe null)', () => {
+    const tree = renderPopup();
+    act(() => showDefinition(found('WordNet', 'hello', 'a greeting')));
+    act(() => pressBackdrop(tree));
+    expect(collectText(tree)).toContain('hello');
+    expect(closePluginView).not.toHaveBeenCalled();
+  });
+
+  test('the tool signal is one-shot: a later press without a fresh toolDown does not close', () => {
+    const tree = renderPopup();
+    act(() => showDefinition(found('WordNet', 'hello', 'a greeting')));
+    act(() => fireToolDown(tree, 'stylus'));
+    act(() => pressBackdrop(tree)); // reads stylus -> closes, then clears ref
+    expect(closePluginView).toHaveBeenCalledTimes(1);
+    // Reopen and press again WITHOUT a fresh toolDown: the ref is null now.
+    act(() => showDefinition(found('WordNet', 'hello', 'a greeting')));
+    act(() => pressBackdrop(tree));
+    expect(collectText(tree)).toContain('hello');
+    expect(closePluginView).toHaveBeenCalledTimes(1); // still just the one
+  });
+
+  test('a stale stylus reading (older than the recency window) does not close', () => {
+    // The reading is stamped at toolDown; if the press arrives after the
+    // recency window it must be treated as stale and NOT close — guards a
+    // pen value left over from an earlier gesture. Drive Date.now directly.
+    const nowSpy = jest.spyOn(Date, 'now');
+    try {
+      const tree = renderPopup();
+      act(() => showDefinition(found('WordNet', 'hello', 'a greeting')));
+      nowSpy.mockReturnValue(1000); // toolDown stamped at t=1000
+      act(() => fireToolDown(tree, 'stylus'));
+      nowSpy.mockReturnValue(1000 + BACKDROP_TAP_RECENCY_MS + 1); // just past
+      act(() => pressBackdrop(tree));
+      expect(collectText(tree)).toContain('hello');
+      expect(closePluginView).not.toHaveBeenCalled();
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
+  test('a stylus tap outside the Settings panel goes Back (closeSettings), not a hard close', async () => {
+    setPopupActions(
+      fakeActions(async () => ({lang: 'en', omw: {synonyms: [], antonyms: []}})),
+    );
+    const tree = renderPopup();
+    act(() => showDefinition(found('WordNet', 'hello', 'a greeting')));
+    // Open Settings via the gear — it stashes the current result as resume.
+    await act(async () => findByLabel(tree, 'Settings')[0].props.onPress());
+    await flush();
+    expect(hasDismissLayer(tree)).toBe(true);
+    act(() => fireToolDown(tree, 'stylus'));
+    await act(async () => pressBackdrop(tree));
+    await flush();
+    // closeSettings re-emitted the stashed result — back on the definition,
+    // popup still visible. handleClose was NOT taken: the overlay never
+    // closed and the popup did not hide.
+    expect(currentKind()).toBe('result');
+    expect(collectText(tree)).toContain('hello');
+    expect(closePluginView).not.toHaveBeenCalled();
+  });
+
+  test('the dismiss layer renders in the settings and result branches but NOT recognizing', async () => {
+    setPopupActions(
+      fakeActions(async () => ({lang: 'en', omw: {synonyms: [], antonyms: []}})),
+    );
+    const tree = renderPopup();
+    // Recognizing has nothing to dismiss to (Close only) — no layer.
+    act(() => showRecognizing());
+    expect(hasDismissLayer(tree)).toBe(false);
+    act(() => showDefinition(found('WordNet', 'hello', 'a greeting')));
+    expect(hasDismissLayer(tree)).toBe(true);
+    // Settings mounts SettingsPanel, whose async effects (dict prefs /
+    // keep-sources) must be flushed so their setState lands inside act.
+    await act(async () => showSettings());
+    await flush();
+    expect(hasDismissLayer(tree)).toBe(true);
+  });
+
+  test('when the native observer is unavailable, no layer renders and Close still works', () => {
+    getObserverMock.mockReturnValue(null);
+    const tree = renderPopup();
+    act(() => showDefinition(found('WordNet', 'hello', 'a greeting')));
+    expect(hasDismissLayer(tree)).toBe(false);
+    // The existing top-right Close button is unaffected.
+    const closeBtn = tree.root.findByProps({
+      accessibilityRole: 'button',
+      accessibilityLabel: 'Close',
+    });
+    act(() => closeBtn.props.onPress());
+    expect(collectText(tree)).toBe('');
+    expect(closePluginView).toHaveBeenCalledTimes(1);
   });
 });

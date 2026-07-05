@@ -305,6 +305,7 @@ describe('buildExportableDbs (F5-FR1)', () => {
       entry_count: 10,
       imported_at: '2026-01-01',
       filename: 'dune-english.en.db',
+      importer_version: 1,
     },
   ];
   const resolvePath = (filename: string): string => `${PLUGIN_DIR}${filename}`;
@@ -356,6 +357,7 @@ describe('buildExportableDbs (F5-FR1)', () => {
         entry_count: 5,
         imported_at: '2026-02-02',
         filename: 'atlas-world.en.db',
+        importer_version: 1,
       },
     ];
     // Dune was deleted: its audit row is gone, leaving only Atlas.

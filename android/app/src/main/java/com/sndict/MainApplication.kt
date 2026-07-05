@@ -13,6 +13,7 @@ import com.facebook.react.soloader.OpenSourceMergedSoMapping
 import com.facebook.soloader.SoLoader
 import com.sndict.clipboard.SnDictClipboardPackage
 import com.sndict.imports.SnDictImportPackage
+import com.sndict.ui.SnDictUiPackage
 import org.pgsqlite.SQLitePluginPackage
 
 class MainApplication : Application(), ReactApplication {
@@ -32,6 +33,9 @@ class MainApplication : Application(), ReactApplication {
                     // Native clipboard bridge (copy word / definition to
                     // the OS clipboard via ClipboardManager).
                     add(SnDictClipboardPackage())
+                    // UI-layer native views: the pen-tool observer that
+                    // backs the pen-only tap-outside-to-close path (#32).
+                    add(SnDictUiPackage())
                 }
 
             override fun getJSMainModuleName(): String = "index"

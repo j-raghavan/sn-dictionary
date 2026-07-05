@@ -1,7 +1,10 @@
 // Runtime composition root (TF7-FR1/FR2/FR4) + pure reconcileImports.
 // Fully fake-driven — all device behind BootstrapPorts.
 
-import {createSeededDb} from './_helpers/betterSqliteDb';
+import {mkdtempSync, rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {createSeededDb, openBetterSqliteDb} from './_helpers/betterSqliteDb';
 import {
   bootstrap,
   identityKey,
@@ -23,7 +26,12 @@ import {
   setKeepSources,
   type DictPref,
 } from '../src/core/dict/sqlite/settings';
-import {CREATE_ENTRIES_TABLE} from '../src/core/dict/sqlite/schema';
+import {
+  CREATE_ENTRIES_TABLE,
+  IMPORTER_VERSION,
+  INSERT_CSV_ENTRY,
+} from '../src/core/dict/sqlite/schema';
+import {refreshTargetFilename} from '../src/core/dict/sqlite/importSidecar';
 import type {ImportRow} from '../src/core/dict/sqlite/schema';
 import type {SqliteDb} from '../src/core/dict/sqlite/db';
 import type {ImportJobDescriptor} from '../src/core/dict/userDictDiscovery';
@@ -69,12 +77,22 @@ const csvDescriptor = (name: string, lang: string): ImportJobDescriptor => ({
   sidecar: {name, language: lang},
 });
 
-const auditRow = (name: string, lang: string, filename: string): ImportRow => ({
+// Defaults importer_version to the CURRENT pipeline version so an
+// already-imported kept+healthy set reconciles to 'open' (not re-imported).
+// The staleness tests pass an explicit older version (e.g. 0) to force a
+// re-import.
+const auditRow = (
+  name: string,
+  lang: string,
+  filename: string,
+  importerVersion: number = IMPORTER_VERSION,
+): ImportRow => ({
   name,
   lang,
   entry_count: 1,
   imported_at: 't',
   filename,
+  importer_version: importerVersion,
 });
 
 const buckets = (items: ReconcileItem[]) => items.map(i => i.bucket);
@@ -90,15 +108,22 @@ describe('reconcileImports (pure)', () => {
     expect(items).toEqual([{bucket: 'import', descriptor: descriptor('A', 'en')}]);
   });
 
-  it('RE-ADD (audit hit, keep=false) -> import in place (prior slug overwritten)', () => {
+  it('RE-ADD (audit hit, keep=false) -> import carrying prior (builds into sibling)', () => {
     const items = reconcileImports(
       [descriptor('A', 'en')],
       [auditRow('A', 'en', 'a.en.db')],
       NO_KEEP,
     );
-    // RE-ADD overwrites the same slug + audit row (resolveSlugCollision is
-    // deterministic for the same name+lang), so no prior-filename bookkeeping.
-    expect(items).toEqual([{bucket: 'import', descriptor: descriptor('A', 'en')}]);
+    // RE-ADD carries `prior` so runImport builds into the A/B sibling slot and
+    // upsertImport atomically repoints the audit row — the old file is never
+    // overwritten by the build.
+    expect(items).toEqual([
+      {
+        bucket: 'import',
+        descriptor: descriptor('A', 'en'),
+        prior: auditRow('A', 'en', 'a.en.db'),
+      },
+    ]);
   });
 
   it('audit row with no descriptor -> open bucket', () => {
@@ -206,16 +231,24 @@ describe('reconcileImports (F4 keep rule, pure)', () => {
     expect(items).toEqual([{bucket: 'open', row: auditRow('A', 'en', 'a.en.db')}]);
   });
 
-  it('audit-hit + keep + UNhealthy slug -> import (RE-ADD; safe fallback)', () => {
+  it('audit-hit + keep + UNhealthy slug -> import carrying prior (RE-ADD; safe fallback)', () => {
     const items = reconcileImports(
       [descriptor('A', 'en')],
       [auditRow('A', 'en', 'a.en.db')],
       KEEP([]), // slug DB missing
     );
-    expect(items).toEqual([{bucket: 'import', descriptor: descriptor('A', 'en')}]);
+    // Unhealthy slug -> not a refresh pair; a plain RE-ADD carrying prior (so
+    // runImport builds into the sibling, abandoning the corrupt/missing slot).
+    expect(items).toEqual([
+      {
+        bucket: 'import',
+        descriptor: descriptor('A', 'en'),
+        prior: auditRow('A', 'en', 'a.en.db'),
+      },
+    ]);
   });
 
-  it('audit-hit + forceRefresh -> import even with keep + healthy slug (AC4, FR9)', () => {
+  it('audit-hit + forceRefresh + keep + healthy -> import-ONLY carrying prior (NEW-4, HEAD parity)', () => {
     const refreshing: ImportJobDescriptor = {
       ...descriptor('A', 'en'),
       forceRefresh: true,
@@ -225,10 +258,20 @@ describe('reconcileImports (F4 keep rule, pure)', () => {
       [auditRow('A', 'en', 'a.en.db')],
       KEEP(['a.en.db']),
     );
-    expect(items).toEqual([{bucket: 'import', descriptor: refreshing}]);
+    // A sentinel (forceRefresh) is an EXPLICIT re-import: import-only, NOT the
+    // silent refreshInPlace pair — so the NEW file is spliced this session
+    // (HEAD parity), it counts toward the prompt probe, and it honors the
+    // keepSources flag. `prior` still routes the build into the sibling slot.
+    expect(items).toEqual([
+      {
+        bucket: 'import',
+        descriptor: refreshing,
+        prior: auditRow('A', 'en', 'a.en.db'),
+      },
+    ]);
   });
 
-  it('a CSV forceRefresh descriptor also overrides keep', () => {
+  it('a CSV forceRefresh descriptor is also import-only carrying prior', () => {
     const refreshing: ImportJobDescriptor = {
       ...csvDescriptor('Dune', 'en'),
       forceRefresh: true,
@@ -239,15 +282,23 @@ describe('reconcileImports (F4 keep rule, pure)', () => {
       KEEP(['dune.en.db']),
     );
     expect(buckets(items)).toEqual(['import']);
+    expect((items[0] as {refreshInPlace?: boolean}).refreshInPlace).toBeUndefined();
   });
 
-  it('keep=false reproduces today RE-ADD even with a healthy slug', () => {
+  it('keep=false RE-ADD carries prior even with a healthy slug', () => {
     const items = reconcileImports(
       [descriptor('A', 'en')],
       [auditRow('A', 'en', 'a.en.db')],
       {keepSources: false, slugHealthy: new Set(['a.en.db'])},
     );
-    expect(buckets(items)).toEqual(['import']);
+    // keep=false is not a refresh pair (no paired open) but still carries prior.
+    expect(items).toEqual([
+      {
+        bucket: 'import',
+        descriptor: descriptor('A', 'en'),
+        prior: auditRow('A', 'en', 'a.en.db'),
+      },
+    ]);
   });
 
   it('NEW descriptor still imports under keep (no audit hit -> nothing to open)', () => {
@@ -273,6 +324,91 @@ describe('reconcileImports (F4 keep rule, pure)', () => {
       KEEP(['a.en.db']),
     );
     expect(items.filter(i => i.bucket === 'open')).toHaveLength(1);
+  });
+});
+
+// --- importer-version staleness rule (pure) -------------------------
+describe('reconcileImports (importer-version staleness, pure)', () => {
+  const KEEP_HEALTHY = (healthy: string[]) => ({
+    keepSources: true,
+    slugHealthy: new Set(healthy),
+  });
+
+  it('stale row + kept + healthy -> the OPEN+refresh PAIR (serve old, rebuild sibling)', () => {
+    // A v0 slug DB built by an older importer: serve it NOW ('open') AND rebuild
+    // into the A/B sibling in the background ('import' refreshInPlace, carrying
+    // prior). The dict is never unserved; new content lands next launch.
+    const items = reconcileImports(
+      [descriptor('A', 'en')],
+      [auditRow('A', 'en', 'a.en.db', 0)],
+      KEEP_HEALTHY(['a.en.db']),
+    );
+    expect(items).toEqual([
+      {bucket: 'open', row: auditRow('A', 'en', 'a.en.db', 0)},
+      {
+        bucket: 'import',
+        descriptor: descriptor('A', 'en'),
+        prior: auditRow('A', 'en', 'a.en.db', 0),
+        refreshInPlace: true,
+      },
+    ]);
+  });
+
+  it('current-version row + kept + healthy -> open-only (fast path, no re-import)', () => {
+    const items = reconcileImports(
+      [descriptor('A', 'en')],
+      [auditRow('A', 'en', 'a.en.db', IMPORTER_VERSION)],
+      KEEP_HEALTHY(['a.en.db']),
+    );
+    expect(items).toEqual([
+      {bucket: 'open', row: auditRow('A', 'en', 'a.en.db', IMPORTER_VERSION)},
+    ]);
+  });
+
+  it('stale + kept + UNhealthy slug -> import-only carrying prior (no paired open)', () => {
+    // An unhealthy slug can't be served, so there is no paired 'open' — just a
+    // RE-ADD carrying prior (builds into the sibling, repoints the audit row).
+    const items = reconcileImports(
+      [descriptor('A', 'en')],
+      [auditRow('A', 'en', 'a.en.db', 0)],
+      KEEP_HEALTHY([]), // slug DB missing
+    );
+    expect(items).toEqual([
+      {
+        bucket: 'import',
+        descriptor: descriptor('A', 'en'),
+        prior: auditRow('A', 'en', 'a.en.db', 0),
+      },
+    ]);
+  });
+
+  it('stale audit-only row (no descriptor, sources gone) still -> open (served as-is)', () => {
+    // No descriptor to rebuild from -> the stale DB is opened and served
+    // (bootstrap warns separately); it is NOT dropped, and there is no import.
+    const items = reconcileImports(
+      [],
+      [auditRow('A', 'en', 'a.en.db', 0)],
+      KEEP_HEALTHY(['a.en.db']),
+    );
+    expect(items).toEqual([{bucket: 'open', row: auditRow('A', 'en', 'a.en.db', 0)}]);
+  });
+
+  it('the refresh pair opens the audit row exactly once (no double-open)', () => {
+    const items = reconcileImports(
+      [descriptor('A', 'en')],
+      [auditRow('A', 'en', 'a.en.db', 0)],
+      KEEP_HEALTHY(['a.en.db']),
+    );
+    expect(items.filter(i => i.bucket === 'open')).toHaveLength(1);
+  });
+
+  it('keep=false is unaffected by the stamp (RE-ADD carrying prior)', () => {
+    const items = reconcileImports(
+      [descriptor('A', 'en')],
+      [auditRow('A', 'en', 'a.en.db', IMPORTER_VERSION)],
+      {keepSources: false, slugHealthy: new Set(['a.en.db'])},
+    );
+    expect(buckets(items)).toEqual(['import']);
   });
 });
 
@@ -484,12 +620,29 @@ const makeHarness = async (opts: {
 
 // runImport is mocked so bootstrap's (format-agnostic) dispatch is tested
 // without the full pipeline (that has its own suite). The mock reads the
-// outcome stashed on the fake ports by importPortsFor.
+// outcome stashed on the fake ports by importPortsFor, and — mirroring the
+// real spine's DURABLE side-effect — on success WRITES/REPOINTS the audit row
+// at the built filename (the injected A/B `targetFilename` when refreshing)
+// with the current importer version. The real produce/verify/file-IO is
+// skipped; only the audit swap (the pointer that bootstrap keys off) is real.
 jest.mock('../src/core/dict/sqlite/runImport', () => {
   const actual = jest.requireActual('../src/core/dict/sqlite/runImport');
+  const {upsertImport: mockUpsertImport} = jest.requireActual(
+    '../src/core/dict/sqlite/importAudit',
+  );
+  const {IMPORTER_VERSION: MOCK_IMPORTER_VERSION} = jest.requireActual(
+    '../src/core/dict/sqlite/schema',
+  );
   return {
     ...actual,
-    runImport: jest.fn(async (ports: Record<string, unknown>) => {
+    runImport: jest.fn(async (ports: Record<string, unknown>, logger?: unknown) => {
+      // C1 — REAL-spine opt-in: a test that wires genuine RunImportPorts (with a
+      // produceSlugDb/slugDb lifecycle) gets the ACTUAL runImport, so the audit
+      // swap + isCancelled + pre-clean are exercised mock-free. Fake ports carry
+      // __outcome instead and take the lightweight path below.
+      if (typeof ports.produceSlugDb === 'function') {
+        return actual.runImport(ports, logger);
+      }
       const outcome = ports.__outcome as {
         ok: boolean;
         filename?: string;
@@ -501,16 +654,31 @@ jest.mock('../src/core/dict/sqlite/runImport', () => {
       if (outcome.gate) {
         await outcome.gate;
       }
-      if (outcome.ok) {
-        return {
-          ok: true,
-          filename: outcome.filename,
-          entryCount: 1,
+      if (!outcome.ok) {
+        return {ok: false, reason: outcome.reason ?? 'import failed'};
+      }
+      // A refresh builds into the injected sibling slot; a fresh import uses
+      // the outcome's filename. Either way, upsertImport atomically repoints
+      // the audit row — the swap the real runImport performs.
+      const filename =
+        (ports.targetFilename as string | undefined) ?? outcome.filename;
+      if (ports.audit) {
+        await mockUpsertImport(ports.audit, {
           name: ports.__name,
           lang: ports.__lang,
-        };
+          entry_count: 1,
+          imported_at: 'mock',
+          filename,
+          importer_version: MOCK_IMPORTER_VERSION,
+        });
       }
-      return {ok: false, reason: outcome.reason ?? 'import failed'};
+      return {
+        ok: true,
+        filename,
+        entryCount: 1,
+        name: ports.__name,
+        lang: ports.__lang,
+      };
     }),
   };
 });
@@ -1231,6 +1399,417 @@ describe('bootstrap — F4 legacy host without a slug probe', () => {
   });
 });
 
+describe('bootstrap — importer-version auto-refresh of stale user dicts', () => {
+  it('refresh SUCCESS repoints the audit row to the sibling + stamps current, keeps the dict registered once', async () => {
+    // The headline: an already-imported dict built by an OLD importer (stamp 0),
+    // sources kept + slug healthy. It SERVES from the old slug this session AND
+    // the rebuild repoints the audit row to the A/B sibling, stamped current.
+    const h = await makeHarness({
+      keepSeed: true,
+      descriptors: [descriptor('Stale', 'en')],
+      auditSeed: async db => {
+        await upsertImport(db, auditRow('Stale', 'en', 'stale.en.db', 0));
+      },
+    });
+    const handle = await bootstrap(h.ports);
+    await handle.importsSettled;
+    // A refresh WAS dispatched, always with keep=true (never delete a refresh's
+    // sources) — unlike the current-version fast path where nothing dispatches.
+    expect(h.keepSourcesSeen).toEqual([true]);
+    // The dict is registered EXACTLY once (served from the paired 'open'); the
+    // refresh did NOT splice a second source (no double-register / fan-out).
+    expect(handle.allSources.filter(s => s.name === 'Stale')).toHaveLength(1);
+    expect(handle.sources.filter(s => s.name === 'Stale')).toHaveLength(1);
+    // The audit row is atomically repointed to the sibling slot + stamped
+    // current — so the NEXT bootstrap opens the refreshed content.
+    const audited = await findImportByNameLang(h.userDb, 'Stale', 'en');
+    expect(audited).toMatchObject({
+      filename: refreshTargetFilename('stale.en.db'),
+      importer_version: IMPORTER_VERSION,
+    });
+  });
+
+  it('the refreshed F7 record points at the sibling: a same-session Remove unlinks BOTH slots', async () => {
+    const h = await makeHarness({
+      keepSeed: true,
+      withDeletePorts: true,
+      descriptors: [descriptor('Stale', 'en')],
+      auditSeed: async db => {
+        await upsertImport(db, auditRow('Stale', 'en', 'stale.en.db', 0));
+      },
+    });
+    const handle = await bootstrap(h.ports);
+    await handle.importsSettled;
+    const res = await handle.deleteImportedDict(identityKey('Stale', 'en'));
+    expect(res.ok).toBe(true);
+    // The live F7 record was repointed to the sibling, so Remove unlinks the
+    // sibling (the file the audit now names) AND its old slot (the sibling of
+    // the sibling) — both A/B slots gone.
+    expect(h.deletedFiles).toContain(`/plugin/${refreshTargetFilename('stale.en.db')}`);
+    expect(h.deletedFiles).toContain('/plugin/stale.en.db');
+  });
+
+  it('refresh FAILURE serves the OLD DB, leaves the audit row byte-identical, and retries next boot', async () => {
+    let importShouldFail = true;
+    const h = await makeHarness({
+      keepSeed: true,
+      descriptors: [descriptor('Stale', 'en')],
+      auditSeed: async db => {
+        await upsertImport(db, auditRow('Stale', 'en', 'stale.en.db', 0));
+      },
+      // The rebuild fails (produce throws) -> runImport returns before the
+      // audit swap, so the old row is untouched.
+      importOutcome: () =>
+        importShouldFail
+          ? {ok: false, reason: 'produce boom'}
+          : {ok: true, filename: refreshTargetFilename('stale.en.db')},
+    });
+    const handle = await bootstrap(h.ports, {warn: jest.fn()});
+    await handle.importsSettled;
+    // The dict still SERVES (the paired 'open' registered it against the old DB).
+    expect(handle.sources.filter(s => s.name === 'Stale')).toHaveLength(1);
+    const res = await handle.lookup.lookup('stale.en.db');
+    expect(res.hits.some((hit: {source: string}) => hit.source === 'Stale')).toBe(true);
+    // The audit row is byte-identical to the seed (old filename + stamp 0) —
+    // nothing swapped, so the refresh is retried on the next bootstrap.
+    expect(await findImportByNameLang(h.userDb, 'Stale', 'en')).toEqual(
+      auditRow('Stale', 'en', 'stale.en.db', 0),
+    );
+
+    // 2nd bootstrap over the SAME (still-stale) audit row: the refresh is
+    // dispatched AGAIN (retry-once-per-bootstrap) — and this time succeeds.
+    importShouldFail = false;
+    const handle2 = await bootstrap(h.ports, {warn: jest.fn()});
+    await handle2.importsSettled;
+    expect(h.keepSourcesSeen).toEqual([true, true]);
+    expect(await findImportByNameLang(h.userDb, 'Stale', 'en')).toMatchObject({
+      filename: refreshTargetFilename('stale.en.db'),
+      importer_version: IMPORTER_VERSION,
+    });
+  });
+
+  it('the SECOND bootstrap after a successful refresh opens the sibling and SWEEPS the old slot', async () => {
+    // Boot 1: refresh succeeds (audit -> sibling, stamped current). Boot 2: the
+    // audit points at the sibling, healthy + current -> open-only; step 5 sweeps
+    // the now-dead old slot via the delete port.
+    const sibling = refreshTargetFilename('stale.en.db');
+    let seeded = false;
+    const h = await makeHarness({
+      keepSeed: true,
+      withDeletePorts: true,
+      // Both slots read as healthy so boot 2 opens the sibling (current) fast.
+      slugHealthy: () => true,
+      descriptors: [descriptor('Stale', 'en')],
+      auditSeed: async db => {
+        if (!seeded) {
+          seeded = true;
+          await upsertImport(db, auditRow('Stale', 'en', 'stale.en.db', 0));
+        }
+      },
+    });
+    const handle1 = await bootstrap(h.ports);
+    await handle1.importsSettled;
+    // After boot 1 the audit names the sibling, stamped current.
+    expect(await findImportByNameLang(h.userDb, 'Stale', 'en')).toMatchObject({
+      filename: sibling,
+      importer_version: IMPORTER_VERSION,
+    });
+
+    const handle2 = await bootstrap(h.ports);
+    await handle2.importsSettled;
+    // Boot 2 fast-paths to open (no re-dispatch) and sweeps the dead OLD slot.
+    expect(h.keepSourcesSeen).toEqual([true]); // only boot 1 dispatched
+    expect(h.deletedFiles).toContain('/plugin/stale.en.db'); // old slot swept
+  });
+
+  it('a current-version kept + healthy set does NOT re-import (fast path, no dispatch)', async () => {
+    // The contrast case: identical setup but a CURRENT stamp -> 'open', no
+    // import dispatched (proves the staleness gate, not just "always import").
+    const h = await makeHarness({
+      keepSeed: true,
+      descriptors: [descriptor('Current', 'en')],
+      auditSeed: async db => {
+        await upsertImport(db, auditRow('Current', 'en', 'current.en.db'));
+      },
+    });
+    const handle = await bootstrap(h.ports);
+    await handle.importsSettled;
+    expect(h.keepSourcesSeen).toEqual([]);
+    expect(handle.sources.filter(s => s.name === 'Current')).toHaveLength(1);
+  });
+
+  it('a stale AUDIT-ONLY row (sources gone) is served as-is and WARNS the user', async () => {
+    // No descriptor on disk -> nothing to re-import from. The stale DB opens
+    // and serves (base + this dict still work), but bootstrap warns so the
+    // user knows to re-drop the sources / Remove + re-add to refresh.
+    const warn = jest.fn();
+    const h = await makeHarness({
+      keepSeed: true,
+      // No descriptors: the audit row has no matching source set on disk.
+      auditSeed: async db => {
+        await upsertImport(db, auditRow('Orphan', 'de', 'orphan.de.db', 0));
+      },
+    });
+    const handle = await bootstrap(h.ports, {warn});
+    await handle.importsSettled;
+    // Still served (present in the live sources), no re-import dispatched.
+    expect(handle.sources.filter(s => s.name === 'Orphan')).toHaveLength(1);
+    expect(h.keepSourcesSeen).toEqual([]);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('serving old DB for "Orphan"'),
+    );
+  });
+
+  it('a current-version audit-only row does NOT warn', async () => {
+    const warn = jest.fn();
+    const h = await makeHarness({
+      keepSeed: true,
+      auditSeed: async db => {
+        await upsertImport(db, auditRow('Fresh', 'de', 'fresh.de.db'));
+      },
+    });
+    const handle = await bootstrap(h.ports, {warn});
+    await handle.importsSettled;
+    expect(warn).not.toHaveBeenCalledWith(
+      expect.stringContaining('serving old DB'),
+    );
+  });
+
+  it('does NOT fire the first-run keep/delete prompt on a staleness-only upgrade (PLAUSIBLE-4)', async () => {
+    // Flag unset + a stale kept+healthy dict: the wouldImport probe excludes
+    // refresh-in-place rebuilds, so a pure version-bump upgrade never triggers
+    // the prompt — the refresh still runs (always keep=true).
+    const prompt = jest.fn(async () => false);
+    const h = await makeHarness({
+      promptKeepDelete: prompt,
+      descriptors: [descriptor('Stale', 'en')],
+      auditSeed: async db => {
+        await upsertImport(db, auditRow('Stale', 'en', 'stale.en.db', 0));
+      },
+    });
+    const handle = await bootstrap(h.ports);
+    await handle.importsSettled;
+    expect(prompt).not.toHaveBeenCalled();
+    expect(h.keepSourcesSeen).toEqual([true]);
+  });
+
+  it('DOES fire the prompt when a genuinely NEW descriptor is pending alongside a stale refresh', async () => {
+    const prompt = jest.fn(async () => true);
+    const h = await makeHarness({
+      promptKeepDelete: prompt,
+      descriptors: [descriptor('Stale', 'en'), descriptor('New', 'en')],
+      auditSeed: async db => {
+        await upsertImport(db, auditRow('Stale', 'en', 'stale.en.db', 0));
+      },
+    });
+    const handle = await bootstrap(h.ports);
+    await handle.importsSettled;
+    // The NEW dict is a real import (not refreshInPlace) -> wouldImport true.
+    expect(prompt).toHaveBeenCalledTimes(1);
+  });
+});
+
+// --- Round-3: sentinel HEAD parity + sweep + real-spine swap ---------
+
+describe('bootstrap — sentinel (forceRefresh) HEAD parity (NEW-4)', () => {
+  const sentinel = (name: string): ImportJobDescriptor => ({
+    ...descriptor(name, 'en'),
+    forceRefresh: true,
+    refreshPath: `/d/${name}/.refresh`,
+  });
+
+  it('splices the NEW file THIS session (import-only, not the silent pair)', async () => {
+    const h = await makeHarness({
+      keepSeed: true,
+      descriptors: [sentinel('Sentinel')],
+      auditSeed: async db => {
+        await upsertImport(db, auditRow('Sentinel', 'en', 'sentinel.en.db'));
+      },
+    });
+    const handle = await bootstrap(h.ports);
+    await handle.importsSettled;
+    // Dispatched + spliced this session (HEAD parity) — present exactly once.
+    expect(h.keepSourcesSeen).toEqual([true]);
+    expect(handle.sources.filter(s => s.name === 'Sentinel')).toHaveLength(1);
+  });
+
+  it('respects the keepSources flag (NOT forced true like a silent refresh)', async () => {
+    const h = await makeHarness({
+      keepSeed: false, // user chose delete
+      descriptors: [sentinel('Sentinel')],
+      auditSeed: async db => {
+        await upsertImport(db, auditRow('Sentinel', 'en', 'sentinel.en.db'));
+      },
+    });
+    const handle = await bootstrap(h.ports);
+    await handle.importsSettled;
+    // A sentinel is import-only, so keep follows the resolved flag (false here);
+    // only the silent refreshInPlace path forces keep=true.
+    expect(h.keepSourcesSeen).toEqual([false]);
+  });
+});
+
+describe('bootstrap — step-5 A/B sibling sweep (C2)', () => {
+  it('sweeps the dead sibling slot for a plain open (fire-and-forget)', async () => {
+    const h = await makeHarness({
+      keepSeed: true,
+      withDeletePorts: true,
+      descriptors: [descriptor('Current', 'en')],
+      auditSeed: async db => {
+        // Current stamp -> open-only (not refreshing), so the sibling is swept.
+        await upsertImport(db, auditRow('Current', 'en', 'current.en.db'));
+      },
+    });
+    const handle = await bootstrap(h.ports);
+    await handle.importsSettled;
+    expect(h.deletedFiles).toContain(
+      `/plugin/${refreshTargetFilename('current.en.db')}`,
+    );
+  });
+
+  it('does NOT sweep the sibling of an identity being refreshed this boot', async () => {
+    const h = await makeHarness({
+      keepSeed: true,
+      withDeletePorts: true,
+      descriptors: [descriptor('Stale', 'en')],
+      auditSeed: async db => {
+        // Stale -> the refresh PAIR; step 7 owns the sibling, so step 5 must
+        // NOT sweep it (that is the race the exclusion prevents).
+        await upsertImport(db, auditRow('Stale', 'en', 'stale.en.db', 0));
+      },
+    });
+    const handle = await bootstrap(h.ports);
+    await handle.importsSettled;
+    expect(h.deletedFiles).not.toContain(
+      `/plugin/${refreshTargetFilename('stale.en.db')}`,
+    );
+  });
+});
+
+// C1 — the audit swap contract covered MOCK-FREE: these drive bootstrap's
+// refresh dispatch through the REAL runImport (the mock delegates when it sees
+// genuine RunImportPorts). Real produce + verify + upsert + isCancelled.
+describe('bootstrap — real-spine refresh (C1)', () => {
+  // A factory of REAL RunImportPorts over temp-file slugs. produce writes ONE
+  // row; verify reads a fresh in-memory 1-row DB (so it is independent of the
+  // file, which a concurrent Remove may unlink); discard unlinks the temp slug.
+  const realPortsFactory = (
+    dir: string,
+    slugPaths: Map<string, string>,
+    gate?: Promise<void>,
+  ) => {
+    return (
+      d: ImportJobDescriptor,
+      audit: SqliteDb,
+      keepSources: boolean,
+    ): RunImportPorts => ({
+      sidecarText: JSON.stringify(d.sidecar),
+      produceSlugDb: async (filename: string) => {
+        const path = join(dir, filename);
+        slugPaths.set(filename, path);
+        const db = (await openBetterSqliteDb(path)()) as SqliteDb;
+        await db.run(CREATE_ENTRIES_TABLE);
+        await db.run(INSERT_CSV_ENTRY, ['k', 'w', 'd', 'plain', null]);
+        await db.close();
+        if (gate) {
+          await gate; // hold the import in-flight so a Remove can interleave
+        }
+        return {entryCount: 1};
+      },
+      keepSources,
+      deleteFile: async () => undefined,
+      sourcePaths: [],
+      slugDb: {
+        reopenForVerify: async () =>
+          createSeededDb(async dd => {
+            await dd.run(CREATE_ENTRIES_TABLE);
+            await dd.run(INSERT_CSV_ENTRY, ['k', 'w', 'd', 'plain', null]);
+          }),
+        discard: async (filename: string) => {
+          const p = slugPaths.get(filename);
+          if (p !== undefined) {
+            rmSync(p, {force: true});
+          }
+        },
+      },
+      audit,
+      now: () => '2026-06-08T00:00:00Z',
+    });
+  };
+
+  it('happy-path refresh repoints the audit to the sibling + stamps current (real upsert)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'bootrefresh-'));
+    const slugPaths = new Map<string, string>();
+    const h = await makeHarness({
+      keepSeed: true,
+      descriptors: [descriptor('Stale', 'en')],
+      auditSeed: async db => {
+        await upsertImport(db, auditRow('Stale', 'en', 'stale.en.db', 0));
+      },
+    });
+    h.ports.importPortsFor = realPortsFactory(dir, slugPaths);
+    const handle = await bootstrap(h.ports);
+    await handle.importsSettled;
+    // The REAL upsert repointed the audit row to the sibling, stamped current.
+    expect(await findImportByNameLang(h.userDb, 'Stale', 'en')).toMatchObject({
+      filename: refreshTargetFilename('stale.en.db'),
+      importer_version: IMPORTER_VERSION,
+    });
+    // Still registered exactly once (served from the paired open, not re-spliced).
+    expect(handle.allSources.filter(s => s.name === 'Stale')).toHaveLength(1);
+  });
+
+  it('Remove during an in-flight refresh leaves NO zombie audit row (isCancelled + real spine)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'bootzombie-'));
+    const slugPaths = new Map<string, string>();
+    let release!: () => void;
+    const gate = new Promise<void>(res => {
+      release = res;
+    });
+    const h = await makeHarness({
+      keepSeed: true,
+      withDeletePorts: true,
+      descriptors: [descriptor('Zombie', 'en')],
+      auditSeed: async db => {
+        await upsertImport(db, auditRow('Zombie', 'en', 'zombie.en.db', 0));
+      },
+    });
+    h.ports.importPortsFor = realPortsFactory(dir, slugPaths, gate);
+    const handle = await bootstrap(h.ports);
+    // The refresh is in-flight (gated). Remove the dict, THEN release.
+    const del = handle.deleteImportedDict(identityKey('Zombie', 'en'));
+    release();
+    await Promise.all([del, handle.importsSettled]);
+    // No zombie: the cancelled refresh never re-wrote the audit row the Remove
+    // dropped, and the dict is gone from the registry.
+    expect(await findImportByNameLang(h.userDb, 'Zombie', 'en')).toBeNull();
+    expect(handle.allSources.map(s => s.name)).not.toContain('Zombie');
+  });
+
+  it('R3-0: two same-stem FRESH imports serialize -> distinct slugs, both audited', async () => {
+    // "Foo!" and "Foo?" both slug to "foo" in the same lang. Without step-7
+    // group-serialization they would both resolveSlugCollision to foo.en.db
+    // before either wrote its audit row (a collision). Grouped + serial, the
+    // second sees the first's committed row and falls back to foo-2.en.db.
+    const dir = mkdtempSync(join(tmpdir(), 'bootstem-'));
+    const slugPaths = new Map<string, string>();
+    const h = await makeHarness({
+      descriptors: [descriptor('Foo!', 'en'), descriptor('Foo?', 'en')],
+    });
+    h.ports.importPortsFor = realPortsFactory(dir, slugPaths);
+    const handle = await bootstrap(h.ports);
+    await handle.importsSettled;
+    // Both imports committed an audit row...
+    const foo1 = await findImportByNameLang(h.userDb, 'Foo!', 'en');
+    const foo2 = await findImportByNameLang(h.userDb, 'Foo?', 'en');
+    expect(foo1).not.toBeNull();
+    expect(foo2).not.toBeNull();
+    // ...at DISTINCT slug files: the first claims the base, the second -2.
+    const filenames = [foo1!.filename, foo2!.filename].sort();
+    expect(filenames).toEqual(['foo-2.en.db', 'foo.en.db']);
+  });
+});
+
 // --- F7: delete an already-imported dictionary ----------------------
 // The Dune prefKey is identityKey('Dune', 'en') (imports key on name+lang).
 const DUNE_KEY = identityKey('Dune', 'en');
@@ -1291,6 +1870,18 @@ describe('bootstrap — F7 deleteImportedDict (full removal, AC1)', () => {
     const res = await handle.lookup.lookup('hello');
     expect(res.hits.some((hit: {source: string}) => hit.source === 'Dune')).toBe(
       false,
+    );
+  });
+
+  it('unlinks BOTH A/B slug slots (the audited file AND its sibling)', async () => {
+    const h = await seedDune();
+    const handle = await bootstrap(h.ports);
+    await handle.deleteImportedDict(DUNE_KEY);
+    // A refresh may have left the sibling on disk (audit points at the base);
+    // Remove must clear both slots so neither lingers or resurrects.
+    expect(h.deletedFiles).toContain('/plugin/dune.en.db');
+    expect(h.deletedFiles).toContain(
+      `/plugin/${refreshTargetFilename('dune.en.db')}`,
     );
   });
 

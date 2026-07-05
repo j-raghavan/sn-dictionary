@@ -8,10 +8,12 @@
 // dict/wordnet/{base.ifo, base.idx, base.dict.dz}. Idempotent — skips
 // the download if all three target files already exist.
 //
-// Extraction shells out to `tar -xjf`. macOS/Linux always ship a tar
-// with bzip2 support; Windows 10 1803+ (April 2018) ships a libarchive-
-// based tar.exe that also supports bzip2, so this works on every host
-// the project targets.
+// Extraction is done IN-PROCESS (unbzip2-stream -> node-tar), not by
+// shelling out to the platform's `tar`. The system tar was a portability
+// hazard: the Windows runner image's bundled tar.exe hangs extracting
+// bzip2 in CI, and a spawned tar with an inherited stdio can block. A
+// pure-Node pipe extracts identically on every host with no external
+// binary and no TTY coupling.
 //
 // License note: this StarDict pack repackages Princeton WordNet 2.x,
 // which is distributed under the WordNet license (BSD-style, free for
@@ -19,13 +21,14 @@
 //   https://wordnet.princeton.edu/license-and-commercial-use
 
 import {mkdir, rm, rename, stat, readFile} from 'node:fs/promises';
-import {createWriteStream} from 'node:fs';
+import {createReadStream, createWriteStream} from 'node:fs';
 import {createHash} from 'node:crypto';
 import {dirname, join} from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {spawn} from 'node:child_process';
 import {Readable} from 'node:stream';
 import {pipeline} from 'node:stream/promises';
+import bz2 from 'unbzip2-stream';
+import {extract as tarExtract} from 'tar';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = join(__dirname, '..');
@@ -88,15 +91,11 @@ const verifyDigest = async (path, expected) => {
   }
 };
 
-const runTar = (cwd, archive) =>
-  new Promise((resolve, reject) => {
-    const child = spawn('tar', ['-xjf', archive], {cwd, stdio: 'inherit'});
-    child.on('error', reject);
-    child.on('close', (code) => {
-      if (code === 0) resolve();
-      else reject(new Error(`tar exited with code ${code}`));
-    });
-  });
+// Decompress the .tar.bz2 and unpack it under `cwd`, entirely in-process:
+// read stream -> bzip2 decompressor -> tar extractor. pipeline() rejects
+// on any stage error and resolves only once every entry is written.
+const extractTarBz2 = (cwd, archive) =>
+  pipeline(createReadStream(join(cwd, archive)), bz2(), tarExtract({cwd}));
 
 const main = async () => {
   const ifoPath = join(DICT_DIR, 'base.ifo');
@@ -121,7 +120,7 @@ const main = async () => {
   await verifyDigest(archivePath, EXPECTED_SHA256);
 
   writeColor('Extracting ...', 'Blue');
-  await runTar(DICT_DIR, ARCHIVE_NAME);
+  await extractTarBz2(DICT_DIR, ARCHIVE_NAME);
 
   // Normalise file names so the build script doesn't depend on the
   // archive's internal naming convention.

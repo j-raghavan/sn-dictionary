@@ -161,6 +161,29 @@ export const hideDefinition = (): void => {
   emit({visible: false});
 };
 
+// How fresh the native tool reading must be for a backdrop tap to act on
+// it. The observer's toolDown (ACTION_DOWN) precedes the Pressable onPress
+// (ACTION_UP) by the tap duration; anything older is a stale reading left
+// over from an earlier gesture and must NOT authorise a close.
+export const BACKDROP_TAP_RECENCY_MS = 400;
+
+// Pen-only tap-outside-to-close policy (#32). Given the stamped tool
+// reading of the tap that landed on the backdrop and the current clock,
+// decide whether it should dismiss the popup. ONLY a recent stylus tip
+// dismisses: eraser is deliberately EXCLUDED (the issue asked for the pen
+// TIP; flip to `=== 'stylus' || === 'eraser'` in one line if that
+// changes). A null reading (no native signal) or a reading older than the
+// recency window → false, so a missing/ambiguous/stale signal is a
+// fail-safe no-close, never a wrong dismiss.
+export const shouldDismissOnBackdropTap = (
+  reading: {tool: string; at: number} | null,
+  now: number,
+  windowMs: number = BACKDROP_TAP_RECENCY_MS,
+): boolean =>
+  reading !== null &&
+  reading.tool === 'stylus' &&
+  now - reading.at <= windowMs;
+
 // Open the Settings panel, stashing the result the user was viewing so
 // Back can restore it verbatim (F1). `snapshot` is undefined when opened
 // from a non-result state (e.g. nothing to return to).

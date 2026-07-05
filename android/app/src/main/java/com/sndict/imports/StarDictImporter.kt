@@ -35,6 +35,12 @@ import java.util.zip.GZIPInputStream
 //     transaction, so only a single definition String is ever live.
 // The output DB is byte-identical to the prior all-in-heap version —
 // only HOW we read the body and WHEN we insert changed.
+//
+// IMPORTER VERSIONING: any import- or render-affecting change to the logic
+// here (parse, dedup, type-byte stripping, format mapping, insert) MUST be
+// paired with a +1 bump of IMPORTER_VERSION in schema.ts, so a user-dict DB
+// this importer produced is re-imported at bootstrap once the stamp falls
+// behind. There is no Kotlin-side constant — schema.ts holds the single one.
 
 private const val SCHEMA_VERSION = 3 // MUST match buildBaseDb.ts SCHEMA_VERSION (v3: + phonetic col, ADR-0008)
 
@@ -311,7 +317,11 @@ object StarDictImporter {
     formatOverride: String?,
     builtAt: String,
   ): Int {
-    // Start clean so reruns are deterministic.
+    // Start clean so reruns are deterministic. This DELIBERATELY duplicates the
+    // TS spine's pre-clean discard(target) (runImport.ts): the native module
+    // must be standalone-correct regardless of who calls it, so it never relies
+    // on the caller having cleaned the slot. The CSV produce-step, by contrast,
+    // dropped its own DELETE and leans on the spine (JS-only path).
     File(dbPath).delete()
     val db = SQLiteDatabase.openOrCreateDatabase(dbPath, null)
     val seen = HashSet<String>()

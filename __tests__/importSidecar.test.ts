@@ -3,6 +3,7 @@
 import {
   parseCsvConfig,
   parseSidecar,
+  refreshTargetFilename,
   slugDbFilename,
   slugForName,
 } from '../src/core/dict/sqlite/importSidecar';
@@ -127,6 +128,46 @@ describe('slugDbFilename', () => {
 
   it('falls back to dict-<lang> when the name slugs to empty', () => {
     expect(slugDbFilename('!!!', 'de')).toBe('dict-de.de.db');
+  });
+});
+
+// --- refreshTargetFilename (A/B slug slots) ------------------------
+describe('refreshTargetFilename', () => {
+  it('toggles the base slot to its .alt sibling and back (round-trip)', () => {
+    expect(refreshTargetFilename('dune.en.db')).toBe('dune.en.alt.db');
+    expect(refreshTargetFilename('dune.en.alt.db')).toBe('dune.en.db');
+    // Round-trip: two toggles return the original.
+    expect(refreshTargetFilename(refreshTargetFilename('dune.en.db'))).toBe(
+      'dune.en.db',
+    );
+  });
+
+  it('works for the und language and the empty-name fallback shape', () => {
+    expect(refreshTargetFilename('dict-und.und.db')).toBe('dict-und.und.alt.db');
+    expect(refreshTargetFilename('dict-und.und.alt.db')).toBe('dict-und.und.db');
+  });
+
+  it('tolerates a filename without the .db suffix (defensive: appends .alt.db)', () => {
+    // No real slug filename lacks .db, but the helper must not mangle one that
+    // does — the stem is the whole string, so it gains a sibling suffix.
+    expect(refreshTargetFilename('weird-name')).toBe('weird-name.alt.db');
+  });
+
+  it("the sibling never collides with any slugDbFilename output ('.alt.db' is unreachable)", () => {
+    // slugForName yields only [a-z0-9-] and langs are two letters or 'und', so
+    // no real slug filename can end '.alt.db' — the sibling namespace is
+    // disjoint from the base namespace, so an A/B pair never clashes with
+    // another dict's base file.
+    const bases = [
+      slugDbFilename('Dune Glossary', 'en'),
+      slugDbFilename('cooking terms', 'und'),
+      slugDbFilename('!!!', 'de'),
+      slugDbFilename('alt', 'en'),
+    ];
+    for (const base of bases) {
+      expect(base.endsWith('.alt.db')).toBe(false);
+      expect(refreshTargetFilename(base).endsWith('.alt.db')).toBe(true);
+    }
   });
 });
 

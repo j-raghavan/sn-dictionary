@@ -9,21 +9,21 @@
 // Every helper is TOTAL and DEGRADES gracefully: a null user.db (the
 // degraded-bootstrap case) yields defaults on reads ([] / null) and a
 // logged no-op on writes — the caller keeps working against base.db
-// without persistence, mirroring userEntries.ts / importAudit.ts. The
-// upsert path reuses the DELETE+INSERT-in-a-transaction pattern so a
-// re-write of the same key never leaves either zero or two rows.
+// without persistence, mirroring userEntries.ts / importAudit.ts. Writes
+// are single-statement INSERT OR REPLACE upserts over the PRIMARY KEY (no
+// transaction), so a re-write of the same key is atomic on device — where
+// each statement autocommits and no multi-statement transaction survives.
 
 import type {SqliteDb} from './db';
 import {
   CREATE_APP_SETTINGS_TABLE,
   CREATE_DICT_PREFS_TABLE,
   CREATE_USER_META_TABLE,
-  DELETE_APP_SETTING,
   DELETE_DICT_PREF,
-  INSERT_APP_SETTING,
-  INSERT_DICT_PREF,
   SELECT_APP_SETTING,
   SELECT_DICT_PREFS_ALL,
+  UPSERT_APP_SETTING,
+  UPSERT_DICT_PREF,
   type AppSettingRow,
   type DictPrefRow,
 } from './schema';
@@ -115,8 +115,10 @@ export const readDictPrefs = async (
   }));
 };
 
-// Replace any existing row for pref.prefKey with the new one in a SINGLE
-// transaction (mirror upsertImport). null db -> warn + no-op (degraded).
+// Replace any existing row for pref.prefKey with the new one in ONE statement
+// (INSERT OR REPLACE over the pref_key PRIMARY KEY — mirror upsertImport). No
+// transaction: on device each statement autocommits, so the atomicity lives in
+// the statement. null db -> warn + no-op (degraded).
 export const upsertDictPref = async (
   db: SqliteDb | null,
   pref: DictPref,
@@ -126,22 +128,22 @@ export const upsertDictPref = async (
     logger?.warn('[settings] user.db unavailable — dict pref not persisted');
     return;
   }
-  await db.transaction(async tx => {
-    await tx.run(DELETE_DICT_PREF, [pref.prefKey]);
-    await tx.run(INSERT_DICT_PREF, [
-      pref.prefKey,
-      pref.name,
-      pref.enabled ? 1 : 0,
-      pref.sortOrder,
-    ]);
-  });
+  await db.run(UPSERT_DICT_PREF, [
+    pref.prefKey,
+    pref.name,
+    pref.enabled ? 1 : 0,
+    pref.sortOrder,
+  ]);
 };
 
-// Persist a WHOLE pref set atomically (F3): every row is DELETE+INSERTed
-// inside ONE transaction, so a write that reorders/toggles the entire
-// list can never leave dict_prefs in a partially-updated state. null db
-// -> warn + no-op (degraded). Mirrors upsertDictPref's DELETE-then-INSERT
-// per key, batched.
+// Persist a WHOLE pref set (F3) as a plain loop of single-statement upserts —
+// each row INSERT OR REPLACEd in one autocommitting statement. Whole-set
+// atomicity was never real on device (no cross-statement transaction survives),
+// so this stops claiming it: a process kill mid-loop leaves earlier rows NEW
+// and later rows OLD — every row individually intact, never the old failure of
+// a row VANISHING between a DELETE and its INSERT. Keys ABSENT from `prefs` are
+// intentionally left untouched (F7's removeDictPref owns deletion) — the loop
+// preserves the prior behaviour exactly. null db -> warn + no-op (degraded).
 export const setDictPrefs = async (
   db: SqliteDb | null,
   prefs: DictPref[],
@@ -151,17 +153,14 @@ export const setDictPrefs = async (
     logger?.warn('[settings] user.db unavailable — dict prefs not persisted');
     return;
   }
-  await db.transaction(async tx => {
-    for (const pref of prefs) {
-      await tx.run(DELETE_DICT_PREF, [pref.prefKey]);
-      await tx.run(INSERT_DICT_PREF, [
-        pref.prefKey,
-        pref.name,
-        pref.enabled ? 1 : 0,
-        pref.sortOrder,
-      ]);
-    }
-  });
+  for (const pref of prefs) {
+    await db.run(UPSERT_DICT_PREF, [
+      pref.prefKey,
+      pref.name,
+      pref.enabled ? 1 : 0,
+      pref.sortOrder,
+    ]);
+  }
 };
 
 // F7 — delete one source's dict_prefs row by prefKey. Idempotent (an
@@ -248,8 +247,9 @@ export const getAppSetting = async (
   return rows.length > 0 ? rows[0].value : null;
 };
 
-// Replace any existing value for `key` in a SINGLE transaction. null db ->
-// warn + no-op (degraded).
+// Replace any existing value for `key` in ONE statement (INSERT OR REPLACE over
+// the key PRIMARY KEY). No transaction — atomicity is in the statement. null db
+// -> warn + no-op (degraded).
 export const setAppSetting = async (
   db: SqliteDb | null,
   key: string,
@@ -260,10 +260,7 @@ export const setAppSetting = async (
     logger?.warn('[settings] user.db unavailable — app setting not persisted');
     return;
   }
-  await db.transaction(async tx => {
-    await tx.run(DELETE_APP_SETTING, [key]);
-    await tx.run(INSERT_APP_SETTING, [key, value]);
-  });
+  await db.run(UPSERT_APP_SETTING, [key, value]);
 };
 
 // --- F4: opt-in post-import source deletion -------------------------

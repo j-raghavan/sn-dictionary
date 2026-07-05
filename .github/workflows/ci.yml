@@ -69,6 +69,14 @@ jobs:
         with:
           node-version: 20
           cache: npm
+      # windows-latest ships Visual Studio 2026 (v18). node-gyp gained VS
+      # 2026 support in node-gyp 12.1.0 (bundled from npm 11.6.3); Node 20's
+      # default npm bundles node-gyp 10, which reads VS 2026 as "unknown
+      # version undefined" and fails the better-sqlite3 native build during
+      # `npm ci` (better-sqlite3 is a real build dep — scripts/buildBaseDb.mjs
+      # uses it). Upgrade npm so the compile works on the current image
+      # rather than pinning to the soon-retired windows-2022.
+      - run: npm install -g npm@latest
       - run: npm ci
       - name: Build plugin
         shell: pwsh

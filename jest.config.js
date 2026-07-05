@@ -40,6 +40,10 @@ module.exports = {
     // (unbound off-device); the copy reducer + popup handlers are
     // host-tested with it mocked.
     '/src/native/clipboard\\.ts$',
+    // Device-only pen-tool observer shim — requireNativeComponent isn't
+    // bound off-device; the dismiss policy (shouldDismissOnBackdropTap)
+    // and the popup wiring are host-tested with it mocked.
+    '/src/native/penToolObserver\\.ts$',
   ],
   collectCoverageFrom: [
     'src/**/*.{ts,tsx}',
