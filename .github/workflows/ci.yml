@@ -60,9 +60,14 @@ jobs:
           retention-days: 30
 
   build-windows:
-    name: Build (windows-latest)
+    name: Build (windows-2022)
     needs: [lint, test]
-    runs-on: windows-latest
+    # Pinned off windows-latest: the newer image ships Visual Studio 18,
+    # which node-gyp 10 can't parse ("unknown version undefined"), so the
+    # better-sqlite3 native rebuild during `npm ci` fails. VS 2022 on
+    # windows-2022 is recognised. (better-sqlite3 is a dev/test dep only;
+    # this job just guards buildPlugin.ps1, which doesn't use it.)
+    runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
