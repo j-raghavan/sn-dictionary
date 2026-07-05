@@ -1,8 +1,12 @@
 import {buildCopyText, entryToPlainText} from '../src/ui/copyText';
 import {htmlToPlainText} from '../src/ui/htmlToPlainText';
 import {htmlToSpans} from '../src/ui/htmlToSpans';
+import {fvdpEntryToPlainText, parseFvdpEntry} from '../src/ui/fvdpFormatter';
 import type {DefinitionFormat, SourceHit} from '../src/core/lookup';
 import type {ThesaurusResult} from '../src/core/dict/sqlite/thesaurusLookup';
+import corpus from './_fixtures/renderParityCorpus.json';
+
+const fvdpCorpus = corpus.fvdp as Record<string, string>;
 
 const hit = (
   source: string,
@@ -16,6 +20,29 @@ describe('entryToPlainText', () => {
     expect(entryToPlainText(hit('User', 'apple', 'a fruit', 'plain'))).toBe(
       'a fruit',
     );
+  });
+
+  test('plain FVDP entry copies the STRUCTURED text, not the raw marker soup', () => {
+    // Mirrors SourceSection's plain routing so the clipboard matches the
+    // on-screen structured render — not the `* … - … =…+…` raw body.
+    const def = fvdpCorpus.froncer;
+    const out = entryToPlainText(hit('Dict', 'froncer', def, 'plain'));
+    expect(out).toBe(fvdpEntryToPlainText(parseFvdpEntry(def)));
+    expect(out).toContain('ngoại động từ');
+    expect(out).not.toContain('=Froncer'); // raw marker gone
+  });
+
+  test('plain entry carrying real HTML copies tag-free text', () => {
+    const out = entryToPlainText(
+      hit('Dict', 'x', 'lead <b>bold</b> tail', 'plain'),
+    );
+    expect(out).toBe(htmlToPlainText('lead <b>bold</b> tail'));
+    expect(out).not.toMatch(/[<>]/);
+  });
+
+  test('plain entry that is neither HTML nor FVDP stays verbatim', () => {
+    const def = 'just some ordinary prose with a - dash and = sign';
+    expect(entryToPlainText(hit('Dict', 'x', def, 'plain'))).toBe(def);
   });
 
   test('html format is reduced to tag-free text (no angle brackets)', () => {

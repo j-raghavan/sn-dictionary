@@ -21,6 +21,8 @@
 import type {SourceHit} from '../core/lookup';
 import type {ThesaurusResult} from '../core/dict/sqlite/thesaurusLookup';
 import {htmlToPlainText} from './htmlToPlainText';
+import {containsRenderableHtml} from './htmlParser';
+import {parseFvdpEntry, fvdpEntryToPlainText} from './fvdpFormatter';
 import {labelForPos, parseWordNetEntry, type WordNetSense} from './wordnetFormatter';
 import {t} from '../i18n/i18n';
 
@@ -57,6 +59,15 @@ export const entryToPlainText = (hit: SourceHit): string => {
     // Declared WordNet but didn't parse — fall back to the raw text,
     // exactly as SourceSection does on screen.
     return definition;
+  }
+  // 'plain' — mirror SourceSection's ordered decision (HTML sniff -> FVDP
+  // -> verbatim) so the clipboard matches the on-screen structured render.
+  if (containsRenderableHtml(definition)) {
+    return htmlToPlainText(definition);
+  }
+  const fvdp = parseFvdpEntry(definition);
+  if (!fvdp.parseFailed) {
+    return fvdpEntryToPlainText(fvdp);
   }
   return definition;
 };

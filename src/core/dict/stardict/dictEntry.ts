@@ -67,3 +67,31 @@ export const splitDictEntry = (
 export const formatFromTypeChar = (
   typeChar: string | null,
 ): DefinitionFormat => (typeChar === 'h' ? 'html' : 'plain');
+
+// How many bytes the .idx's furthest (offset+length) reaches past the end
+// of the .dict body. A corrupt/truncated dict (real: the star_trungviet
+// corpus, whose .idx overruns its .dict body by 103 bytes) makes edge
+// entries slice past the body, so their tail bytes are a mis-split UTF-8
+// sequence that decodes to U+FFFD. >0 means "expect sanitized edges".
+//
+// Host-side this helper is UNIT-tested only: the base build reads a clean
+// WordNet and DictReader doesn't expose the uncompressed body size, so the
+// overrun warning is emitted Kotlin-side (StarDictImporter.run has both
+// idxEntries and channel.size()); the arithmetic lives here as the shared
+// source of truth.
+export const dictBodyOverrun = (
+  maxOffsetEnd: number,
+  bodySize: number,
+): number => Math.max(0, maxOffsetEnd - bodySize);
+
+// Strip a run of U+FFFD replacement chars from the START and END of a
+// decoded definition — the mis-decoded edge bytes a .idx overrun leaves
+// on boundary entries. INTERIOR U+FFFD is preserved: a replacement char
+// in the middle of a body is real source corruption, not an edge artefact,
+// and dropping it would silently reflow the text. The Kotlin importer
+// mirrors this at both the .idx and .syn insert sites (device-only-bug
+// guard); dictEntry.ts is the source of truth.
+const FFFD_EDGES = /^�+|�+$/g;
+
+export const sanitizeDefinition = (s: string): string =>
+  s.replace(FFFD_EDGES, '');

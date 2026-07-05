@@ -9,7 +9,7 @@
 // meta absent, which provisioning reads as "reprovision".
 
 import {buildDict, type ParsedDict} from '../stardict/stardictDict';
-import {splitDictEntry} from '../stardict/dictEntry';
+import {splitDictEntry, sanitizeDefinition} from '../stardict/dictEntry';
 import {decodeUtf8} from '../../../sdk/utf8';
 import type {DefinitionFormat} from '../../lookup';
 import type {SqliteDb} from './db';
@@ -53,7 +53,9 @@ export const entriesFromParsedDict = (parsed: ParsedDict): BaseDbRow[] => {
     // body (issue #28). No-op for sts-present dicts like WordNet, so
     // base.db stays byte-identical.
     const {payload} = splitDictEntry(parsed.meta.sametypesequence ?? null, slice);
-    rows.push({key, word: entry.word, definition: decodeUtf8(payload)});
+    // Same edge-U+FFFD sanitize as lookupDict so the persisted body ==
+    // the looked-up body on a corrupt dict; interior U+FFFD preserved.
+    rows.push({key, word: entry.word, definition: sanitizeDefinition(decodeUtf8(payload))});
   }
   return rows;
 };
