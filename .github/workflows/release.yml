@@ -132,9 +132,14 @@ jobs:
           echo "prev_tag=$PREV_TAG" >> "$GITHUB_OUTPUT"
 
       - name: Bump package.json (runner only)
+        # The release workflow OWNS the version bump — package.json must
+        # not be hand-edited in feature PRs. --allow-same-version keeps
+        # the release idempotent so a stray manual bump (or a re-run)
+        # can't wedge it with "Version not changed". The "tag already
+        # exists" guard above is what actually prevents double-releasing.
         env:
           VERSION: ${{ steps.ver.outputs.version }}
-        run: npm version "$VERSION" --no-git-tag-version
+        run: npm version "$VERSION" --no-git-tag-version --allow-same-version
 
       - name: Build plugin
         # buildPlugin.sh runs `npm run prepare:dict` internally which
@@ -159,8 +164,16 @@ jobs:
           # it too so the repo's PluginConfig.json doesn't drift out of
           # sync with the git tag.
           if [ -f PluginConfig.json ]; then git add PluginConfig.json; fi
-          git commit -m "chore(release): $TAG"
-          git push origin HEAD:master
+          # If package.json was already at the target version (idempotent
+          # re-run), there may be nothing staged. Skip the commit rather
+          # than fail with "nothing to commit"; the tag below is what the
+          # release actually needs.
+          if git diff --cached --quiet; then
+            echo "No version-file changes to commit; proceeding to tag."
+          else
+            git commit -m "chore(release): $TAG"
+            git push origin HEAD:master
+          fi
           git tag -a "$TAG" -m "$TAG"
           git push origin "$TAG"
 
