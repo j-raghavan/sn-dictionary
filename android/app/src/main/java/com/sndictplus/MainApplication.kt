@@ -1,4 +1,4 @@
-package com.sndict
+package com.sndictplus
 
 import android.app.Application
 import com.facebook.react.PackageList
@@ -11,9 +11,9 @@ import com.facebook.react.defaults.DefaultReactHost.getDefaultReactHost
 import com.facebook.react.defaults.DefaultReactNativeHost
 import com.facebook.react.soloader.OpenSourceMergedSoMapping
 import com.facebook.soloader.SoLoader
-import com.sndict.clipboard.SnDictClipboardPackage
-import com.sndict.imports.SnDictImportPackage
-import com.sndict.ui.SnDictUiPackage
+import com.sndictplus.clipboard.SnDictPlusClipboardPackage
+import com.sndictplus.imports.SnDictPlusImportPackage
+import com.sndictplus.ui.SnDictPlusUiPackage
 import org.pgsqlite.SQLitePluginPackage
 
 class MainApplication : Application(), ReactApplication {
@@ -29,13 +29,13 @@ class MainApplication : Application(), ReactApplication {
                     add(SQLitePluginPackage())
                     // Native StarDict importer (ADR-0006): parse+insert
                     // off the Hermes thread.
-                    add(SnDictImportPackage())
+                    add(SnDictPlusImportPackage())
                     // Native clipboard bridge (copy word / definition to
                     // the OS clipboard via ClipboardManager).
-                    add(SnDictClipboardPackage())
+                    add(SnDictPlusClipboardPackage())
                     // UI-layer native views: the pen-tool observer that
                     // backs the pen-only tap-outside-to-close path (#32).
-                    add(SnDictUiPackage())
+                    add(SnDictPlusUiPackage())
                 }
 
             override fun getJSMainModuleName(): String = "index"

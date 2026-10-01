@@ -17,7 +17,7 @@ A Supernote plugin that adds offline English-word lookup to handwritten notes an
 - **Structured popup.** Each WordNet sense renders as its own block: a part-of-speech badge (*noun* / *verb* / *adjective* / *adverb*), a numbered sense, the definition, italicised example sentences in curly quotes, and a `Synonyms:` line. Senses are visually separated so multi-sense entries (e.g. "AI" — Army Intelligence vs. artificial intelligence vs. three-toed sloth vs. artificial insemination) are scannable at a glance.
 - **Bilingual UI chrome.** The plugin name on the plugin manager card, the **Lookup** toolbar label, and every popup label (`Synonyms:`, `OCR:`, `No definition found for…`, `Close`) localise into Simplified Chinese, Traditional Chinese, Japanese, Thai, Dutch, and German based on the device's system locale. The dictionary content stays English; the surrounding chrome doesn't.
 - **Case- and whitespace-insensitive.** "Anatomy", "anatomy", and "  ANATOMY  " all hit the same entry.
-- **Bring-your-own dictionary** *(shipped)* — drop a **StarDict** folder or a **CSV** file into `MyStyle/SnDict/` and the plugin imports it into its own SQLite DB at startup (native, off-thread; **source files are kept by default** — a Settings toggle / first-run prompt lets you opt in to deleting them after a verified import). User dictionaries precede the base on lookup, so your terms shadow generic ones, and a `meta.json` sidecar can name the dict, set its language, and (for CSV) map columns including an optional phonetic field. A separate prebuilt custom `.snplg` via an in-browser converter (Prong B) may still come later.
+- **Bring-your-own dictionary** *(shipped)* — drop a **StarDict** folder or a **CSV** file into `MyStyle/SnDictPlus/` and the plugin imports it into its own SQLite DB at startup (native, off-thread; **source files are kept by default** — a Settings toggle / first-run prompt lets you opt in to deleting them after a verified import). User dictionaries precede the base on lookup, so your terms shadow generic ones, and a `meta.json` sidecar can name the dict, set its language, and (for CSV) map columns including an optional phonetic field. A separate prebuilt custom `.snplg` via an in-browser converter (Prong B) may still come later.
 
 ## Demo
 
@@ -71,13 +71,13 @@ Lookup is ready in well under a second after the plugin process spins up — the
 Tap the **gear (⚙)** in the top-right of any lookup popup to open Settings. Edits are staged locally and only written when you tap **Save** (a "Settings saved" line confirms); **Back** returns to the definition.
 
 - **Dictionaries** — every active source (the bundled WordNet, your saved words, and each imported dict) shows with a checkbox. Tap a row to enable/disable it; disabled sources are skipped on lookup (turning them all off warns you). With two or more dictionaries the **↑ / ↓** arrows reorder precedence — results appear in this order, so move the dictionary you want first to the top. An imported dictionary also has a **Remove** button: it confirms (naming the dictionary), then deletes its database and any leftover source files. If a source file can't be deleted, you're warned the dict may reappear on the next reload.
-- **Import sources** — the **Keep source files after import** toggle decides whether the files you dropped in `MyStyle/SnDict/` are kept after the dictionary is built, or deleted once the import is verified (default: keep). The same choice is offered once, the first time you import.
+- **Import sources** — the **Keep source files after import** toggle decides whether the files you dropped in `MyStyle/SnDictPlus/` are kept after the dictionary is built, or deleted once the import is verified (default: keep). The same choice is offered once, the first time you import.
 - **Backup** — **Export** copies the bundled `base.db`, your `user.db` (saved words + settings), and every imported dictionary to a folder you choose under `MyStyle/`. **Restore** copies those DBs back over the live ones — reopen the plugin afterwards to finish. `base.db` is included in an export but is never overwritten on restore (it ships with the plugin).
 - **Copy** — in the definition popup, the **Copy** button puts the headword plus the current tab's text (definition or thesaurus) on the device's system clipboard for pasting into other apps. Pasting into handwritten notes isn't supported — the firmware's note-element clipboard isn't exposed to plugins.
 
 ## Adding your own dictionary
 
-The plugin scans `MyStyle/SnDict/` on every launch. A discovered dict is **imported** — parsed (natively, off the JS thread) and inserted into a self-contained SQLite DB under the plugin dir. **By default the source files are kept** (a Settings toggle / one-time first-run prompt lets you opt in to deleting them after a verified commit). Imported dicts appear as separate sections in the popup, ahead of the bundled WordNet base — so a domain glossary like "medical" supplements the general definition rather than replacing it. Because sources are kept, a re-dropped dict that's already imported is just re-opened (idempotent), **not** re-imported — to refresh it, drop a `.refresh` marker in its folder (`<name>.refresh` beside a CSV) or toggle delete on and re-drop; multiple dicts per language coexist.
+The plugin scans `MyStyle/SnDictPlus/` on every launch. A discovered dict is **imported** — parsed (natively, off the JS thread) and inserted into a self-contained SQLite DB under the plugin dir. **By default the source files are kept** (a Settings toggle / one-time first-run prompt lets you opt in to deleting them after a verified commit). Imported dicts appear as separate sections in the popup, ahead of the bundled WordNet base — so a domain glossary like "medical" supplements the general definition rather than replacing it. Because sources are kept, a re-dropped dict that's already imported is just re-opened (idempotent), **not** re-imported — to refresh it, drop a `.refresh` marker in its folder (`<name>.refresh` beside a CSV) or toggle delete on and re-drop; multiple dicts per language coexist.
 
 ### Layout
 
@@ -85,7 +85,7 @@ Two layouts are supported — **StarDict** (one subfolder per dict; the triple i
 
 ```
 MyStyle/
-└── SnDict/
+└── SnDictPlus/
     ├── Dune.csv                      (CSV — a loose file IS a dict, named "Dune")
     ├── Dune.meta.json                (OPTIONAL per-file sidecar for Dune.csv)
     ├── meta.json                     (OPTIONAL shared sidecar — its csv.* config
@@ -128,7 +128,7 @@ For a CSV the name is **always the filename** (`Dune.csv` → "Dune"); a sidecar
 | Format | Files | Notes |
 |---|---|---|
 | **StarDict** | `*.ifo` + `*.idx` + (`*.dict.dz` or `*.dict`) [+ optional `*.syn`] | One subfolder per dict. Free dictionaries at [FreeDict](https://freedict.org) and [dict.org](http://dict.org). |
-| **CSV** | a loose `*.csv` at the `SnDict/` root [+ optional `*.meta.json`] | RFC-4180; CP1252/UTF-16 aware; ≤ 10 MB. Drop a glossary `Name.csv` directly in `SnDict/`. |
+| **CSV** | a loose `*.csv` at the `SnDictPlus/` root [+ optional `*.meta.json`] | RFC-4180; CP1252/UTF-16 aware; ≤ 10 MB. Drop a glossary `Name.csv` directly in `SnDictPlus/`. |
 
 A subfolder without a complete StarDict triple — or a CSV over the size cap — is logged and skipped; discovery is fault-isolated, so one bad item doesn't break the rest. For **other** formats (MDX, EPUB, Babylon, …) convert to StarDict via [`pyglossary`](https://github.com/ilius/pyglossary) (`pip install pyglossary`; reads ~50 formats, writes StarDict).
 
@@ -159,7 +159,7 @@ Most users won't author a StarDict from scratch — there are huge corpora of pr
 
 #### A few notes worth knowing before you grab one
 
-- **Most downloads ship as `.tar.bz2` or `.zip`.** Extract first, then drop the resulting folder (or its files) into `MyStyle/SnDict/`. A typical extracted layout matches the organised layout described above — `.ifo` + `.idx` + `.dict.dz` together.
+- **Most downloads ship as `.tar.bz2` or `.zip`.** Extract first, then drop the resulting folder (or its files) into `MyStyle/SnDictPlus/`. A typical extracted layout matches the organised layout described above — `.ifo` + `.idx` + `.dict.dz` together.
 - **Wikdict / Wiktionary-derived dicts use HTML formatting** (`sametypesequence=h` in the `.ifo`). The popup strips the tags and lays out the resulting blocks — IPA on its own line, part-of-speech on its own line, definition body, then translations on separate lines. v1.0.6 and earlier had a bug where translation blocks (`<div>...</div>`) glued to the definition text above (e.g. `…sichtbar istastre`); v1.0.7+ renders them on their own lines correctly.
 - **Licensing.** For personal use on your own device, every source above is fine. If you plan to redistribute (e.g., bundle into a custom `.snplg`), check the per-dict license — FreeDict is permissive, Wiktionary-derived dicts are CC-BY-SA, huzheng entries vary.
 - **Morphology / inflected forms.** Highly inflected languages (German declensions, Italian conjugations) are only as good as the dict's headword coverage. Wiktionary-derived dicts generally include inflected forms; FreeDict's coverage varies. If lassoing `Häuser` returns "no entry," try lassoing the lemma `Haus` to confirm the dict simply lacks form folding rather than your sideloading being broken.
@@ -180,7 +180,7 @@ Two different things, and both are fast — there is **no per-session parse**. E
 
 **The bundled English dictionary is ready in ~0.25 s.** `base.db` (149k entries + thesaurus) ships *prebuilt* inside the `.snplg` and is *opened*, not parsed — the **Lookup** button is live within ~250–450 ms of the plugin starting (measured on a Manta).
 
-**A sideloaded dictionary is imported once, in the background.** When you drop a dict into `MyStyle/SnDict/`, it's indexed into its own SQLite DB at plugin start by a native (Kotlin) importer running **off the JS thread** — so it never blocks lookups, and the base dictionary is usable immediately. The new dict splices into the registry the moment its import finishes; after that it's permanent (the DB persists, so the next launch just *opens* it in milliseconds, like the base dictionary). **Source files are kept by default** — on the next launch the kept-and-already-imported set is recognized and re-opened, not re-imported (no duplicate work, no loop); opt in to deleting sources after import via the Settings toggle / one-time first-run prompt.
+**A sideloaded dictionary is imported once, in the background.** When you drop a dict into `MyStyle/SnDictPlus/`, it's indexed into its own SQLite DB at plugin start by a native (Kotlin) importer running **off the JS thread** — so it never blocks lookups, and the base dictionary is usable immediately. The new dict splices into the registry the moment its import finishes; after that it's permanent (the DB persists, so the next launch just *opens* it in milliseconds, like the base dictionary). **Source files are kept by default** — on the next launch the kept-and-already-imported set is recognized and re-opened, not re-imported (no duplicate work, no loop); opt in to deleting sources after import via the Settings toggle / one-time first-run prompt.
 
 Import time scales with **entry count** at a steady **~18,000 entries/sec** (measured on a Manta), i.e. roughly `entries ÷ 18,000`:
 
@@ -205,13 +205,13 @@ A small, hand-curated tech-jargon dictionary lives at [`assets/sample-dicts/sn-t
 
 **2. Transfer the sample folder to your Supernote.** Pick whichever of these you already use:
 
-- **USB:** plug the device in, it mounts as a USB drive. Navigate to `MyStyle/`, create a folder named `SnDict` if it doesn't exist, and copy `assets/sample-dicts/sn-tech-jargon/` into it. Eject the device.
-- **WebDAV:** in the Supernote settings, enable WebDAV and note the IP/port. From a desktop, connect (Finder on macOS via "Connect to Server", Windows via "Map Network Drive", Linux via `davfs2`), navigate to `MyStyle/SnDict/` (create `SnDict` if absent), and drop the folder in.
-- **Supernote Cloud / sync:** put the folder under `MyStyle/SnDict/` in your synced workspace and let the device pull it down.
+- **USB:** plug the device in, it mounts as a USB drive. Navigate to `MyStyle/`, create a folder named `SnDictPlus` if it doesn't exist, and copy `assets/sample-dicts/sn-tech-jargon/` into it. Eject the device.
+- **WebDAV:** in the Supernote settings, enable WebDAV and note the IP/port. From a desktop, connect (Finder on macOS via "Connect to Server", Windows via "Map Network Drive", Linux via `davfs2`), navigate to `MyStyle/SnDictPlus/` (create `SnDict` if absent), and drop the folder in.
+- **Supernote Cloud / sync:** put the folder under `MyStyle/SnDictPlus/` in your synced workspace and let the device pull it down.
 
 The end-state on the device should be:
 ```
-MyStyle/SnDict/sn-tech-jargon/
+MyStyle/SnDictPlus/sn-tech-jargon/
 ├── meta.json
 ├── sn-tech-jargon.ifo
 ├── sn-tech-jargon.idx
@@ -239,7 +239,7 @@ ReactNativeJS: [discovery] discovered 1 user dict(s): [Tech Jargon]
 ReactNativeJS: [startup] registry now has 2 source(s): [Tech Jargon, WordNet]
 ```
 
-If you see `[discovery] root "/storage/emulated/0/MyStyle/SnDict" not listable …` the folder isn't on the device yet — re-check step 2. If you see `folder "sn-tech-jargon" has no recognised dict files — skipped` the file names didn't transfer cleanly (some sync tools rename or strip extensions); re-copy the originals from this repo.
+If you see `[discovery] root "/storage/emulated/0/MyStyle/SnDictPlus" not listable …` the folder isn't on the device yet — re-check step 2. If you see `folder "sn-tech-jargon" has no recognised dict files — skipped` the file names didn't transfer cleanly (some sync tools rename or strip extensions); re-copy the originals from this repo.
 
 To regenerate the sample after editing entries in `scripts/buildSampleDicts.mjs`: `npm run build:sample-dicts`.
 
@@ -259,13 +259,13 @@ npm install
 ./buildPlugin.sh         # macOS / Linux (the native build path)
 ```
 
-`buildPlugin.sh` produces `build/outputs/SnDict.snplg` and runs the full pipeline:
+`buildPlugin.sh` produces `build/outputs/SnDictPlus.snplg` and runs the full pipeline:
 
 1. `npm run prepare:dict` — fetches the WordNet StarDict source to `dict/wordnet/` (read directly by the generator; no base64 blob).
 2. `npm run prepare:omw` — fetches Open English WordNet 2023 and builds the EN thesaurus TSV.
 3. `npm run prepare:moby` — stages the public-domain Moby Thesaurus StarDict to `dict/moby/` (optional; the build warn-skips it if absent).
 4. `npm run build:base-db` — folds the WordNet entries + OMW + Moby thesaurus into a prebuilt `build/base.db`, staged at the **`.snplg` root** (the host extracts it to `plugins/<id>/base.db`).
-5. Metro bundle → `gradlew buildCustomApkDebug` → `app.npk` → zips everything into `SnDict.snplg`.
+5. Metro bundle → `gradlew buildCustomApkDebug` → `app.npk` → zips everything into `SnDictPlus.snplg`.
 
 `dict/wordnet/`, `dict/omw/`, and `build/` are git-ignored (regenerable). **`buildPlugin.ps1` does NOT support native builds** — it errors and points you to `buildPlugin.sh`.
 
@@ -273,8 +273,8 @@ npm install
 
 ## Installing on the device
 
-1. Build the plugin (`./buildPlugin.sh` on macOS/Linux, `.\buildPlugin.ps1` on Windows) or download `SnDict.snplg` from the [latest release](https://github.com/j-raghavan/sn-dictionary/releases).
-2. Use the Supernote Partner App to copy `build/outputs/SnDict.snplg` to the `MyStyles` folder on your device.
+1. Build the plugin (`./buildPlugin.sh` on macOS/Linux, `.\buildPlugin.ps1` on Windows) or download `SnDictPlus.snplg` from the [latest release](https://github.com/CouchKnight/sn-dictionary-advanced/releases).
+2. Use the Supernote Partner App to copy `build/outputs/SnDictPlus.snplg` to the `MyStyles` folder on your device.
 3. On the Supernote, navigate to **Settings → Apps → Plugins → Add Plugin** and select the file.
 4. Plugin appears as **Dictionary** (or 词典 / 詞典 / 辞書 / พจนานุกรม / Woordenboek depending on your device locale).
 
@@ -326,7 +326,7 @@ src/
     dict/
       normalizeKey.ts            shared lookup-key fold (TS; Kotlin port mirrors it)
       multiDictLookup.ts         registry: fan out over sources, return the union
-      userDictDiscovery.ts       scan MyStyle/SnDict → StarDict import-job descriptors
+      userDictDiscovery.ts       scan MyStyle/SnDictPlus → StarDict import-job descriptors
       sqlite/                    the LIVE engine: db port, sqliteDictSource, provision,
                                  bootstrap, buildBaseDb, thesaurus, import orchestration
       stardict/                  BUILD-TIME parsers (used by build:base-db + tests)
@@ -349,7 +349,7 @@ src/
                                  for initial value (avoids React commit-phase warn)
     wordnetFormatter.ts          parses raw WordNet entry → senses[]; labelForPos
   android/                       Gradle project: vendored SQLite module +
-                                 com/sndict/imports/* (the native Kotlin StarDict importer)
+                                 com/sndictplus/imports/* (the native Kotlin StarDict importer)
 scripts/
   fetchBaseDict.mjs              idempotent WordNet download from dict.org mirror
   fetchOmw.mjs / buildOmw.mjs    fetch + build the EN OMW thesaurus TSV

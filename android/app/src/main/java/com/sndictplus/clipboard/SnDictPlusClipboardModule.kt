@@ -1,4 +1,4 @@
-package com.sndict.clipboard
+package com.sndictplus.clipboard
 
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -25,11 +25,11 @@ import com.facebook.react.bridge.WritableMap
 // "element" clipboard the lasso-Paste menu reads. The SDK hook for that
 // (pushElementsToClipboard) is not yet exposed (Dunn, 2026-05-01), so
 // pasting a copied definition into a handwritten note is out of scope.
-class SnDictClipboardModule(
+class SnDictPlusClipboardModule(
   reactContext: ReactApplicationContext,
 ) : ReactContextBaseJavaModule(reactContext) {
 
-  override fun getName(): String = "SnDictClipboard"
+  override fun getName(): String = "SnDictPlusClipboard"
 
   @ReactMethod
   fun copyToClipboard(text: String, label: String?, promise: Promise) {
@@ -49,7 +49,7 @@ class SnDictClipboardModule(
       return
     }
     try {
-      cm.setPrimaryClip(ClipData.newPlainText(label ?: "SnDict", text))
+      cm.setPrimaryClip(ClipData.newPlainText(label ?: "SnDictPlus", text))
       Log.i(TAG, "[clipboard] copied ${text.length} chars")
       promise.resolve(
         result(true, "OK", "Copied ${text.length} chars to the system clipboard"),
@@ -70,6 +70,6 @@ class SnDictClipboardModule(
   }
 
   private companion object {
-    const val TAG = "SnDict"
+    const val TAG = "SnDictPlus"
   }
 }

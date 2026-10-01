@@ -1,4 +1,4 @@
-package com.sndict.imports
+package com.sndictplus.imports
 
 import android.database.sqlite.SQLiteDatabase
 import android.util.Log

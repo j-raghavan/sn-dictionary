@@ -70,7 +70,7 @@ describe('exportDbs — joinPath / isInsidePluginDir / toDbFiles', () => {
     expect(
       isInsidePluginDir('plugins/sndictdfltbasev1-backup', PLUGIN_DIR),
     ).toBe(false);
-    expect(isInsidePluginDir('/storage/MyStyle/SnDict', PLUGIN_DIR)).toBe(false);
+    expect(isInsidePluginDir('/storage/MyStyle/SnDictPlus', PLUGIN_DIR)).toBe(false);
   });
 
   test('toDbFiles drops the source path, keeping label + filename', () => {
@@ -85,7 +85,7 @@ describe('exportDbs — joinPath / isInsidePluginDir / toDbFiles', () => {
 describe('exportDbs — happy path (F5-AC1)', () => {
   test('copies every DB into the target; originals untouched (read-only)', async () => {
     const copies: {src: string; dest: string}[] = [];
-    const target = '/storage/MyStyle/SnDict/backup';
+    const target = '/storage/MyStyle/SnDictPlus/backup';
     const summary = await exportDbs(
       target,
       happyPorts({
@@ -143,7 +143,7 @@ describe('exportDbs — space pre-check (F5-FR3 / F5-AC2)', () => {
     const checkpointUserDb = jest.fn(async () => undefined);
     await expect(
       exportDbs(
-        '/storage/MyStyle/SnDict',
+        '/storage/MyStyle/SnDictPlus',
         happyPorts({
           // 3 × 1000 + margin needed; only margin available -> shortfall.
           sizeOf: async () => 1000,
@@ -161,7 +161,7 @@ describe('exportDbs — space pre-check (F5-FR3 / F5-AC2)', () => {
 
   test('an unknowable size (sizeOf throws) does not block — counts 0, still exports', async () => {
     const summary = await exportDbs(
-      '/storage/MyStyle/SnDict',
+      '/storage/MyStyle/SnDictPlus',
       happyPorts({
         sizeOf: async () => {
           throw new Error('stat failed');
@@ -178,7 +178,7 @@ describe('exportDbs — checkpoint before copy (F5-FR8 / resolution #9)', () => 
   test('user.db is checkpointed BEFORE its file is copied', async () => {
     const order: string[] = [];
     await exportDbs(
-      '/storage/MyStyle/SnDict',
+      '/storage/MyStyle/SnDictPlus',
       happyPorts({
         checkpointUserDb: async () => {
           order.push('checkpoint');
@@ -200,7 +200,7 @@ describe('exportDbs — checkpoint before copy (F5-FR8 / resolution #9)', () => 
   test('no checkpoint when user.db is absent from the set (degraded user.db)', async () => {
     const checkpointUserDb = jest.fn(async () => undefined);
     await exportDbs(
-      '/storage/MyStyle/SnDict',
+      '/storage/MyStyle/SnDictPlus',
       happyPorts({
         listDbs: async () => [
           {label: 'WordNet', filename: 'base.db', srcPath: `${PLUGIN_DIR}base.db`},
@@ -214,7 +214,7 @@ describe('exportDbs — checkpoint before copy (F5-FR8 / resolution #9)', () => 
 
   test('a checkpoint failure is swallowed — the copy proceeds', async () => {
     const summary = await exportDbs(
-      '/storage/MyStyle/SnDict',
+      '/storage/MyStyle/SnDictPlus',
       happyPorts({
         checkpointUserDb: async () => {
           throw new Error('wal locked');
@@ -229,7 +229,7 @@ describe('exportDbs — checkpoint before copy (F5-FR8 / resolution #9)', () => 
 describe('exportDbs — partial failure reporting (F5-FR5 / F5-AC4)', () => {
   test('a single copyFile failure is reported; the others still copy', async () => {
     const summary = await exportDbs(
-      '/storage/MyStyle/SnDict',
+      '/storage/MyStyle/SnDictPlus',
       happyPorts({
         copyFile: async (src) =>
           src.endsWith('user.db')
@@ -246,7 +246,7 @@ describe('exportDbs — partial failure reporting (F5-FR5 / F5-AC4)', () => {
 
   test('a copyFile resolving false is a failure too (not silently dropped)', async () => {
     const summary = await exportDbs(
-      '/storage/MyStyle/SnDict',
+      '/storage/MyStyle/SnDictPlus',
       happyPorts({
         copyFile: async (src) => !src.endsWith('base.db'),
       }),
@@ -263,18 +263,18 @@ describe('exportDbs — target-dir creation (F5-FR2 / F5-AC3)', () => {
   test('ensureDir creates the target before copying', async () => {
     const ensureDir = jest.fn(async () => true);
     await exportDbs(
-      '/storage/MyStyle/SnDict/backup',
+      '/storage/MyStyle/SnDictPlus/backup',
       happyPorts({ensureDir}),
       reasons,
     );
-    expect(ensureDir).toHaveBeenCalledWith('/storage/MyStyle/SnDict/backup');
+    expect(ensureDir).toHaveBeenCalledWith('/storage/MyStyle/SnDictPlus/backup');
   });
 
   test('an ensureDir failure aborts (as no-space); nothing copied', async () => {
     const copyFile = jest.fn(async () => true);
     await expect(
       exportDbs(
-        '/storage/MyStyle/SnDict/backup',
+        '/storage/MyStyle/SnDictPlus/backup',
         happyPorts({ensureDir: async () => false, copyFile}),
         reasons,
       ),
@@ -285,7 +285,7 @@ describe('exportDbs — target-dir creation (F5-FR2 / F5-AC3)', () => {
   test('an ensureDir that throws is also a clean abort', async () => {
     await expect(
       exportDbs(
-        '/storage/MyStyle/SnDict/backup',
+        '/storage/MyStyle/SnDictPlus/backup',
         happyPorts({
           ensureDir: async () => {
             throw new Error('mkdir EACCES');
@@ -414,6 +414,6 @@ describe('listFolders (F5-FR2 — reuses the type-tagged FileUtils)', () => {
 describe('exportRootParent / DEFAULT_EXPORT_DIR', () => {
   test('rootParent is the parent of the SnDict default root (MyStyle)', () => {
     expect(exportRootParent()).toBe('/storage/emulated/0/MyStyle');
-    expect(DEFAULT_EXPORT_DIR).toBe('/storage/emulated/0/MyStyle/SnDict');
+    expect(DEFAULT_EXPORT_DIR).toBe('/storage/emulated/0/MyStyle/SnDictPlus');
   });
 });

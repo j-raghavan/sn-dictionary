@@ -36,7 +36,7 @@ module.exports = {
     '/src/core/dict/sqlite/importRnPorts\\.ts$',
     '/src/core/dict/sqlite/importCsvRnPorts\\.ts$',
     '/src/core/dict/sqlite/nativeImport\\.ts$',
-    // Device-only clipboard bridge — touches NativeModules.SnDictClipboard
+    // Device-only clipboard bridge — touches NativeModules.SnDictPlusClipboard
     // (unbound off-device); the copy reducer + popup handlers are
     // host-tested with it mocked.
     '/src/native/clipboard\\.ts$',

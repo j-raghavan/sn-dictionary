@@ -1,15 +1,15 @@
-// Scans the user-dict root (defaults to /storage/emulated/0/MyStyle/SnDict)
+// Scans the user-dict root (defaults to /storage/emulated/0/MyStyle/SnDictPlus)
 // for sideloadable dictionaries and returns an import-job descriptor for
 // each (TF5-FR1, extended M16). Two layouts are discovered:
 //
 //   StarDict (subfolder) — each dict in its own folder:
-//     <SnDict-root>/<folder>/
+//     <SnDictPlus-root>/<folder>/
 //       ├── meta.json                    (OPTIONAL sidecar — name+language)
 //       ├── *.ifo + *.idx + *.dict[.dz]  (the StarDict triple)
 //       └── *.syn                        (optional synonym index)
 //
 //   CSV (loose root file) — a single *.csv at the root:
-//     <SnDict-root>/
+//     <SnDictPlus-root>/
 //       ├── Dune.csv                     -> a CSV dict named "Dune"
 //       ├── Dune.meta.json               (OPTIONAL per-file sidecar)
 //       └── meta.json                    (OPTIONAL shared root sidecar —
@@ -34,7 +34,7 @@ import {
   type Sidecar,
 } from './sqlite/importSidecar';
 
-export const DEFAULT_USER_DICT_ROOT = '/storage/emulated/0/MyStyle/SnDict';
+export const DEFAULT_USER_DICT_ROOT = '/storage/emulated/0/MyStyle/SnDictPlus';
 
 export type FileEntry = {path: string; type: number}; // 0=dir, 1=file
 
@@ -50,7 +50,7 @@ export type Logger = {
 
 export type DiscoveryDeps = {
   fileUtils: FileUtilsLike;
-  // Override the scan root. Defaults to MyStyle/SnDict.
+  // Override the scan root. Defaults to MyStyle/SnDictPlus.
   rootPath?: string;
   // Injected for tests; defaults to globalThis.fetch at runtime.
   fetchFn?: typeof fetch;

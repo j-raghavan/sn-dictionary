@@ -1,0 +1,6 @@
+txt/
+*.epub
+out/
+__pycache__/
+descs.txt
+desc.json

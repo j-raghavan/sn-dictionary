@@ -160,7 +160,7 @@ const ensureSdcardPermission = async () => {
 // path — the old hardcoded com.ratta.supernote path was wrong). base.db
 // ships in the .snplg and the host extracts it here; user.db + imported
 // slug DBs are created in place by the native layer.
-const PLUGIN_LOCATION = 'plugins/sndictdfltbasev1/';
+const PLUGIN_LOCATION = 'plugins/sndictadvancedv1/';
 
 const openDbByName = name => openRnSqliteDb({name, location: PLUGIN_LOCATION});
 
@@ -360,7 +360,7 @@ const bootstrapPorts = {
             // or built the default), so no meta.json re-read is needed.
             sidecarPath: descriptor.sidecarPath,
             sidecarText: JSON.stringify(descriptor.sidecar),
-            // Real .dict size from a native stat (SnDictImport.fileSize) —
+            // Real .dict size from a native stat (SnDictPlusImport.fileSize) —
             // not a hardcoded 0 that would silently disable the space guard.
             statDictSize: () => getFileSize(descriptor.dictPath),
             fileUtils: FileUtils,
@@ -588,12 +588,12 @@ bootstrap(bootstrapPorts, logger)
             closeWritable: () => handle.closeWritable(),
             // Pre-restore safety snapshot: checkpoint user.db, then copy the
             // live user.db + every imported slug DB out to MyStyle/
-            // SnDict-pre-restore/ so a bad restore is undoable (restore FROM
+            // SnDictPlus-pre-restore/ so a bad restore is undoable (restore FROM
             // that folder to revert). base.db is the .snplg copy — not
             // snapshotted. A throw ABORTS the restore (orchestration) so the
             // live DBs are never overwritten without a safety net.
             snapshot: async () => {
-              const snapDir = joinPath(exportRootParent(), 'SnDict-pre-restore');
+              const snapDir = joinPath(exportRootParent(), 'SnDictPlus-pre-restore');
               await FileUtils.makeDir(snapDir);
               if (handle.userDb !== null) {
                 await handle.userDb.run('PRAGMA wal_checkpoint(TRUNCATE)');

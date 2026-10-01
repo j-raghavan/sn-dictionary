@@ -1,4 +1,4 @@
-package com.sndict.imports
+package com.sndictplus.imports
 
 // DEVICE-UNVERIFIED. EXACT parity port of src/core/dict/normalizeKey.ts.
 // The lookup key MUST be byte-identical to the TS normalizeKey so that

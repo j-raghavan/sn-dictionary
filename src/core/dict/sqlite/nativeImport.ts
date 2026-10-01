@@ -1,5 +1,5 @@
 // DEVICE-UNVERIFIED. Bridge to the native StarDict importer
-// (SnDictImportModule.kt, ADR-0006). The entire parse+insert runs in
+// (SnDictPlusImportModule.kt, ADR-0006). The entire parse+insert runs in
 // Kotlin off the Hermes thread; JS only orchestrates verify-then-delete
 // + audit (importStardict.ts). Coverage-excluded like rnSqliteDb.ts —
 // it touches NativeModules which aren't bound off the device; the
@@ -24,9 +24,9 @@ export type RunNativeImport = (
 // up before the native module is bound.
 export const runNativeImport: RunNativeImport = async params => {
   const {NativeModules} = require('react-native');
-  const mod = NativeModules.SnDictImport;
+  const mod = NativeModules.SnDictPlusImport;
   if (mod === undefined || typeof mod.importStardict !== 'function') {
-    throw new Error('[import] native SnDictImport module is unavailable');
+    throw new Error('[import] native SnDictPlusImport module is unavailable');
   }
   const entryCount: number = await mod.importStardict(
     params.ifoPath,
@@ -43,9 +43,9 @@ export const runNativeImport: RunNativeImport = async params => {
 // file is missing — the guard then estimates from 0 (a no-op pass).
 export const getFileSize = async (path: string): Promise<number> => {
   const {NativeModules} = require('react-native');
-  const mod = NativeModules.SnDictImport;
+  const mod = NativeModules.SnDictPlusImport;
   if (mod === undefined || typeof mod.fileSize !== 'function') {
-    throw new Error('[import] native SnDictImport module is unavailable');
+    throw new Error('[import] native SnDictPlusImport module is unavailable');
   }
   return mod.fileSize(path);
 };
@@ -62,9 +62,9 @@ export const copyPluginFile = async (
   destPath: string,
 ): Promise<boolean> => {
   const {NativeModules} = require('react-native');
-  const mod = NativeModules.SnDictImport;
+  const mod = NativeModules.SnDictPlusImport;
   if (mod === undefined || typeof mod.copyResolved !== 'function') {
-    throw new Error('[copy] native SnDictImport.copyResolved is unavailable');
+    throw new Error('[copy] native SnDictPlusImport.copyResolved is unavailable');
   }
   return mod.copyResolved(srcPath, destPath);
 };
@@ -73,9 +73,9 @@ export const copyPluginFile = async (
 // DB) — F7 delete. FileUtils.deleteFile can't reach the relative path.
 export const deletePluginFile = async (path: string): Promise<boolean> => {
   const {NativeModules} = require('react-native');
-  const mod = NativeModules.SnDictImport;
+  const mod = NativeModules.SnDictPlusImport;
   if (mod === undefined || typeof mod.deleteResolved !== 'function') {
-    throw new Error('[delete] native SnDictImport.deleteResolved is unavailable');
+    throw new Error('[delete] native SnDictPlusImport.deleteResolved is unavailable');
   }
   return mod.deleteResolved(path);
 };

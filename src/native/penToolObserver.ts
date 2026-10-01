@@ -32,7 +32,7 @@ export const getPenToolObserver =
       try {
         const {requireNativeComponent} = require('react-native');
         cached = requireNativeComponent<PenToolObserverProps>(
-          'SnDictPenToolObserver',
+          'SnDictPlusPenToolObserver',
         );
       } catch {
         cached = null;

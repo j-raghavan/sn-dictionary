@@ -1,6 +1,6 @@
 // DB export orchestration (F5). Copy every on-device DB — bundled
 // `base.db`, writable `user.db`, and each imported slug DB — to a
-// user-chosen folder (default MyStyle/SnDict). HOST-TESTABLE: every
+// user-chosen folder (default MyStyle/SnDictPlus). HOST-TESTABLE: every
 // device touchpoint is an injected port (ExportPorts); the real
 // NativeFileUtils wiring lives in index.js (DEVICE-UNVERIFIED,
 // coverage-excluded). This module owns the SAFETY RAILS — the
@@ -213,7 +213,7 @@ export const exportRootParent = (): string => {
   return slash > 0 ? root.slice(0, slash) : root;
 };
 
-// The default export target: MyStyle/SnDict (the discovery root).
+// The default export target: MyStyle/SnDictPlus (the discovery root).
 export const DEFAULT_EXPORT_DIR = DEFAULT_USER_DICT_ROOT;
 
 // Subdirectory paths under `parent`, in listing order. Reuses the

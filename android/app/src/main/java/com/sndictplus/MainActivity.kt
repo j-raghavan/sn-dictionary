@@ -1,4 +1,4 @@
-package com.sndict
+package com.sndictplus
 
 import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate
@@ -10,9 +10,9 @@ class MainActivity : ReactActivity() {
   /**
    * Returns the name of the main component registered from JavaScript. This is used to schedule
    * rendering of the component. Must match AppRegistry.registerComponent(appName, ...) — appName
-   * comes from app.json's "name" ("SnDict").
+   * comes from app.json's "name" ("SnDictPlus").
    */
-  override fun getMainComponentName(): String = "SnDict"
+  override fun getMainComponentName(): String = "SnDictPlus"
 
   /**
    * Returns the instance of the [ReactActivityDelegate]. We use [DefaultReactActivityDelegate]

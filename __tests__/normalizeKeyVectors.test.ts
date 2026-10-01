@@ -1,6 +1,6 @@
 // Cross-language parity oracle (M10 / ADR-0006). The same fixture pins
 // BOTH the TS normalizeKey (here, host) and the Kotlin NormalizeKey.fold
-// (android/app/src/main/java/com/sndict/imports/NormalizeKey.kt, verified
+// (android/app/src/main/java/com/sndictplus/imports/NormalizeKey.kt, verified
 // on-device). If a fold rule changes, add a vector here and the Kotlin
 // port must match — keeping natively-imported dict keys identical to
 // base.db (IV-4).

@@ -1,5 +1,5 @@
 // DEVICE-UNVERIFIED. Bridge to the native clipboard module
-// (SnDictClipboardModule.kt). Writes the Android OS clipboard via
+// (SnDictPlusClipboardModule.kt). Writes the Android OS clipboard via
 // ClipboardManager.setPrimaryClip on the UI thread. Pattern ported from
 // the sibling sn-copilot plugin (CopilotOverlayModule.copyToClipboard).
 //
@@ -36,12 +36,12 @@ export const copyToClipboard = async (
   label: string | null = null,
 ): Promise<ClipboardResult> => {
   const {NativeModules} = require('react-native');
-  const mod = NativeModules.SnDictClipboard;
+  const mod = NativeModules.SnDictPlusClipboard;
   if (mod === undefined || typeof mod.copyToClipboard !== 'function') {
     return {
       success: false,
       code: 'MODULE_MISSING',
-      message: '[clipboard] native SnDictClipboard module is unavailable',
+      message: '[clipboard] native SnDictPlusClipboard module is unavailable',
     };
   }
   return mod.copyToClipboard(text, label);

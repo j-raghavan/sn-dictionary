@@ -21,7 +21,7 @@ describe('native clipboard wrapper contract', () => {
   });
 
   test('resolves MODULE_MISSING when the module lacks copyToClipboard', async () => {
-    jest.doMock('react-native', () => ({NativeModules: {SnDictClipboard: {}}}));
+    jest.doMock('react-native', () => ({NativeModules: {SnDictPlusClipboard: {}}}));
     const {copyToClipboard} = require('../src/native/clipboard');
     const result = await copyToClipboard('hi');
     expect(result.success).toBe(false);
@@ -31,7 +31,7 @@ describe('native clipboard wrapper contract', () => {
   test('delegates to the native module and passes its result through', async () => {
     const native = jest.fn(async () => ({success: true, code: 'OK', message: 'ok'}));
     jest.doMock('react-native', () => ({
-      NativeModules: {SnDictClipboard: {copyToClipboard: native}},
+      NativeModules: {SnDictPlusClipboard: {copyToClipboard: native}},
     }));
     const {copyToClipboard} = require('../src/native/clipboard');
     const result = await copyToClipboard('hello', 'MyLabel');
@@ -42,7 +42,7 @@ describe('native clipboard wrapper contract', () => {
   test('defaults the label to null when omitted', async () => {
     const native = jest.fn(async () => ({success: true, code: 'OK', message: ''}));
     jest.doMock('react-native', () => ({
-      NativeModules: {SnDictClipboard: {copyToClipboard: native}},
+      NativeModules: {SnDictPlusClipboard: {copyToClipboard: native}},
     }));
     const {copyToClipboard} = require('../src/native/clipboard');
     await copyToClipboard('x');

@@ -1,4 +1,4 @@
-package com.sndict.imports
+package com.sndictplus.imports
 
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
@@ -10,7 +10,7 @@ import java.util.concurrent.Executors
 // importer. The ENTIRE parse+insert runs on a private single-thread
 // executor — NEVER the JS/main thread — so a multi-hundred-thousand
 // entry import doesn't freeze Hermes (the whole point of ADR-0006).
-class SnDictImportModule(
+class SnDictPlusImportModule(
   reactContext: ReactApplicationContext,
 ) : ReactContextBaseJavaModule(reactContext) {
 
@@ -18,7 +18,7 @@ class SnDictImportModule(
   // sideloads one dict at a time).
   private val executor = Executors.newSingleThreadExecutor()
 
-  override fun getName(): String = "SnDictImport"
+  override fun getName(): String = "SnDictPlusImport"
 
   @ReactMethod
   fun importStardict(

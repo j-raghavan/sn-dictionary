@@ -25,7 +25,7 @@ The CRUD surface is a single `settings.ts` module mirroring `userEntries.ts`/`im
 
 ## Considered Options
 
-- **A — A MyStyle JSON preferences file.** Rejected: it is **user-visible** in the device's file browser (an attractive-nuisance edit target) and would **race discovery** — discovery scans `MyStyle/SnDict/` for importable files, and a JSON prefs file there muddies that surface. It also reintroduces a parse-on-launch step the SQLite pivot removed.
+- **A — A MyStyle JSON preferences file.** Rejected: it is **user-visible** in the device's file browser (an attractive-nuisance edit target) and would **race discovery** — discovery scans `MyStyle/SnDictPlus/` for importable files, and a JSON prefs file there muddies that surface. It also reintroduces a parse-on-launch step the SQLite pivot removed.
 - **B — `AsyncStorage` / a native key-value store.** Rejected: the binding is unbound in the custom APK (ADR-0001's failure mode); there is no reliable native KV store to target.
 - **C — Persist preferences in user.db via additive tables (CHOSEN).** Reuses the one writable, provisioned, already-degradable store; one storage mechanism for entries + audit + prefs; no new file surface; no parse-on-launch. Cost: three additive tables and the additive-only migration discipline (acceptable — same as the imports table).
 

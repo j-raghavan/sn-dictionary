@@ -1,4 +1,4 @@
-package com.sndict.ui
+package com.sndictplus.ui
 
 import com.facebook.react.ReactPackage
 import com.facebook.react.bridge.NativeModule
@@ -6,9 +6,9 @@ import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.uimanager.ViewManager
 
 // DEVICE-UNVERIFIED. Registers the UI-layer native views. Currently just
-// the pen-tool observer (SnDictPenToolObserver) that backs the pen-only
+// the pen-tool observer (SnDictPlusPenToolObserver) that backs the pen-only
 // tap-outside-to-close path; no native modules.
-class SnDictUiPackage : ReactPackage {
+class SnDictPlusUiPackage : ReactPackage {
   override fun createNativeModules(
     reactContext: ReactApplicationContext,
   ): List<NativeModule> = emptyList()

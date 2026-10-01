@@ -112,3 +112,9 @@ logcat.txt
 
 # Local specs / planning docs (not committed)
 spec/
+
+# Never commit book text or epubs (public repo) — see glossary/extract_text.sh
+txt/
+*.epub
+glossary/txt/
+glossary/out/

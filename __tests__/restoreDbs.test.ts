@@ -7,7 +7,7 @@ import {
 // The live plugin dir (relative PLUGIN_LOCATION) the restore copies INTO,
 // and a backup folder under MyStyle the restore copies FROM.
 const PLUGIN_DIR = 'plugins/sndictdfltbasev1/';
-const BACKUP_DIR = '/storage/emulated/0/MyStyle/SnDict/backup';
+const BACKUP_DIR = '/storage/emulated/0/MyStyle/SnDictPlus/backup';
 
 const reasons = {noBackup: 'NO_BACKUP', snapshotFailed: 'SNAPSHOT_FAILED'};
 

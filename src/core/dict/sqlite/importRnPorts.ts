@@ -1,7 +1,7 @@
 // DEVICE-UNVERIFIED. Wires ImportPorts to the on-device runtime
 // (ADR-0006: native parse+insert). sn-plugin-lib NativeFileUtils for
 // deletion / free space; react-native-sqlite-storage for the verify
-// reopen; the native SnDictImport module does the parse+insert (no JS
+// reopen; the native SnDictPlusImport module does the parse+insert (no JS
 // byte reads). Same posture as rnSqliteDb.ts / provisionRnPorts.ts —
 // touches native modules unbound off the device, so coverage-excluded
 // (jest.config.js). The pure pipeline it feeds (importStardict.ts) is

@@ -130,7 +130,7 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'settings.keepSourcesHint':
       'When off, sideloaded files are deleted after a verified import.',
     'settings.keepPrompt':
-      'Keep a copy of your custom dictionary in MyStyle/SnDict/ after indexing? Choose Delete to remove the source file once the dictionary is built.',
+      'Keep a copy of your custom dictionary in MyStyle/SnDictPlus/ after indexing? Choose Delete to remove the source file once the dictionary is built.',
     'settings.removeDict': 'Remove',
     'settings.deleteDictPrompt':
       'Remove this dictionary? Its database and any leftover source files are deleted; it will not reappear on reload.',
@@ -197,7 +197,7 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'settings.sources': '导入源文件',
     'settings.keepSources': '导入后保留源文件',
     'settings.keepSourcesHint': '关闭时，验证导入后将删除侧载文件。',
-    'settings.keepPrompt': '索引后在 MyStyle/SnDict/ 文件夹中保留自定义词典的副本吗？选择“删除”可在词典构建完成后移除源文件。',
+    'settings.keepPrompt': '索引后在 MyStyle/SnDictPlus/ 文件夹中保留自定义词典的副本吗？选择“删除”可在词典构建完成后移除源文件。',
     'settings.removeDict': '移除',
     'settings.deleteDictPrompt':
       '要移除此词典吗？将删除其数据库及任何残留的源文件；重新加载后不会再次出现。',
@@ -261,7 +261,7 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'settings.sources': '匯入來源檔案',
     'settings.keepSources': '匯入後保留來源檔案',
     'settings.keepSourcesHint': '關閉時，驗證匯入後將刪除側載檔案。',
-    'settings.keepPrompt': '索引後在 MyStyle/SnDict/ 資料夾中保留自訂詞典的副本嗎？選擇「刪除」可在詞典建立完成後移除來源檔案。',
+    'settings.keepPrompt': '索引後在 MyStyle/SnDictPlus/ 資料夾中保留自訂詞典的副本嗎？選擇「刪除」可在詞典建立完成後移除來源檔案。',
     'settings.removeDict': '移除',
     'settings.deleteDictPrompt':
       '要移除此詞典嗎？將刪除其資料庫及任何殘留的來源檔案；重新載入後不會再次出現。',
@@ -327,7 +327,7 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'settings.keepSourcesHint':
       'オフの場合、検証済みのインポート後にサイドロードファイルを削除します。',
     'settings.keepPrompt':
-      'インデックス作成後、MyStyle/SnDict/ フォルダーにカスタム辞書のコピーを残しますか？「削除」を選ぶと辞書の構築後に元のファイルを削除します。',
+      'インデックス作成後、MyStyle/SnDictPlus/ フォルダーにカスタム辞書のコピーを残しますか？「削除」を選ぶと辞書の構築後に元のファイルを削除します。',
     'settings.removeDict': '削除',
     'settings.deleteDictPrompt':
       'この辞書を削除しますか？データベースと残っている元ファイルが削除され、再読み込みしても再表示されません。',
@@ -394,7 +394,7 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'settings.keepSourcesHint':
       'เมื่อปิด ระบบจะลบไฟล์ที่ไซด์โหลดหลังการนำเข้าที่ตรวจสอบแล้ว',
     'settings.keepPrompt':
-      'เก็บสำเนาพจนานุกรมที่กำหนดเองไว้ในโฟลเดอร์ MyStyle/SnDict/ หลังการทำดัชนีหรือไม่? เลือกลบเพื่อลบไฟล์ต้นฉบับเมื่อสร้างพจนานุกรมเสร็จ',
+      'เก็บสำเนาพจนานุกรมที่กำหนดเองไว้ในโฟลเดอร์ MyStyle/SnDictPlus/ หลังการทำดัชนีหรือไม่? เลือกลบเพื่อลบไฟล์ต้นฉบับเมื่อสร้างพจนานุกรมเสร็จ',
     'settings.removeDict': 'ลบออก',
     'settings.deleteDictPrompt':
       'ลบพจนานุกรมนี้หรือไม่? ฐานข้อมูลและไฟล์ต้นทางที่เหลือจะถูกลบ และจะไม่ปรากฏอีกเมื่อโหลดใหม่',
@@ -462,7 +462,7 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'settings.keepSourcesHint':
       'Indien uit, worden gesideloade bestanden na een geverifieerde import verwijderd.',
     'settings.keepPrompt':
-      'Een kopie van je aangepaste woordenboek in MyStyle/SnDict/ bewaren na het indexeren? Kies Verwijderen om het bronbestand te wissen zodra het woordenboek is gebouwd.',
+      'Een kopie van je aangepaste woordenboek in MyStyle/SnDictPlus/ bewaren na het indexeren? Kies Verwijderen om het bronbestand te wissen zodra het woordenboek is gebouwd.',
     'settings.removeDict': 'Verwijderen',
     'settings.deleteDictPrompt':
       'Dit woordenboek verwijderen? De database en eventuele resterende bronbestanden worden gewist; het komt na opnieuw laden niet terug.',
@@ -532,7 +532,7 @@ const STRINGS: Record<string, Partial<Record<StringId, string>>> = {
     'settings.keepSourcesHint':
       'Wenn aus, werden sideloadete Dateien nach einem verifizierten Import gelöscht.',
     'settings.keepPrompt':
-      'Eine Kopie Ihres benutzerdefinierten Wörterbuchs nach der Indexierung in MyStyle/SnDict/ behalten? Wählen Sie Löschen, um die Quelldatei nach dem Aufbau zu entfernen.',
+      'Eine Kopie Ihres benutzerdefinierten Wörterbuchs nach der Indexierung in MyStyle/SnDictPlus/ behalten? Wählen Sie Löschen, um die Quelldatei nach dem Aufbau zu entfernen.',
     'settings.removeDict': 'Entfernen',
     'settings.deleteDictPrompt':
       'Dieses Wörterbuch entfernen? Seine Datenbank und etwaige übrige Quelldateien werden gelöscht; es erscheint beim Neuladen nicht wieder.',

@@ -2362,7 +2362,7 @@ describe('DefinitionPopup — DB export (F5)', () => {
       findByLabel(tree, 'Use this folder: SnDict')[0].props.onPress();
       await flush();
     });
-    // Current path is now MyStyle/SnDict.
+    // Current path is now MyStyle/SnDictPlus.
     expect(collectText(tree)).toContain(`${MYSTYLE}/SnDict`);
   });
 

@@ -259,7 +259,7 @@ jobs:
           tag_name: ${{ steps.ver.outputs.tag }}
           name: ${{ steps.ver.outputs.tag }}
           body: ${{ steps.notes.outputs.notes }}
-          files: build/outputs/SnDict.snplg
+          files: build/outputs/SnDictPlus.snplg
           # workflow_dispatch boolean inputs surface as the strings
           # "true" / "false". The action accepts a boolean for
           # `prerelease` and one of "true" / "false" / "legacy" for

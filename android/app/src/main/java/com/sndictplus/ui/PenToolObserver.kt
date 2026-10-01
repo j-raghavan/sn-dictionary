@@ -1,4 +1,4 @@
-package com.sndict.ui
+package com.sndictplus.ui
 
 import android.view.MotionEvent
 import com.facebook.react.bridge.Arguments
@@ -55,10 +55,10 @@ class PenToolObserverView(context: ThemedReactContext) : ReactViewGroup(context)
 }
 
 // DEVICE-UNVERIFIED. Exposes PenToolObserverView to JS as
-// "SnDictPenToolObserver" with the direct `onToolDown` event.
+// "SnDictPlusPenToolObserver" with the direct `onToolDown` event.
 class PenToolObserverViewManager : ViewGroupManager<PenToolObserverView>() {
 
-  override fun getName(): String = "SnDictPenToolObserver"
+  override fun getName(): String = "SnDictPlusPenToolObserver"
 
   override fun createViewInstance(reactContext: ThemedReactContext): PenToolObserverView =
     PenToolObserverView(reactContext)

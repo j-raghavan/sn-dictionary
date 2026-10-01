@@ -1,6 +1,6 @@
 # PowerShell build script — Windows counterpart to buildPlugin.sh.
 #
-# Both scripts produce the same artifact (build/outputs/SnDict.snplg)
+# Both scripts produce the same artifact (build/outputs/SnDictPlus.snplg)
 # and run the same logical steps: prepare base dictionary -> Metro
 # bundle -> sync versions into PluginConfig.json -> detect ReactPackages
 # -> (optionally) build APK -> zip & rename to .snplg. Keep them in
@@ -613,7 +613,7 @@ Purpose: Build the custom debug APK via gradle.
 function Build-AndroidApk {
     param([string]$ProjectRoot)
 
-    # SnDict's native build (vendored react-native-sqlite-storage Gradle/
+    # SnDictPlus's native build (vendored react-native-sqlite-storage Gradle/
     # NDK + base.db asset staging into android/app/src/main/assets/) is
     # only wired in buildPlugin.sh. The PowerShell native path is NOT
     # supported — base.db staging and the custom-APK .so pruning are sh
