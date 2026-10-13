@@ -199,7 +199,9 @@ export interface ThesaurusRow {
 // (sanitizeDefinition) on a .idx-overrun corrupt dict. A slug DB built by
 // v1 stored the mis-decoded edges; bumping marks it stale so it auto
 // re-imports clean at bootstrap.
-export const IMPORTER_VERSION = 2;
+// v2 -> v3: preserve distinct canonical definitions sharing a folded key.
+// Kept sources are re-imported automatically; deleted sources must be re-dropped.
+export const IMPORTER_VERSION = 3;
 
 export const CREATE_IMPORTS_TABLE =
   'CREATE TABLE IF NOT EXISTS imports (' +

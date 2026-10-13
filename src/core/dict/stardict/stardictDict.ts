@@ -21,18 +21,24 @@ import {parseSyn} from './parseSyn';
 import type {DictReader} from './dictReader';
 import {createDictReader} from './dictReader';
 import {decodeUtf8} from '../../../sdk/utf8';
-import {splitDictEntry, sanitizeDefinition} from './dictEntry';
+import {
+  splitDictEntry,
+  sanitizeDefinition,
+  formatFromTypeChar,
+  mergeDefinitions,
+  type DefinitionPart,
+} from './dictEntry';
+import type {DefinitionFormat} from '../../lookup';
 import {normalizeKey} from '../normalizeKey';
 import {shouldYield, yieldToEventLoop} from '../yieldOften';
 
+export type DictIndexEntry = IdxEntry & {alternatives?: IdxEntry[]};
+
 export type ParsedDict = {
   meta: IfoMeta;
-  // Lowercase word -> the first matching .idx entry. We index
-  // case-insensitively so "Hello", "HELLO", and "hello" all hit the
-  // same record. Synonyms from .syn (if present) are merged into the
-  // same map pointing at their canonical .idx entry. If the source
-  // has duplicate-key collisions, the first one wins (deterministic).
-  index: Map<string, IdxEntry>;
+  // Folded key -> first headword plus its colliding canonical records.
+  // Aliases still point to their exact .idx target, not its folded group.
+  index: Map<string, DictIndexEntry>;
   dictReader: DictReader;
 };
 
@@ -55,12 +61,18 @@ export const buildDict = async (
   const meta = parseIfo(ifoBytes);
   const entries = await parseIdx(idxBytes, meta.idxoffsetbits);
   const dictReader = createDictReader(dictBytes);
-  const index = new Map<string, IdxEntry>();
+  const index = new Map<string, DictIndexEntry>();
   for (let i = 0; i < entries.length; i++) {
     const e = entries[i];
     const key = normalizeKey(e.word);
-    if (key.length > 0 && !index.has(key)) {
-      index.set(key, e);
+    if (key.length > 0) {
+      const prior = index.get(key);
+      if (prior === undefined) {
+        // Do not mutate the ordinal-indexed records used by .syn.
+        index.set(key, {...e});
+      } else {
+        (prior.alternatives ??= []).push(e);
+      }
     }
     if (shouldYield(i)) {
       await yieldToEventLoop();
@@ -92,6 +104,23 @@ export const buildDict = async (
   return {meta, index, dictReader};
 };
 
+export const readDefinition = (
+  dict: ParsedDict,
+  entry: DictIndexEntry,
+  formatOverride?: DefinitionFormat,
+): DefinitionPart =>
+  mergeDefinitions([entry, ...(entry.alternatives ?? [])].map(record => {
+    const slice = dict.dictReader.slice(record.offset, record.length);
+    const {payload, typeChar} = splitDictEntry(
+      dict.meta.sametypesequence ?? null,
+      slice,
+    );
+    return {
+      definition: sanitizeDefinition(decodeUtf8(payload)),
+      format: formatOverride ?? formatFromTypeChar(typeChar),
+    };
+  }));
+
 export const lookupDict = (
   dict: ParsedDict,
   word: string,
@@ -104,12 +133,6 @@ export const lookupDict = (
   if (!entry) {
     return null;
   }
-  const slice = dict.dictReader.slice(entry.offset, entry.length);
-  // Strip the sts-absent per-entry type byte + trailing NUL before
-  // decode (issue #28); a no-op when sametypesequence is present.
-  const {payload} = splitDictEntry(dict.meta.sametypesequence ?? null, slice);
-  // Drop edge U+FFFD left by a .idx-overrun mis-split (issue: corrupt
-  // dict graceful degradation). Interior U+FFFD is preserved.
-  const definition = sanitizeDefinition(decodeUtf8(payload));
+  const {definition} = readDefinition(dict, entry);
   return {canonicalWord: entry.word, definition};
 };

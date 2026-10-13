@@ -8,9 +8,7 @@
 // key index, THEN the meta row LAST — so a power-loss mid-build leaves
 // meta absent, which provisioning reads as "reprovision".
 
-import {buildDict, type ParsedDict} from '../stardict/stardictDict';
-import {splitDictEntry, sanitizeDefinition} from '../stardict/dictEntry';
-import {decodeUtf8} from '../../../sdk/utf8';
+import {buildDict, readDefinition, type ParsedDict} from '../stardict/stardictDict';
 import type {DefinitionFormat} from '../../lookup';
 import type {SqliteDb} from './db';
 import {
@@ -45,17 +43,14 @@ export type BaseDbRow = {
 // keys never diverge between the in-memory engine and the DB (IV-4).
 // The definition body is read the same way lookupDict reads it:
 // slice(offset, length) + decodeUtf8, so body parity is guaranteed.
-export const entriesFromParsedDict = (parsed: ParsedDict): BaseDbRow[] => {
+export const entriesFromParsedDict = (
+  parsed: ParsedDict,
+  formatOverride?: DefinitionFormat,
+): BaseDbRow[] => {
   const rows: BaseDbRow[] = [];
   for (const [key, entry] of parsed.index) {
-    const slice = parsed.dictReader.slice(entry.offset, entry.length);
-    // Same split as lookupDict so the persisted body == the looked-up
-    // body (issue #28). No-op for sts-present dicts like WordNet, so
-    // base.db stays byte-identical.
-    const {payload} = splitDictEntry(parsed.meta.sametypesequence ?? null, slice);
-    // Same edge-U+FFFD sanitize as lookupDict so the persisted body ==
-    // the looked-up body on a corrupt dict; interior U+FFFD preserved.
-    rows.push({key, word: entry.word, definition: sanitizeDefinition(decodeUtf8(payload))});
+    const {definition} = readDefinition(parsed, entry, formatOverride);
+    rows.push({key, word: entry.word, definition});
   }
   return rows;
 };
@@ -99,7 +94,7 @@ export const populateBaseDb = async (
   entryFormat: DefinitionFormat = 'wordnet',
   omwRows?: OmwRow[],
 ): Promise<PopulateResult> => {
-  const rows = entriesFromParsedDict(parsed);
+  const rows = entriesFromParsedDict(parsed, entryFormat);
 
   await db.run(CREATE_ENTRIES_TABLE);
   await db.transaction(async tx => {

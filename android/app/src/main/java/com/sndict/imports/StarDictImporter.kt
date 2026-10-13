@@ -21,8 +21,8 @@ import java.util.zip.GZIPInputStream
 //             type byte + trailing NUL) + formatFromTypeChar (mirror
 //             dictEntry.ts) before decode (issue #28)
 //   - .idx  -> parseIdx.ts (word\0 + BE offset(u32|u64) + BE length(u32))
-//   - .syn  -> parseSyn.ts + buildDict merge (.idx first, then .syn,
-//              first-key-wins, normalizeKey-folded, out-of-range skipped)
+//   - .idx collisions retain distinct definitions in file order;
+//     .syn aliases keep their exact ordinal target (.idx keys win)
 //   - SQLite -> schema.ts DDL literals + SCHEMA_VERSION; meta LAST.
 //
 // MEMORY (M11): the host process caps the Java heap at ~192MB and we
@@ -223,6 +223,23 @@ object StarDictImporter {
 
   private fun sanitizeDefinition(s: String): String = fffdEdges.replace(s, "")
 
+  private data class DefinitionPart(val definition: String, val format: String)
+
+  // Mirror dictEntry.ts mergeDefinitions, including plain text escaping.
+  private fun mergeDefinitions(parts: List<DefinitionPart>): DefinitionPart {
+    val unique = parts.distinct()
+    val format = if (unique.any { it.format == "html" }) "html" else unique.first().format
+    val definition = unique.joinToString(if (format == "html") "<br/><br/>" else "\n\n") {
+      if (format == "html" && it.format != "html") {
+        it.definition.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+          .replace(Regex("\\r\\n|\\r|\\n"), "<br/>")
+      } else {
+        it.definition
+      }
+    }
+    return DefinitionPart(definition, format)
+  }
+
   // --- .ifo (mirror parseIfo.ts) -------------------------------------
 
   private data class IfoMeta(
@@ -340,8 +357,8 @@ object StarDictImporter {
 
   // --- SQLite write (STREAMING; schema.ts DDL literals; meta LAST) ----
 
-  // Streams the merge+insert: .idx first then .syn, first-key-wins via a
-  // `seen` set, reading ONE definition at a time from the mmap'd body.
+  // Streams the merge+insert: only one folded-key group's definitions are
+  // decoded at a time. Alias precedence remains first-key-wins.
   // Returns the number of distinct keys inserted (== prior map.size).
   private fun writeDbStreaming(
     dbPath: String,
@@ -366,6 +383,27 @@ object StarDictImporter {
     val db = SQLiteDatabase.openOrCreateDatabase(dbPath, null)
     val seen = HashSet<String>()
     try {
+      // Keep offsets ONLY for collisions, not a second whole index or decoded
+      // bodies. Clearing seen reuses the existing dedup set for the write pass.
+      val alternatives = HashMap<String, MutableList<IdxEntry>>()
+      for (entry in idxEntries) {
+        val key = NormalizeKey.fold(entry.word)
+        if (key.isNotEmpty() && !seen.add(key)) {
+          alternatives.getOrPut(key) { ArrayList() }.add(entry)
+        }
+      }
+      seen.clear()
+
+      fun definition(entry: IdxEntry): DefinitionPart {
+        val split = splitDictEntry(
+          sametypesequence,
+          readDef(body, bodySize, entry.offset, entry.length),
+        )
+        return DefinitionPart(
+          sanitizeDefinition(String(split.payload, Charsets.UTF_8)),
+          formatOverride ?: formatFromTypeChar(split.typeChar),
+        )
+      }
       // SAME DDL as schema.ts CREATE_ENTRIES_TABLE (schema v3): the
       // nullable `phonetic TEXT` last column keeps StarDict slugs the same
       // shape as CSV slugs + base.db. The 4-col INSERT below leaves it
@@ -380,22 +418,23 @@ object StarDictImporter {
         val stmt = db.compileStatement(
           "INSERT INTO entries (key, word, definition, format) VALUES (?, ?, ?, ?)",
         )
-        // .idx first (first-key-wins). Only one definition String is
-        // live per iteration (GC-eligible after executeInsert). Each
+        // .idx first. Colliding canonical entries retain all distinct senses. Each
         // entry's raw .dict slice is split (strip sts-absent type byte +
         // NUL) BEFORE decode, and its format derived per-entry from the
         // type char unless the sidecar overrides it (mirror dictEntry.ts).
         for (e in idxEntries) {
           val key = NormalizeKey.fold(e.word)
           if (key.isNotEmpty() && seen.add(key)) {
-            val split = splitDictEntry(sametypesequence, readDef(body, bodySize, e.offset, e.length))
-            val rowFormat = formatOverride ?: formatFromTypeChar(split.typeChar)
+            val parts = ArrayList<DefinitionPart>()
+            parts.add(definition(e))
+            alternatives.remove(key)?.forEach { parts.add(definition(it)) }
+            val merged = mergeDefinitions(parts)
             insertRow(
               stmt,
               key,
               e.word,
-              sanitizeDefinition(String(split.payload, Charsets.UTF_8)),
-              rowFormat,
+              merged.definition,
+              merged.format,
             )
           }
         }
@@ -409,17 +448,13 @@ object StarDictImporter {
               val target = idxEntries.getOrNull(syn.originalWordIndex) ?: continue
               val key = NormalizeKey.fold(syn.word)
               if (key.isNotEmpty() && seen.add(key)) {
-                val split = splitDictEntry(
-                  sametypesequence,
-                  readDef(body, bodySize, target.offset, target.length),
-                )
-                val rowFormat = formatOverride ?: formatFromTypeChar(split.typeChar)
+                val part = definition(target)
                 insertRow(
                   stmt,
                   key,
                   target.word,
-                  sanitizeDefinition(String(split.payload, Charsets.UTF_8)),
-                  rowFormat,
+                  part.definition,
+                  part.format,
                 )
               }
             }

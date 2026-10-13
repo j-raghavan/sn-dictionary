@@ -245,6 +245,18 @@ To regenerate the sample after editing entries in `scripts/buildSampleDicts.mjs`
 
 ## Limits
 
+StarDict headwords are matched case-insensitively with Unicode and punctuation
+normalization. When multiple canonical entries share a lookup key (for example,
+`Guerra` the surname and `guerra` the common noun), their distinct definitions
+are retained in source order under the first display headword. Identical
+definitions are shown once. Synonym aliases still resolve to their exact source
+entry, and do not replace canonical headwords.
+
+After upgrading from an older importer, retained StarDict sources are re-imported
+automatically. If **Keep source files after import** was off, copy the original
+dictionary folder back into `MyStyle/SnDict/` and restart Dictionary; meanings
+discarded by the older importer cannot be recovered from its database alone.
+
 - **English only** for the bundled dictionary content. Other languages are out of scope for the base; see *Adding your own dictionary* above for sideloading user dicts in StarDict or CSV format.
 - **Tap-on-existing-word** (no lasso, just tap a written word) is **not currently supported by the SDK** — there is no spatial-query API to ask "what stroke is under this point?". A pen/touch event API is on Dunn-sn's roadmap; tap-to-define is tracked for v1.x.
 - **`PEN_UP` auto-define** — explicitly *not* a feature. The "OCR every stroke as you write" UX is intrusive without a clean word-boundary signal; lookups are user-initiated only.
@@ -282,6 +294,14 @@ npm install
 
 ```sh
 npm test
+```
+
+The native StarDict regression tests execute the actual Kotlin importer against
+Robolectric SQLite (test-only dependencies, not bundled into the plugin). With
+the Android toolchain and JDK 17 configured, run from `android/`:
+
+```sh
+./gradlew :app:testDebugUnitTest --tests com.sndict.imports.StarDictImporterTest
 ```
 
 Covers 1,118 unit tests across 58 suites (gate: 97 %+ coverage), run against an in-memory `better-sqlite3` adapter that stands in for the on-device SQLite engine. Broadly: the **SQLite engine** (parameterized lookup, schema/migrations, multi-dict fan-out, the dictionary source), **import** (StarDict `.ifo`/`.idx`/`.syn` reader + dictzip, CSV/RFC-4180 parsing, the shared `runImport` verify→commit→audit spine), the **bootstrap composition root** (provisioning, reconcile, detached imports, the F3 dictionary manager, F7 delete with `sourcesAtRisk`), **settings persistence** (dict prefs, keep-sources, app settings), **export/restore** (the plugin-dir guard, space pre-check, per-file copy, the snapshot/close-writable restore flow), the **thesaurus** (lazy fetch + assembly), the **popup component** (lookup/settings/thesaurus tabs, found/not-found, add-word, copy), **HTML rendering** (`htmlParser` → spans / plain text), the **multilingual UI chrome** across all seven locales, the on-device adapter contracts (`rnSqliteDb` transaction/checkpoint semantics, `identityKey` never embedding a NUL), and the small SDK utility modules. The device-only native modules (coverage-excluded) are mirrored by these host adapters against the same ports.

@@ -1,8 +1,10 @@
 import {
   buildDict,
   lookupDict,
+  readDefinition,
 } from '../src/core/dict/stardict/stardictDict';
 import {buildSyntheticStarDict} from './_helpers/buildSyntheticStarDict';
+import {buildSyn as makeSyn} from './_helpers/synFixture';
 import corpus from './_fixtures/renderParityCorpus.json';
 
 describe('stardictDict', () => {
@@ -108,16 +110,72 @@ describe('stardictDict', () => {
     expect(lookupDict(parsed, '日本')?.definition).toBe('Japan • 日本国');
   });
 
-  test('case-collision: first entry in .idx wins for the lowercased key', async () => {
-    // .idx is sorted by case-sensitive byte order, so 'Apple' (0x41)
-    // sorts before 'apple' (0x61). The orchestrator should keep the
-    // first occurrence to be deterministic.
+  test('case-collision retains distinct definitions and the first display headword', async () => {
     const {ifo, idx, dict} = buildSyntheticStarDict({
       Apple: 'capitalised',
       apple: 'lowercase',
     });
     const parsed = await buildDict(ifo, idx, dict);
-    expect(lookupDict(parsed, 'apple')?.canonicalWord).toBe('Apple');
+    expect(lookupDict(parsed, 'apple')).toEqual({
+      canonicalWord: 'Apple',
+      definition: 'capitalised\n\nlowercase',
+    });
+  });
+
+  test('Guerra/guerra retains both HTML senses without changing alias targets', async () => {
+    const defs = {Guerra: '<p>A surname.</p>', guerra: '<p>Armed conflict.</p>'};
+    const t = buildSyntheticStarDict(defs, {sametypesequence: 'h', gzipDict: true});
+    const syn = makeSyn(Object.keys(defs), {guerras: 'guerra', GUERRA: 'guerra'});
+    const parsed = await buildDict(t.ifo, t.idx, t.dict, syn);
+    for (const query of ['guerra', 'Guerra', ' GUERRA ']) {
+      expect(lookupDict(parsed, query)).toEqual({
+        canonicalWord: 'Guerra',
+        definition: '<p>A surname.</p><br/><br/><p>Armed conflict.</p>',
+      });
+    }
+    expect(parsed.index.size).toBe(2);
+    expect(lookupDict(parsed, 'guerras')).toEqual({
+      canonicalWord: 'guerra',
+      definition: '<p>Armed conflict.</p>',
+    });
+  });
+
+  test('normalization collisions deduplicate identical bodies but retain other senses', async () => {
+    const t = buildSyntheticStarDict({
+      'CAFÉ': 'coffee',
+      'cafe\u0301': 'coffee',
+      'café': 'a cafe',
+      'rock’n’roll': 'music',
+      "rock'n'roll": 'a dance',
+      ' ': 'not searchable',
+    });
+    const parsed = await buildDict(t.ifo, t.idx, t.dict);
+    expect(lookupDict(parsed, 'café')?.definition).toBe('coffee\n\na cafe');
+    expect(lookupDict(parsed, "rock'n'roll")?.definition).toBe('a dance\n\nmusic');
+    expect(parsed.index.size).toBe(2);
+  });
+
+  test('mixed-type collisions escape plain text and preserve HTML', async () => {
+    const t = buildSyntheticStarDict(
+      {Test: 'x < y & z > 0\r\nnext', test: '<b>HTML</b>'},
+      {omitSametypesequence: true, perEntryType: {test: 'h'}},
+    );
+    const parsed = await buildDict(t.ifo, t.idx, t.dict);
+    const entry = parsed.index.get('test')!;
+    expect(readDefinition(parsed, entry)).toEqual({
+      format: 'html',
+      definition: 'x &lt; y &amp; z &gt; 0<br/>next<br/><br/><b>HTML</b>',
+    });
+    expect(readDefinition(parsed, entry, 'plain')).toEqual({
+      format: 'plain',
+      definition: 'x < y & z > 0\r\nnext\n\n<b>HTML</b>',
+    });
+  });
+
+  test('empty and corrupt-edge collision bodies do not discard the valid sense', async () => {
+    const t = buildSyntheticStarDict({EMPTY: '', Empty: '\uFFFDmeaning\uFFFD', empty: 'meaning'});
+    const parsed = await buildDict(t.ifo, t.idx, t.dict);
+    expect(lookupDict(parsed, 'empty')?.definition).toBe('\n\nmeaning');
   });
 
   describe('synonym (.syn) merge', () => {

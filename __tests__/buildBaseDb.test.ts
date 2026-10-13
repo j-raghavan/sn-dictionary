@@ -129,6 +129,25 @@ describe('deterministicBuiltAt', () => {
 });
 
 describe('populateBaseDb / buildBaseDbFromTriple', () => {
+  it('persists all case-colliding senses in one indexed row', async () => {
+    const db = await emptyDb();
+    const t = buildSyntheticStarDict(
+      {Guerra: '<p>A surname.</p>', guerra: '<p>Armed conflict.</p>'},
+      {sametypesequence: 'h'},
+    );
+    const parsed = await buildDict(t.ifo, t.idx, t.dict);
+    expect(await populateBaseDb(db, parsed, SCHEMA_VERSION, 'html')).toEqual({
+      insertedCount: 1,
+      expectedCount: 1,
+    });
+    const rows = await db.query<{definition: string; format: string}>(
+      SELECT_ENTRY_BY_KEY, ['guerra'],
+    );
+    expect(rows[0].definition).toBe(lookupDict(parsed, 'guerra')?.definition);
+    expect(rows[0].format).toBe('html');
+    await db.close();
+  });
+
   it('inserts every entry with format=wordnet and returns matching counts', async () => {
     const db = await emptyDb();
     const t = triple();
