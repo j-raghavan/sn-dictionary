@@ -22,11 +22,11 @@ class StarDictImporterTest {
   private data class Entry(val word: String, val definition: String, val type: Char = 'm')
   private data class Row(val word: String, val definition: String, val format: String)
 
-  private fun import(
+  private fun importEntries(
     entries: List<Entry>,
     sts: String? = "m",
     aliases: List<Pair<String, Int>> = emptyList(),
-    override: String? = null,
+    formatOverride: String? = null,
     gzip: Boolean = false,
   ): Map<String, Row> {
     val folder = temp.newFolder()
@@ -68,7 +68,7 @@ class StarDictImporterTest {
     }
     val output = File(folder, "test.db")
     val count = StarDictImporter.run(
-      ifo.path, idx.path, dict.path, syn.path, output.path, override,
+      ifo.path, idx.path, dict.path, syn.path, output.path, formatOverride,
     )
     val rows = linkedMapOf<String, Row>()
     SQLiteDatabase.openDatabase(output.path, null, SQLiteDatabase.OPEN_READONLY).use { db ->
@@ -90,7 +90,7 @@ class StarDictImporterTest {
   }
 
   @Test fun preservesGuerraSensesAndExactAliasTargets() {
-    val rows = import(
+    val rows = importEntries(
       listOf(Entry("Guerra", "<p>A surname.</p>"), Entry("guerra", "<p>Armed conflict.</p>")),
       sts = "h",
       aliases = listOf("guerras" to 1, "GUERRA" to 1, "bad" to 99),
@@ -105,7 +105,7 @@ class StarDictImporterTest {
   }
 
   @Test fun retainsSameSpellingHomographsAndDeduplicatesIdenticalBodies() {
-    val rows = import(listOf(
+    val rows = importEntries(listOf(
       Entry("same", "first"),
       Entry("same", "second"),
       Entry("same", "first"),
@@ -116,7 +116,7 @@ class StarDictImporterTest {
   }
 
   @Test fun handlesUnicodeAndPunctuationCollisions() {
-    val rows = import(listOf(
+    val rows = importEntries(listOf(
       Entry("CAF\u00c9", "coffee"),
       Entry("cafe\u0301", "coffee"),
       Entry("caf\u00e9", "a cafe"),
@@ -136,16 +136,16 @@ class StarDictImporterTest {
     )
     assertEquals(
       Row("Test", "x &lt; y &amp; z &gt; 0<br/>next<br/><br/><b>HTML</b>", "html"),
-      import(entries, sts = null)["test"],
+      importEntries(entries, sts = null)["test"],
     )
     assertEquals(
       Row("Test", "x < y & z > 0\r\nnext\n\n<b>HTML</b>", "plain"),
-      import(entries, sts = null, override = "plain")["test"],
+      importEntries(entries, sts = null, formatOverride = "plain")["test"],
     )
   }
 
   @Test fun sanitizesEachCollisionBeforeDeduplication() {
-    val rows = import(listOf(
+    val rows = importEntries(listOf(
       Entry("EMPTY", ""),
       Entry("Empty", "\uFFFDmeaning\uFFFD"),
       Entry("empty", "meaning"),

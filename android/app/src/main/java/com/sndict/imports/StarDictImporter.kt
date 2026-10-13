@@ -31,11 +31,9 @@ import java.util.zip.GZIPInputStream
 //     heap) and read OFF-HEAP via an mmap'd MappedByteBuffer (on-demand
 //     paging — doesn't count against the Java heap);
 //   - we keep only the lightweight idxEntries (word + offset + length,
-//     no definitions) plus a `seen` HashSet for first-key-wins dedup;
-//   - definitions are read + inserted ONE AT A TIME inside the
-//     transaction, so only a single definition String is ever live.
-// The output DB is byte-identical to the prior all-in-heap version —
-// only HOW we read the body and WHEN we insert changed.
+//     no definitions), collision offsets, and a `seen` HashSet;
+//   - definitions are read + inserted ONE FOLDED GROUP AT A TIME inside
+//     the transaction, never decoded for the entire dictionary at once.
 //
 // IMPORTER VERSIONING: any import- or render-affecting change to the logic
 // here (parse, dedup, type-byte stripping, format mapping, insert) MUST be
