@@ -11,17 +11,35 @@
 //     =Froncer les lèvres+ chúm môi - khâu nhíu lại # phản nghĩa =Défroncer.
 //   ^ POS      sense-1 gloss  ^example(source+translation)  sense-2  ^note
 //
+// The same `-` sense list also carries the NhatVietNhat / TrungViet
+// layout, where a sense opens with a braced term:
+//   - {いく} - {ゆく} - {go} , sự đi, sức sống; …
+//     ^ headword forms   ^ term, then its gloss after ` , `
+// A term with Latin letters is a sense ("1. go — sự đi, …"); a kana /
+// kanji term with nothing after it is a form of the headword, gathered
+// into a forms line above the senses.
+//
 // Forgiving like parseWordNetEntry: anything that doesn't structure sets
 // parseFailed so the popup falls back to raw text. The detector is
-// conservative (see looksLikeFvdp) so non-FVDP plain dicts never enter
-// this path — verified 0 false positives across TrungViet, the VN-EN
-// Wiktionary, and the Sachxy en-vi corpora.
+// conservative (see looksLikeFvdp) so other plain dicts never enter this
+// path — verified 0 false positives across the VN-EN Wiktionary, the
+// Sachxy en-vi and the HanNgu corpora.
 
 export type FvdpExample = {source: string; translation: string};
-export type FvdpSense = {gloss: string; examples: FvdpExample[]};
+export type FvdpSense = {term?: string; gloss: string; examples: FvdpExample[]};
 export type FvdpSection =
-  | {kind: 'pos'; pos: string; senses: FvdpSense[]} // pos may be ''
+  // pos may be ''; forms is set only when the section has any.
+  // firstIndex, when set, is the number of the first sense: a section
+  // after a `#` note carries on the numbering of the section before it.
+  | {
+      kind: 'pos';
+      pos: string;
+      forms?: string[];
+      firstIndex?: number;
+      senses: FvdpSense[];
+    }
   | {kind: 'note'; label: string; body: string};
+type FvdpPosSection = Extract<FvdpSection, {kind: 'pos'}>;
 export type ParsedFvdpEntry = {
   sections: FvdpSection[];
   parseFailed: boolean;
@@ -34,40 +52,67 @@ export type ParsedFvdpEntry = {
 // `-`-leading entries never trip the detector.
 export const FVDP_EXAMPLE_PAIR = /[=][^=+\n]+\+\s*[^\s:=+]/;
 
+// A `-` sense that opens on a braced term — `- {go} , sự đi`.
+const FVDP_TERM_LEAD = /^\s*-\s*\{[^}]*\}/;
+
 // Conservative gate. FVDP bodies are single-line; a `*`-led entry is
-// unambiguously FVDP, and a `-`-led entry qualifies only when it also
-// carries a genuine example pair (guarding against other `-`-list dicts).
+// unambiguously FVDP, and a `-`-led entry qualifies only when it opens on
+// a braced term or carries a genuine example pair (guarding against
+// other `-`-list dicts, e.g. NhatVietNhat's bare `- học viên, học sinh`).
 // The no-newline check is load-bearing: WordNet / multi-line bodies are
 // never FVDP.
 export const looksLikeFvdp = (s: string): boolean =>
   !s.includes('\n') &&
-  (/^\s*\*\s/.test(s) || (/^\s*-/.test(s) && FVDP_EXAMPLE_PAIR.test(s)));
+  (/^\s*\*\s/.test(s) ||
+    FVDP_TERM_LEAD.test(s) ||
+    (/^\s*-/.test(s) && FVDP_EXAMPLE_PAIR.test(s)));
+
+// The forms line, shared by FvdpText and the copy text.
+export const fvdpFormsLine = (forms: string[]): string => forms.join(' · ');
 
 const isSpace = (ch: string): boolean => /\s/.test(ch);
 
 // A `-` acting as a sense separator: at the start of its scope or
-// preceded by whitespace (` - ` / leading `-`). Excludes intra-word
-// hyphens (`soi-même`, `vice-roi`) where a letter precedes the dash.
+// preceded by whitespace (` - ` / leading `-`), or glued to the `}` of a
+// braced term (`{to pauperize}- {…}`, a TrungViet / NhatVietNhat slip).
+// Excludes intra-word hyphens (`soi-même`, `vice-roi`) where a letter
+// precedes the dash.
 const isBoundaryDash = (s: string, i: number): boolean =>
-  s[i] === '-' && (i === 0 || isSpace(s[i - 1]));
+  s[i] === '-' && (i === 0 || isSpace(s[i - 1]) || s[i - 1] === '}');
 
-// Index of the first `=` or boundary `-` — the point where the POS label
-// ends and the sense stream begins. Length when the section is POS-only.
-const firstSenseBoundary = (t: string): number => {
+// Index of the first position `at` accepts; the length when none does.
+const indexWhere = (t: string, at: (i: number) => boolean): number => {
   for (let i = 0; i < t.length; i++) {
-    if (t[i] === '=' || isBoundaryDash(t, i)) {
+    if (at(i)) {
       return i;
     }
   }
   return t.length;
 };
 
-// Split a sense stream into per-sense chunks at each boundary `-`.
+// Index of the first `=` or boundary `-` — the point where the POS label
+// ends and the sense stream begins. Length when the section is POS-only.
+const firstSenseBoundary = (t: string): number =>
+  indexWhere(t, (i) => t[i] === '=' || isBoundaryDash(t, i));
+
+// Index of the first boundary `-` — where a `#` note ends and any senses
+// after it begin. Length when the note runs to the end.
+const firstBoundaryDash = (t: string): number =>
+  indexWhere(t, (i) => isBoundaryDash(t, i));
+
+// Split a sense stream into per-sense chunks at each boundary `-` outside
+// a braced term, so chân chấu's `- {Saw - teeth}` stays one sense.
 const splitSenses = (stream: string): string[] => {
   const parts: string[] = [];
   let start = 0;
+  let depth = 0;
   for (let i = 0; i < stream.length; i++) {
-    if (isBoundaryDash(stream, i)) {
+    if (stream[i] === '{') {
+      depth++;
+    } else if (stream[i] === '}') {
+      depth = Math.max(0, depth - 1);
+    }
+    if (depth === 0 && isBoundaryDash(stream, i)) {
       if (i > start) {
         parts.push(stream.slice(start, i));
       }
@@ -103,40 +148,77 @@ const parseExamples = (run: string): FvdpExample[] => {
   return out;
 };
 
+// A sense's leading `{term}` and the text after it, with the ` , ` that
+// separates the term from its gloss dropped.
+const LEADING_TERM = /^\{([^}]*)\}\s*,?/;
+
+// A dash-led idiom written as one `source+ translation` pair where the
+// source used `-` in place of `=` (abandon's `-abandon à la providence+
+// phó thác cho trời`). Read as "source — translation" in the gloss line.
+const IDIOM_PAIR = /^([^=+]*[^\s(+])\+\s+(\S[^+]*)$/;
+
+const idiomGloss = (text: string): string => {
+  const pair = IDIOM_PAIR.exec(text);
+  return pair ? `${pair[1].trim()} — ${pair[2].trim()}` : text;
+};
+
 const parseSense = (part: string): FvdpSense | null => {
   const t = part.trim();
-  if (t === '') {
+  const lead = LEADING_TERM.exec(t);
+  const term = lead ? lead[1].trim() : '';
+  const rest = lead ? t.slice(lead[0].length).trim() : t;
+  const eq = rest.indexOf('=');
+  const text = (eq < 0 ? rest : rest.slice(0, eq)).trim();
+  // Only a termless gloss can be an idiom pair: a braced term's gloss
+  // such as `(Econ) X.+ explanation` keeps its `+`.
+  const gloss = term === '' ? idiomGloss(text) : text;
+  const examples = eq < 0 ? [] : parseExamples(rest.slice(eq));
+  if (term === '' && gloss === '' && examples.length === 0) {
     return null;
   }
-  const eq = t.indexOf('=');
-  if (eq < 0) {
-    return {gloss: t, examples: []};
-  }
-  const gloss = t.slice(0, eq).trim();
-  const examples = parseExamples(t.slice(eq));
-  if (gloss === '' && examples.length === 0) {
-    return null;
-  }
-  return {gloss, examples};
+  return term === '' ? {gloss, examples} : {term, gloss, examples};
 };
+
+// Latin, Latin-1 / Extended-A/B, and the Vietnamese Extended Additional
+// block.
+const HAS_LATIN = /[A-Za-z\u00C0-\u024F\u1E00-\u1EFF]/;
+
+// Hiragana, katakana, CJK ideographs (Extension A and the unified block)
+// and the CJK compatibility ideographs.
+const HAS_KANA_OR_KANJI = /[\u3040-\u30FF\u3400-\u9FFF\uF900-\uFAFF]/;
+
+// A bare kana / kanji term (`{いく}`) names a form of the headword rather
+// than a sense: it has no gloss or examples of its own. Digit or
+// punctuation scraps (Hoa's `{000}`, にわり's `{20%}`) are not forms.
+const isHeadwordForm = (sense: FvdpSense): sense is FvdpSense & {term: string} =>
+  sense.term !== undefined &&
+  !HAS_LATIN.test(sense.term) &&
+  HAS_KANA_OR_KANJI.test(sense.term) &&
+  sense.gloss === '' &&
+  sense.examples.length === 0;
 
 // A `*` (or implicit pos='') section: POS label up to the first sense
 // boundary, then the senses. pos='' when the text opens straight into a
 // `-`/`=` sense (the leading-marker preamble case).
 const parsePosSection = (
   text: string,
-): {kind: 'pos'; pos: string; senses: FvdpSense[]} => {
+): FvdpPosSection => {
   const t = text.trim();
   const boundary = firstSenseBoundary(t);
   const pos = t.slice(0, boundary).trim();
+  const forms: string[] = [];
   const senses: FvdpSense[] = [];
   for (const part of splitSenses(t.slice(boundary))) {
     const sense = parseSense(part);
-    if (sense) {
+    if (sense && isHeadwordForm(sense)) {
+      forms.push(sense.term);
+    } else if (sense) {
       senses.push(sense);
     }
   }
-  return {kind: 'pos', pos, senses};
+  return forms.length > 0
+    ? {kind: 'pos', pos, forms, senses}
+    : {kind: 'pos', pos, senses};
 };
 
 const parseNoteSection = (
@@ -176,6 +258,16 @@ const segment = (raw: string): Segment[] => {
   return segs;
 };
 
+// A pos section worth keeping without a POS label: it has senses or
+// headword forms.
+const hasContent = (s: FvdpPosSection): boolean =>
+  s.senses.length > 0 || s.forms !== undefined;
+
+const lastPosSection = (
+  sections: FvdpSection[],
+): FvdpPosSection | undefined =>
+  sections.filter((s): s is FvdpPosSection => s.kind === 'pos').pop();
+
 export const parseFvdpEntry = (raw: string): ParsedFvdpEntry => {
   if (!looksLikeFvdp(raw)) {
     return {sections: [], parseFailed: true, raw};
@@ -183,9 +275,21 @@ export const parseFvdpEntry = (raw: string): ParsedFvdpEntry => {
   const sections: FvdpSection[] = [];
   for (const seg of segment(raw)) {
     if (seg.marker === '#') {
-      const note = parseNoteSection(seg.text);
+      // A note runs to its first boundary dash. Senses after it
+      // (abattement's `# phản nghĩa =Energie, … joie - giảm miễn (thuế)
+      // =…`) are not part of the note: they form their own pos='' section.
+      const end = firstBoundaryDash(seg.text);
+      const note = parseNoteSection(seg.text.slice(0, end));
       if (note.label !== '' || note.body !== '') {
         sections.push(note);
+      }
+      const after = parsePosSection(seg.text.slice(end));
+      if (hasContent(after)) {
+        const before = lastPosSection(sections);
+        if (before) {
+          after.firstIndex = (before.firstIndex ?? 1) + before.senses.length;
+        }
+        sections.push(after);
       }
     } else if (seg.marker === '*') {
       const sec = parsePosSection(seg.text);
@@ -202,15 +306,17 @@ export const parseFvdpEntry = (raw: string): ParsedFvdpEntry => {
       // Preamble that opens straight into a sense (rông's vi-direction
       // `-`-list) — an implicit pos='' section. Its pos is ALWAYS '' (the
       // `/^\s*[-=]/` gate puts the first sense boundary at index 0), so
-      // only a non-empty sense list keeps it — no `pos !== ''` branch here.
+      // only senses or headword forms keep it — no `pos !== ''` branch
+      // here. A forms-only entry (にれ's `- {楡}`) is its forms line.
       const sec = parsePosSection(seg.text);
-      if (sec.senses.length > 0) {
+      if (hasContent(sec)) {
         sections.push(sec);
       }
     }
   }
   const structured = sections.reduce(
-    (n, s) => n + (s.kind === 'pos' ? s.senses.length : 1),
+    (n, s) =>
+      n + (s.kind === 'pos' ? s.senses.length + (s.forms?.length ?? 0) : 1),
     0,
   );
   return {sections, parseFailed: structured === 0, raw};
@@ -229,11 +335,18 @@ const sectionToPlainText = (section: FvdpSection): string => {
     return section.body ? `${section.label}: ${section.body}` : section.label;
   }
   const lines: string[] = [];
+  if (section.forms) {
+    lines.push(fvdpFormsLine(section.forms));
+  }
   if (section.pos !== '') {
     lines.push(section.pos);
   }
+  const first = section.firstIndex ?? 1;
   section.senses.forEach((sense, i) => {
-    lines.push(`${i + 1}. ${sense.gloss}`.trim());
+    const text = sense.term
+      ? [sense.term, sense.gloss].filter(Boolean).join(' — ')
+      : sense.gloss;
+    lines.push(`${i + first}. ${text}`.trim());
     for (const ex of sense.examples) {
       lines.push(ex.translation ? `  ${ex.source} — ${ex.translation}` : `  ${ex.source}`);
     }
