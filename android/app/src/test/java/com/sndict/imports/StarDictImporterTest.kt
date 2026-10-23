@@ -194,6 +194,14 @@ class StarDictImporterTest {
     assertEquals("parseIdx: truncated record after word at offset 0", e.message)
   }
 
+  @Test fun removesTheInflatedTempFileWhenAnImportFails() {
+    val files = writeDict(listOf(Entry("word", "def")), gzip = true)
+    val (_, idx, _, _, output) = files
+    idx.writeBytes(idx.readBytes().copyOf(idx.length().toInt() - 1))
+    assertThrows(IllegalArgumentException::class.java) { import(files) }
+    assertEquals(listOf<String>(), output.parentFile!!.list()!!.filter { it.endsWith(".tmp") })
+  }
+
   @Test fun storesAnIdxRecordThatOverrunsTheBodyWithAnEmptyDefinition() {
     // "A" folds onto "a" and its slice reaches past the end of a truncated
     // .dict: it is kept (rowid and count stay aligned) but empty, and the

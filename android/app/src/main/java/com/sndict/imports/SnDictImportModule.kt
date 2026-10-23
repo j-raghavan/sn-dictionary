@@ -50,8 +50,14 @@ class SnDictImportModule(
           formatOverride = format,
         )
         promise.resolve(count)
-      } catch (e: Exception) {
-        promise.reject("IMPORT_FAILED", e.message, e)
+      } catch (e: Throwable) {
+        // Throwable, not Exception: an OutOfMemoryError (or any other
+        // Error) escaping this worker kills the whole plugin process, and
+        // the next start would retry the same import (#44). Rejecting
+        // instead lets runImport discard the partial slug DB and keep the
+        // sources, as for any other failure; StarDictImporter.run has
+        // already removed its inflated temp file in its finally block.
+        promise.reject("IMPORT_FAILED", e.message ?: e.javaClass.name, e)
       }
     }
   }
