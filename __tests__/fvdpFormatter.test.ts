@@ -103,10 +103,10 @@ describe('parseFvdpEntry — real corpus trees', () => {
     expect(note.kind === 'note' && note.body).toContain('Elévation');
   });
 
-  test('abandon: a mid-entry `#` closes the POS block; its body keeps the tail', () => {
+  test('abandon: a mid-entry `#` closes the POS block; the note ends at the next dash', () => {
     const parsed = parseFvdpEntry(fvdp.abandon);
-    expect(parsed.sections).toHaveLength(2);
-    const [pos, note] = parsed.sections;
+    expect(parsed.sections).toHaveLength(3);
+    const [pos, note, after] = parsed.sections;
     // The single sense before the `#` — the `#` boundary ends the POS
     // block even though marker-like `-`/`=` text follows it.
     expect(pos).toMatchObject({
@@ -121,11 +121,70 @@ describe('parseFvdpEntry — real corpus trees', () => {
         },
       ],
     });
-    // Everything after the note's first `=` is verbatim body — including
-    // the trailing `=…+…` fragments that are NOT re-parsed as examples.
-    expect(note).toMatchObject({kind: 'note', label: 'phản nghĩa'});
-    expect(note.kind === 'note' && note.body).toContain('Acquisition');
-    expect(note.kind === 'note' && note.body).toContain("=vivre dans l'abandon+");
+    expect(note).toEqual({
+      kind: 'note',
+      label: 'phản nghĩa',
+      body: 'Acquisition, adoption; conservation, maintien. Raideur, tension, méfiance.',
+    });
+    // The `-abandon à la providence+ …` run after it is a sense of its
+    // own, carrying the `=vivre dans l'abandon+ …` examples.
+    expect(after).toMatchObject({kind: 'pos', pos: ''});
+    expect(after.kind === 'pos' && after.senses[0].examples[0]).toEqual({
+      source: "vivre dans l'abandon",
+      translation: 'sống trong cảnh bơ vơ, không ai ngó ngàng tới',
+    });
+  });
+
+  test('abattement: senses after a `#` note are kept out of the note', () => {
+    const parsed = parseFvdpEntry(fvdp.abattement);
+    expect(parsed.parseFailed).toBe(false);
+    expect(parsed.sections.slice(1)).toEqual([
+      {kind: 'note', label: 'phản nghĩa', body: 'Energie, excitation. Exaltation, joie'},
+      {
+        kind: 'pos',
+        pos: '',
+        // The POS block before the note has two senses, so this is sense 3.
+        firstIndex: 3,
+        senses: [
+          {
+            gloss: 'giảm miễn (thuế)',
+            examples: [
+              {
+                source: 'Un abattement de dix pour cent',
+                translation: 'giảm thuế mười phần trăm.',
+              },
+            ],
+          },
+        ],
+      },
+    ]);
+  });
+
+  test('agréger: the sense after the note carries on the numbering', () => {
+    expect(fvdpEntryToPlainText(parseFvdpEntry(fvdp['agréger']))).toBe(
+      [
+        'ngoại động từ',
+        '1. kết tụ (các phần tử rắn thành một khối)',
+        'phản nghĩa: Désagréger',
+        '2. kết nạp (vào một tổ chức); tập hợp',
+      ].join('\n'),
+    );
+  });
+
+  test('headword forms after a `#` note are kept, like a preamble\'s', () => {
+    expect(parseFvdpEntry('* n - g # note =x - {かな}').sections).toEqual([
+      {kind: 'pos', pos: 'n', senses: [{gloss: 'g', examples: []}]},
+      {kind: 'note', label: 'note', body: 'x'},
+      {kind: 'pos', pos: '', forms: ['かな'], firstIndex: 2, senses: []},
+    ]);
+  });
+
+  test('senses after a note with no sense block before it number from 1', () => {
+    // The empty `- {}` preamble is dropped, so nothing precedes the note.
+    expect(parseFvdpEntry('- {} # note =x - h').sections).toEqual([
+      {kind: 'note', label: 'note', body: 'x'},
+      {kind: 'pos', pos: '', senses: [{gloss: 'h', examples: []}]},
+    ]);
   });
 
   test('a: three distinct POS sections', () => {
@@ -453,6 +512,15 @@ describe('fvdpEntryToPlainText', () => {
     const out = fvdpEntryToPlainText(parseFvdpEntry(fvdp['rông']));
     // No POS heading; the numbered senses lead directly.
     expect(out.startsWith('1. xem nhà_rông')).toBe(true);
+  });
+
+  test('abattement: the senses after the note follow it as their own block', () => {
+    const out = fvdpEntryToPlainText(parseFvdpEntry(fvdp.abattement));
+    expect(out.split('\n').slice(-3)).toEqual([
+      'phản nghĩa: Energie, excitation. Exaltation, joie',
+      '3. giảm miễn (thuế)',
+      '  Un abattement de dix pour cent — giảm thuế mười phần trăm.',
+    ]);
   });
 
   test('a note with an empty body serializes to just its label', () => {

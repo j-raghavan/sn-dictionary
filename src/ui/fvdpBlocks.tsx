@@ -86,7 +86,7 @@ const FvdpSectionBlock = ({
         <FvdpSenseBlock
           key={i}
           sense={sense}
-          index={i + 1}
+          index={i + (section.firstIndex ?? 1)}
           showDivider={i > 0}
           fontScale={fontScale}
         />

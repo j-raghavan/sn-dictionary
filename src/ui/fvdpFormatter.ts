@@ -29,7 +29,15 @@ export type FvdpExample = {source: string; translation: string};
 export type FvdpSense = {term?: string; gloss: string; examples: FvdpExample[]};
 export type FvdpSection =
   // pos may be ''; forms is set only when the section has any.
-  | {kind: 'pos'; pos: string; forms?: string[]; senses: FvdpSense[]}
+  // firstIndex, when set, is the number of the first sense: a section
+  // after a `#` note carries on the numbering of the section before it.
+  | {
+      kind: 'pos';
+      pos: string;
+      forms?: string[];
+      firstIndex?: number;
+      senses: FvdpSense[];
+    }
   | {kind: 'note'; label: string; body: string};
 type FvdpPosSection = Extract<FvdpSection, {kind: 'pos'}>;
 export type ParsedFvdpEntry = {
@@ -72,16 +80,25 @@ const isSpace = (ch: string): boolean => /\s/.test(ch);
 const isBoundaryDash = (s: string, i: number): boolean =>
   s[i] === '-' && (i === 0 || isSpace(s[i - 1]) || s[i - 1] === '}');
 
-// Index of the first `=` or boundary `-` — the point where the POS label
-// ends and the sense stream begins. Length when the section is POS-only.
-const firstSenseBoundary = (t: string): number => {
+// Index of the first position `at` accepts; the length when none does.
+const indexWhere = (t: string, at: (i: number) => boolean): number => {
   for (let i = 0; i < t.length; i++) {
-    if (t[i] === '=' || isBoundaryDash(t, i)) {
+    if (at(i)) {
       return i;
     }
   }
   return t.length;
 };
+
+// Index of the first `=` or boundary `-` — the point where the POS label
+// ends and the sense stream begins. Length when the section is POS-only.
+const firstSenseBoundary = (t: string): number =>
+  indexWhere(t, (i) => t[i] === '=' || isBoundaryDash(t, i));
+
+// Index of the first boundary `-` — where a `#` note ends and any senses
+// after it begin. Length when the note runs to the end.
+const firstBoundaryDash = (t: string): number =>
+  indexWhere(t, (i) => isBoundaryDash(t, i));
 
 // Split a sense stream into per-sense chunks at each boundary `-` outside
 // a braced term, so chân chấu's `- {Saw - teeth}` stays one sense.
@@ -228,6 +245,16 @@ const segment = (raw: string): Segment[] => {
   return segs;
 };
 
+// A pos section worth keeping without a POS label: it has senses or
+// headword forms.
+const hasContent = (s: FvdpPosSection): boolean =>
+  s.senses.length > 0 || s.forms !== undefined;
+
+const lastPosSection = (
+  sections: FvdpSection[],
+): FvdpPosSection | undefined =>
+  sections.filter((s): s is FvdpPosSection => s.kind === 'pos').pop();
+
 export const parseFvdpEntry = (raw: string): ParsedFvdpEntry => {
   if (!looksLikeFvdp(raw)) {
     return {sections: [], parseFailed: true, raw};
@@ -235,9 +262,21 @@ export const parseFvdpEntry = (raw: string): ParsedFvdpEntry => {
   const sections: FvdpSection[] = [];
   for (const seg of segment(raw)) {
     if (seg.marker === '#') {
-      const note = parseNoteSection(seg.text);
+      // A note runs to its first boundary dash. Senses after it
+      // (abattement's `# phản nghĩa =Energie, … joie - giảm miễn (thuế)
+      // =…`) are not part of the note: they form their own pos='' section.
+      const end = firstBoundaryDash(seg.text);
+      const note = parseNoteSection(seg.text.slice(0, end));
       if (note.label !== '' || note.body !== '') {
         sections.push(note);
+      }
+      const after = parsePosSection(seg.text.slice(end));
+      if (hasContent(after)) {
+        const before = lastPosSection(sections);
+        if (before) {
+          after.firstIndex = (before.firstIndex ?? 1) + before.senses.length;
+        }
+        sections.push(after);
       }
     } else if (seg.marker === '*') {
       const sec = parsePosSection(seg.text);
@@ -257,7 +296,7 @@ export const parseFvdpEntry = (raw: string): ParsedFvdpEntry => {
       // only senses or headword forms keep it — no `pos !== ''` branch
       // here. A forms-only entry (にれ's `- {楡}`) is its forms line.
       const sec = parsePosSection(seg.text);
-      if (sec.senses.length > 0 || sec.forms) {
+      if (hasContent(sec)) {
         sections.push(sec);
       }
     }
@@ -289,11 +328,12 @@ const sectionToPlainText = (section: FvdpSection): string => {
   if (section.pos !== '') {
     lines.push(section.pos);
   }
+  const first = section.firstIndex ?? 1;
   section.senses.forEach((sense, i) => {
     const text = sense.term
       ? [sense.term, sense.gloss].filter(Boolean).join(' — ')
       : sense.gloss;
-    lines.push(`${i + 1}. ${text}`.trim());
+    lines.push(`${i + first}. ${text}`.trim());
     for (const ex of sense.examples) {
       lines.push(ex.translation ? `  ${ex.source} — ${ex.translation}` : `  ${ex.source}`);
     }

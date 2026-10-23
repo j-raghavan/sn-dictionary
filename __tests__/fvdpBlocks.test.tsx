@@ -152,6 +152,26 @@ describe('FvdpText', () => {
     expect(note).toBeDefined();
   });
 
+  test('abattement: the note keeps only its own body; the next sense follows it', () => {
+    const root = render('abattement').toJSON() as unknown as RTNode;
+    expect(
+      textNodesWith(root, 'phản nghĩa: Energie, excitation. Exaltation, joie'),
+    ).toHaveLength(1);
+    expect(textNodesWith(root, '3. giảm miễn (thuế)')).toHaveLength(1);
+    expect(
+      textNodesWith(root, 'Un abattement de dix pour cent — giảm thuế mười phần trăm.'),
+    ).toHaveLength(1);
+  });
+
+  test('agréger: screen lines match the copy text, numbering carried past the note', () => {
+    const root = render('agréger').toJSON() as unknown as RTNode;
+    const lines = fvdpEntryToPlainText(parseFvdpEntry(fvdp['agréger'])).split('\n');
+    expect(lines).toContain('2. kết nạp (vào một tổ chức); tập hợp');
+    for (const l of lines) {
+      expect(textNodesWith(root, l)).toHaveLength(1);
+    }
+  });
+
   test('omits the POS badge when pos is "" (rông preamble section)', () => {
     const root = render('rông').toJSON() as unknown as RTNode;
     const badges = collectAllNodes(root).filter(
