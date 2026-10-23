@@ -127,8 +127,12 @@ describe('parseFvdpEntry — real corpus trees', () => {
       body: 'Acquisition, adoption; conservation, maintien. Raideur, tension, méfiance.',
     });
     // The `-abandon à la providence+ …` run after it is a sense of its
-    // own, carrying the `=vivre dans l'abandon+ …` examples.
+    // own: its idiom pair reads as the gloss, and it carries the
+    // `=vivre dans l'abandon+ …` examples.
     expect(after).toMatchObject({kind: 'pos', pos: ''});
+    expect(after.kind === 'pos' && after.senses[0].gloss).toBe(
+      'abandon à la providence — phó thác cho trời',
+    );
     expect(after.kind === 'pos' && after.senses[0].examples[0]).toEqual({
       source: "vivre dans l'abandon",
       translation: 'sống trong cảnh bơ vơ, không ai ngó ngàng tới',
@@ -185,6 +189,28 @@ describe('parseFvdpEntry — real corpus trees', () => {
       {kind: 'note', label: 'note', body: 'x'},
       {kind: 'pos', pos: '', senses: [{gloss: 'h', examples: []}]},
     ]);
+  });
+
+  test('bête: a dash-led "idiom+ translation" sense reads "idiom — translation"', () => {
+    const out = fvdpEntryToPlainText(parseFvdpEntry(fvdp['bête'])).split('\n');
+    expect(out).toContain('2. pas si bête — không ngu đến thế đâu');
+    expect(out).toContain('  comme je suis bête! — tôi thật là ngốc!');
+    expect(out.some((l) => /^\d+\. .*\+/.test(l))).toBe(false);
+  });
+
+  test('a braced term keeps a "+" in its gloss', () => {
+    expect(parseFvdpEntry('- {X} , (Econ) X.+ explanation').sections).toEqual([
+      {
+        kind: 'pos',
+        pos: '',
+        senses: [{term: 'X', gloss: '(Econ) X.+ explanation', examples: []}],
+      },
+    ]);
+  });
+
+  test('a "+" not followed by a space is not an idiom pair', () => {
+    const [sec] = parseFvdpEntry('* n - C++ code').sections;
+    expect(sec.kind === 'pos' && sec.senses[0].gloss).toBe('C++ code');
   });
 
   test('a: three distinct POS sections', () => {

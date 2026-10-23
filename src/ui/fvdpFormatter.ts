@@ -152,13 +152,26 @@ const parseExamples = (run: string): FvdpExample[] => {
 // separates the term from its gloss dropped.
 const LEADING_TERM = /^\{([^}]*)\}\s*,?/;
 
+// A dash-led idiom written as one `source+ translation` pair where the
+// source used `-` in place of `=` (abandon's `-abandon à la providence+
+// phó thác cho trời`). Read as "source — translation" in the gloss line.
+const IDIOM_PAIR = /^([^=+]*[^\s(+])\+\s+(\S[^+]*)$/;
+
+const idiomGloss = (text: string): string => {
+  const pair = IDIOM_PAIR.exec(text);
+  return pair ? `${pair[1].trim()} — ${pair[2].trim()}` : text;
+};
+
 const parseSense = (part: string): FvdpSense | null => {
   const t = part.trim();
   const lead = LEADING_TERM.exec(t);
   const term = lead ? lead[1].trim() : '';
   const rest = lead ? t.slice(lead[0].length).trim() : t;
   const eq = rest.indexOf('=');
-  const gloss = (eq < 0 ? rest : rest.slice(0, eq)).trim();
+  const text = (eq < 0 ? rest : rest.slice(0, eq)).trim();
+  // Only a termless gloss can be an idiom pair: a braced term's gloss
+  // such as `(Econ) X.+ explanation` keeps its `+`.
+  const gloss = term === '' ? idiomGloss(text) : text;
   const examples = eq < 0 ? [] : parseExamples(rest.slice(eq));
   if (term === '' && gloss === '' && examples.length === 0) {
     return null;
