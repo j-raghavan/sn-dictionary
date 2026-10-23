@@ -229,6 +229,16 @@ android {
             proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
         }
     }
+    // The host app caps the plugin at ~192MB of Java heap, shared with
+    // React Native. Run the native unit tests at half that so an importer
+    // that buffers a whole dict fails here, not on a device (#44). This
+    // caps every :app unit test; the StarDict heap test relies on it —
+    // raise only with a reason.
+    testOptions {
+        unitTests.all {
+            maxHeapSize = "96m"
+        }
+    }
     // TODO This is important; keep it.
     aaptOptions {
         additionalParameters '--allow-reserved-package-id', '--package-id', '0x6f' // Replace XX with the ID you want, e.g., 0x60
@@ -239,6 +249,9 @@ android {
 }
 
 dependencies {
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.robolectric:robolectric:4.14.1")
+
     // The version of react-native is set by the React Native Gradle Plugin
     implementation("com.facebook.react:react-android")
 

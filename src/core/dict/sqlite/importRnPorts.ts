@@ -8,7 +8,7 @@
 // host-tested with a fake runNativeImport; keep this THIN.
 
 import type {SqliteDb} from './db';
-import type {ImportPorts, SlugDbLifecycle} from './importStardict';
+import type {DictBodySize, ImportPorts, SlugDbLifecycle} from './importStardict';
 import type {RunNativeImport} from './nativeImport';
 
 type FileUtils = {
@@ -34,9 +34,11 @@ export type RnImportConfig = {
   // The resolved sidecar text (meta.json contents, or the serialized
   // discovery default for a no-meta dict).
   sidecarText: string;
-  // Real .dict file size in bytes (native stat), for the space-guard
+  // The uncompressed .dict body size (native), for the space-guard
   // estimate. Async so the size is never a hardcoded 0.
-  statDictSize: () => Promise<number>;
+  statDictBody: () => Promise<DictBodySize>;
+  // A source file's size in bytes, 0 when missing (native stat).
+  statFileSize: (path: string) => Promise<number>;
   fileUtils: FileUtils;
   // Run the native StarDict import into an absolute dbPath.
   runNativeImport: RunNativeImport;
@@ -85,7 +87,8 @@ export const createRnImportPorts = (config: RnImportConfig): ImportPorts => {
     idxPath: config.idxPath,
     dictPath: config.dictPath,
     synPath: config.synPath,
-    statDictSize: config.statDictSize,
+    statDictBody: config.statDictBody,
+    statFileSize: config.statFileSize,
     async deleteFile(path: string): Promise<void> {
       await config.fileUtils.deleteFile(path);
     },

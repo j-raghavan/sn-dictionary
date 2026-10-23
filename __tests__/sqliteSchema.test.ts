@@ -4,9 +4,14 @@
 // format} (key bound, not selected), and DEFINITION_FORMATS matches
 // the DefinitionFormat union the popup renders.
 
+import {readFileSync} from 'node:fs';
+import {join} from 'node:path';
 import {createSeededDb} from './_helpers/betterSqliteDb';
+import {SCHEMA_VERSION} from '../src/core/dict/sqlite/buildBaseDb';
 import {
   ALTER_IMPORTS_ADD_IMPORTER_VERSION,
+  CREATE_ALIASES_INDEX,
+  CREATE_ALIASES_TABLE,
   CREATE_ENTRIES_INDEX,
   CREATE_ENTRIES_TABLE,
   CREATE_IMPORTS_IDENTITY_INDEX,
@@ -15,7 +20,9 @@ import {
   DEFINITION_FORMATS,
   DELETE_IMPORTS_DUPLICATES,
   IMPORTER_VERSION,
+  INSERT_ALIAS,
   INSERT_META,
+  INSERT_STARDICT_ENTRY,
   SELECT_ENTRY_BY_KEY,
   SELECT_IMPORT_BY_NAME_LANG,
   UPSERT_IMPORT,
@@ -89,6 +96,62 @@ describe('entries schema', () => {
 
   it('DEFINITION_FORMATS lists exactly the renderable formats', () => {
     expect([...DEFINITION_FORMATS].sort()).toEqual(['html', 'plain', 'wordnet']);
+  });
+});
+
+// The Kotlin importer writes StarDict slugs with its own copies of the
+// schema.ts DDL (no shared source across the language boundary). Pin
+// them here so the two can't drift: each literal must appear verbatim in
+// StarDictImporter.kt once its `"..." +` line continuations are joined.
+describe('native importer schema parity', () => {
+  const kotlin = readFileSync(
+    join(__dirname, '../android/app/src/main/java/com/sndict/imports/StarDictImporter.kt'),
+    'utf8',
+  ).replace(/"\s*\+\s*"/g, '');
+  const escapeRegExp = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+  // Each statement must be a Kotlin const OF THE SAME NAME whose value is
+  // the schema.ts literal, so a copy in a comment or a stale, unused const
+  // can't satisfy the check.
+  it.each([
+    ['CREATE_ENTRIES_TABLE', CREATE_ENTRIES_TABLE],
+    ['CREATE_ENTRIES_INDEX', CREATE_ENTRIES_INDEX],
+    ['CREATE_ALIASES_TABLE', CREATE_ALIASES_TABLE],
+    ['CREATE_ALIASES_INDEX', CREATE_ALIASES_INDEX],
+    ['CREATE_META_TABLE', CREATE_META_TABLE],
+    ['INSERT_STARDICT_ENTRY', INSERT_STARDICT_ENTRY],
+    ['INSERT_ALIAS', INSERT_ALIAS],
+    ['INSERT_META', INSERT_META],
+  ])('StarDictImporter.kt declares %s with the schema.ts value', (name, sql) => {
+    expect(kotlin).toMatch(
+      new RegExp(`(private )?const val ${name}\\s*=\\s*"${escapeRegExp(sql)}"`),
+    );
+    // ...and actually uses it (the declaration plus at least one use).
+    expect(kotlin.match(new RegExp(`\\b${name}\\b`, 'g'))!.length).toBeGreaterThan(1);
+  });
+
+  it('StarDictImporter.kt stamps the same SCHEMA_VERSION as base.db', () => {
+    expect(kotlin).toMatch(
+      new RegExp(`private const val SCHEMA_VERSION = ${SCHEMA_VERSION}\\b`),
+    );
+  });
+});
+
+describe('aliases schema (#44)', () => {
+  it('creates the table and index idempotently alongside entries', async () => {
+    const db = await createSeededDb(async d => {
+      await d.run(CREATE_ENTRIES_TABLE);
+      await d.run(CREATE_ALIASES_TABLE);
+      await d.run(CREATE_ALIASES_INDEX);
+    });
+    await db.run(CREATE_ALIASES_TABLE);
+    await db.run(CREATE_ALIASES_INDEX);
+    const idx = await db.query(
+      "SELECT name FROM sqlite_master WHERE type='index' AND name=?",
+      ['idx_aliases_key'],
+    );
+    expect(idx).toEqual([{name: 'idx_aliases_key'}]);
+    await db.close();
   });
 });
 

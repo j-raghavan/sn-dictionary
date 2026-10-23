@@ -76,9 +76,9 @@ export const formatFromTypeChar = (
 //
 // Host-side this helper is UNIT-tested only: the base build reads a clean
 // WordNet and DictReader doesn't expose the uncompressed body size, so the
-// overrun warning is emitted Kotlin-side (StarDictImporter.run has both
-// idxEntries and channel.size()); the arithmetic lives here as the shared
-// source of truth.
+// overrun warning is emitted Kotlin-side (StarDictImporter logs each .idx
+// record whose slice overruns its mmap'd body and stores it empty); the
+// arithmetic lives here as the shared source of truth.
 export const dictBodyOverrun = (
   maxOffsetEnd: number,
   bodySize: number,

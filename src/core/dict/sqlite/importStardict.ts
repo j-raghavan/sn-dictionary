@@ -40,10 +40,13 @@ export interface ImportPorts {
   idxPath: string;
   dictPath: string;
   synPath?: string;
-  // The .dict file size in bytes, for the space-guard estimate. An async
-  // port so the size comes from a real native stat (no JS byte read) —
-  // never a hardcoded 0 that would silently disable the guard.
-  statDictSize(): Promise<number>;
+  // The .dict body size, for the space-guard estimate. An async port so
+  // the size comes from the native side (no JS byte read) — never a
+  // hardcoded 0 that would silently disable the guard.
+  statDictBody(): Promise<DictBodySize>;
+  // A source file's size in bytes (0 when missing), for the .idx and .syn
+  // terms of the space-guard estimate.
+  statFileSize(path: string): Promise<number>;
   // Delete a source file after a verified import.
   deleteFile(path: string): Promise<void>;
   // The source files to delete on success (triple + syn + sidecar).
@@ -64,12 +67,57 @@ export interface ImportPorts {
 
 type Logger = {warn: (msg: string) => void; log?: (msg: string) => void};
 
-// Estimate the on-disk bytes an import needs. The dominant cost is the
-// SQLite copy of the .dict body plus index overhead; ~2.5x the .dict
-// length is a deliberately generous headroom factor so the guard errs
-// toward refusing a too-tight import rather than failing mid-write.
-export const estimateImportBytes = (dictByteLength: number): number =>
-  Math.ceil(dictByteLength * 2.5);
+// The .dict body as the native importer sees it (#44). `bytes` is the
+// UNCOMPRESSED body size — for a .dict.dz the gzip ISIZE trailer, not the
+// file size — and `inflated` says whether the import first inflates it to
+// a temp file beside the slug DB (a .dz or gzip-magic body).
+export type DictBodySize = {bytes: number; inflated: boolean};
+
+// The source sizes the space guard reads: the .dict body plus the .idx
+// and .syn file sizes (0 for a dict without a .syn).
+export type ImportSourceSizes = {
+  body: DictBodySize;
+  idxBytes: number;
+  synBytes: number;
+};
+
+const isByteCount = (n: unknown): n is number =>
+  typeof n === 'number' && Number.isFinite(n) && n >= 0;
+
+// Estimate the on-disk bytes an import needs, at its peak:
+//   - 2.5x the uncompressed body: the entries table's copy of every
+//     definition plus deliberately generous headroom, so the guard errs
+//     toward refusing a too-tight import rather than failing mid-write;
+//   - the body again when it is inflated to a temp file, which lives for
+//     the whole import;
+//   - 4.5x the .syn: one aliases row per record plus idx_aliases_key.
+//     Measured at 3.4x on fr-fr (60.5MB + 34.1MB from a 27.7MB .syn) and
+//     ~3.8x for 2M short (~4-byte) synonyms, where per-row overhead
+//     dominates; 4.5x keeps >= 1.2x headroom over both;
+//   - 2x the .idx: each record's folded key and headword plus
+//     idx_entries_key, beyond what the body term already covers.
+// Measured peaks: reader-dict fr-fr 99MB temp + 232MB DB = 331MB (guard
+// 492MB); JMdict 100MB temp + 136MB DB (guard >= 350MB). Sizing from the
+// compressed .dz alone asked for 56MB for fr-fr.
+//
+// Validated here, at the native boundary: a non-finite, negative or
+// mistyped size throws rather than silently passing the guard.
+export const estimateImportBytes = (sizes: ImportSourceSizes): number => {
+  const {body, idxBytes, synBytes} = sizes;
+  if (
+    !isByteCount(body?.bytes) ||
+    typeof body.inflated !== 'boolean' ||
+    !isByteCount(idxBytes) ||
+    !isByteCount(synBytes)
+  ) {
+    throw new Error(`[import] invalid source sizes: ${JSON.stringify(sizes)}`);
+  }
+  return (
+    Math.ceil(body.bytes * 2.5) +
+    (body.inflated ? body.bytes : 0) +
+    Math.ceil(synBytes * 4.5 + idxBytes * 2)
+  );
+};
 
 // StarDict PRODUCE-STEP: run the native parse+insert into the resolved
 // slug DB and resolve the committed count. This is the format-specific
@@ -89,7 +137,7 @@ const produceStardictSlugDb = async (
   });
 
 // Adapt the StarDict ImportPorts to the format-agnostic RunImportPorts —
-// the native produce-step + the .dict-size-based space estimate. The
+// the native produce-step + the source-size-based space estimate. The
 // host (index.js) calls THIS to build the run ports for a 'stardict'
 // descriptor, then hands them straight to runImport.
 export const stardictRunPorts = (ports: ImportPorts): RunImportPorts => {
@@ -115,7 +163,12 @@ export const stardictRunPorts = (ports: ImportPorts): RunImportPorts => {
     sidecarText: ports.sidecarText,
     produceSlugDb: filename => produceStardictSlugDb(ports, format, filename),
     estimateRequiredBytes: async () =>
-      estimateImportBytes(await ports.statDictSize()),
+      estimateImportBytes({
+        body: await ports.statDictBody(),
+        idxBytes: await ports.statFileSize(ports.idxPath),
+        synBytes:
+          ports.synPath === undefined ? 0 : await ports.statFileSize(ports.synPath),
+      }),
     deleteFile: ports.deleteFile,
     sourcePaths: ports.sourcePaths,
     slugDb: ports.slugDb,

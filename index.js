@@ -40,6 +40,7 @@ import {stardictRunPorts} from './src/core/dict/sqlite/importStardict';
 import {
   runNativeImport,
   getFileSize,
+  getDictBodySize,
   copyPluginFile,
   deletePluginFile,
 } from './src/core/dict/sqlite/nativeImport';
@@ -389,9 +390,12 @@ const bootstrapPorts = {
             // or built the default), so no meta.json re-read is needed.
             sidecarPath: descriptor.sidecarPath,
             sidecarText: JSON.stringify(descriptor.sidecar),
-            // Real .dict size from a native stat (SnDictImport.fileSize) —
-            // not a hardcoded 0 that would silently disable the space guard.
-            statDictSize: () => getFileSize(descriptor.dictPath),
+            // Uncompressed .dict body size from the native side (a .dz's
+            // gzip ISIZE) — not a hardcoded 0 that would silently disable
+            // the space guard, nor the compressed size (#44).
+            statDictBody: () => getDictBodySize(descriptor.dictPath),
+            // .idx/.syn sizes for the estimate's alias + key terms.
+            statFileSize: getFileSize,
             fileUtils: FileUtils,
             // Native parse+insert into plugins/<id>/<filename> (the module
             // resolves a relative dbPath under the host files dir).
