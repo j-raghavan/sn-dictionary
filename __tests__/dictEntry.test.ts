@@ -11,6 +11,7 @@ import {
   formatFromTypeChar,
   dictBodyOverrun,
   sanitizeDefinition,
+  mergeDefinitions,
 } from '../src/core/dict/stardict/dictEntry';
 import corpus from './_fixtures/renderParityCorpus.json';
 
@@ -185,5 +186,58 @@ describe('sanitizeDefinition (real star_trungviet corrupt entries)', () => {
     expect(sanitizeDefinition('a�b')).toBe('a�b');
     // Edges still strip while the interior one stays.
     expect(sanitizeDefinition('�a�b�')).toBe('a�b');
+  });
+});
+
+describe('mergeDefinitions', () => {
+  test('a single part is returned as is', () => {
+    expect(mergeDefinitions([{definition: 'only', format: 'plain'}])).toEqual({
+      definition: 'only',
+      format: 'plain',
+    });
+  });
+
+  test('identical bodies are shown once; other senses keep source order', () => {
+    expect(
+      mergeDefinitions([
+        {definition: 'coffee', format: 'plain'},
+        {definition: 'coffee', format: 'plain'},
+        {definition: 'a cafe', format: 'plain'},
+      ]),
+    ).toEqual({definition: 'coffee\n\na cafe', format: 'plain'});
+  });
+
+  test('HTML senses join with a blank HTML line', () => {
+    expect(
+      mergeDefinitions([
+        {definition: '<p>A surname.</p>', format: 'html'},
+        {definition: '<p>Armed conflict.</p>', format: 'html'},
+      ]),
+    ).toEqual({
+      definition: '<p>A surname.</p><br/><br/><p>Armed conflict.</p>',
+      format: 'html',
+    });
+  });
+
+  test('mixed plain/HTML escapes the plain part and adopts HTML', () => {
+    expect(
+      mergeDefinitions([
+        {definition: 'x < y & z > 0\r\nnext', format: 'plain'},
+        {definition: '<b>HTML</b>', format: 'html'},
+      ]),
+    ).toEqual({
+      definition: 'x &lt; y &amp; z &gt; 0<br/>next<br/><br/><b>HTML</b>',
+      format: 'html',
+    });
+  });
+
+  test('an empty sense still takes a slot', () => {
+    expect(
+      mergeDefinitions([
+        {definition: '', format: 'plain'},
+        {definition: 'meaning', format: 'plain'},
+        {definition: 'meaning', format: 'plain'},
+      ]).definition,
+    ).toBe('\n\nmeaning');
   });
 });

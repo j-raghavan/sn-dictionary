@@ -95,3 +95,36 @@ const FFFD_EDGES = /^�+|�+$/g;
 
 export const sanitizeDefinition = (s: string): string =>
   s.replace(FFFD_EDGES, '');
+
+export type DefinitionPart = {
+  definition: string;
+  format: DefinitionFormat;
+};
+
+// Keep distinct senses sharing a folded key. Mixed plain/HTML records must
+// escape the plain parts before adopting HTML; otherwise text becomes markup.
+// Mirrored by StarDictImporter.mergeDefinitions.
+export const mergeDefinitions = (parts: DefinitionPart[]): DefinitionPart => {
+  const unique = parts.filter(
+    (part, i) =>
+      parts.findIndex(
+        other =>
+          other.definition === part.definition && other.format === part.format,
+      ) === i,
+  );
+  const format = unique.some(part => part.format === 'html')
+    ? 'html'
+    : unique[0].format;
+  const definition = unique
+    .map(part =>
+      format === 'html' && part.format !== 'html'
+        ? part.definition
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/\r\n|\r|\n/g, '<br/>')
+        : part.definition,
+    )
+    .join(format === 'html' ? '<br/><br/>' : '\n\n');
+  return {definition, format};
+};
