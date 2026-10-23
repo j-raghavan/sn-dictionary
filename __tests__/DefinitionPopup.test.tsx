@@ -1213,7 +1213,7 @@ describe('DefinitionPopup — OCR correction (display-first → tap-to-edit)', (
     expect(findByLabel(tree, 'Edit recognized text').length).toBe(1); // pencil back
   });
 
-  test('CASE 5: doc-select flow (editable !== true) has NO pencil and NO field', () => {
+  test('CASE 5: editable !== true has NO pencil and NO field', () => {
     const tree = renderPopup();
     act(() => showDefinition(found('WordNet', 'hello', 'a greeting'), 'OCR: hello'));
     expect(findByLabel(tree, 'Edit recognized text').length).toBe(0);
@@ -1221,6 +1221,34 @@ describe('DefinitionPopup — OCR correction (display-first → tap-to-edit)', (
     expect(findByLabel(tree, 'Look up').length).toBe(0);
     // The plain OCR label still renders in the non-editable flow.
     expect(collectText(tree)).toContain('OCR: hello');
+  });
+
+  test('CASE 6: doc-select payload (no ocrLabel, editable) edits the selected text and stays editable after relookup', async () => {
+    // Mirrors index.js: doc select shows `showDefinition(result, undefined,
+    // true)` and relookup re-shows with editable=true.
+    const relookup = jest.fn(async (text: string) =>
+      showDefinition(
+        found('WordNet', text, 'a state of being'),
+        undefined,
+        true,
+      ),
+    );
+    setPopupActions(relookupActions(relookup));
+    const tree = renderPopup();
+    act(() => showDefinition(notFound('happiest'), undefined, true));
+    // DISPLAY mode shows the selected text with the pencil.
+    expect(findByLabel(tree, 'Edit recognized text').length).toBe(1);
+    expect(collectText(tree)).toContain('happiest');
+    enterEdit(tree);
+    expect(findByLabel(tree, 'OCR')[0].props.value).toBe('happiest');
+    act(() => findByLabel(tree, 'OCR')[0].props.onChangeText('  happy '));
+    await act(async () => findByLabel(tree, 'Look up')[0].props.onPress());
+    expect(relookup).toHaveBeenCalledWith('happy');
+    // The re-shown result is still editable, back in display mode.
+    expect(findByLabel(tree, 'Edit recognized text').length).toBe(1);
+    expect(findByLabel(tree, 'OCR').length).toBe(0);
+    expect(collectText(tree)).not.toContain('happiest');
+    expect(collectText(tree)).toContain('a state of being');
   });
 
   test('editable is gated on === true, not ocrLabel presence', () => {

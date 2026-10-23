@@ -616,14 +616,14 @@ export const popupStyles = StyleSheet.create({
     lineHeight: 24,
     color: '#000000',
   },
-  // OCR-correction row (lasso flow): an editable text field + a
+  // Search-term correction row: an editable text field + a
   // "Look up" button to re-run the lookup on the corrected word.
   editRow: {
     flexDirection: 'row',
     alignItems: 'center',
     marginTop: 8,
   },
-  // Display mode for the OCR-correction field (lasso flow): the
+  // Display mode for the search-term correction field: the
   // recognized word on the left, a pencil glyph on the right. Tapping
   // the whole row enters edit mode. Read-first so the user isn't
   // confronted with an edit field when the recognition was correct.
