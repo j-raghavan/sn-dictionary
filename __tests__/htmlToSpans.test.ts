@@ -2,6 +2,8 @@ import {htmlToSpans, type Span} from '../src/ui/htmlToSpans';
 import {htmlToPlainText} from '../src/ui/htmlToPlainText';
 import corpus from './_fixtures/renderParityCorpus.json';
 
+const tuonghinh = corpus.tuonghinh as Record<string, string>;
+
 // Helper: collapse a span list into the visible plain text (ignoring
 // styles). Pinned to the same shape htmlToPlainText produces — any
 // drift between the two is a bug in the shared HtmlBaseRenderer.
@@ -485,6 +487,28 @@ describe('htmlToSpans — trim + edge cases (coverage)', () => {
   });
 });
 
+describe('htmlToSpans — lone pinyin reading lines (Tuonghinh, #28)', () => {
+  test('乐: each reading joins its gloss; the bold heading stays on its own line', () => {
+    const spans = htmlToSpans(tuonghinh['乐']);
+    expect(concatText(spans).split('\n').slice(0, 5)).toEqual([
+      '[Yuè] surname Yue',
+      '[lè] ① happy ② cheerful ③ to laugh',
+      '[yuè] music',
+      '[Lè] surname Le',
+      'DECOMPOSITIONS',
+    ]);
+    // The reading carries no style of its own; the heading keeps its bold.
+    expect(spans.some((sp) => sp.text === '[Yuè] surname Yue' && !sp.style.bold)).toBe(true);
+    expect(spans.some((sp) => sp.text === 'DECOMPOSITIONS' && sp.style.bold)).toBe(true);
+  });
+
+  test('a reading followed by a tag is left alone', () => {
+    const spans = htmlToSpans('[hǎo]<br><b>TREE</b>');
+    expect(concatText(spans)).toBe('[hǎo]\nTREE');
+    expect(summary(spans).pop()).toEqual(['TREE', 'B']);
+  });
+});
+
 describe('htmlToSpans — text matches htmlToPlainText byte-for-byte', () => {
   // Cross-renderer invariant: visible characters from htmlToSpans
   // must equal what htmlToPlainText produces. Any divergence means
@@ -516,6 +540,8 @@ describe('htmlToSpans — text matches htmlToPlainText byte-for-byte', () => {
       '<div><font color="green">noun, male</font><br><ol><li>Haustier, dessen Vorfahre der Wolf ist<ol><li><div>chien</div></li><li><div>chienne</div></li></ol></li></ol></div>',
     ],
     ['entities', 'AT&amp;T &lt; &gt; &nbsp;&#65;'],
+    ['Tuonghinh 乐 (joined readings)', tuonghinh['乐']],
+    ['Tuonghinh 好 (joined readings)', tuonghinh['好']],
   ])('%s', (_label, html) => {
     expect(concatText(htmlToSpans(html))).toBe(htmlToPlainText(html));
   });

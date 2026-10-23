@@ -230,6 +230,20 @@ const HTML_BR = /<br\s*\/?>/i;
 export const containsRenderableHtml = (s: string): boolean =>
   HTML_BR.test(s) || HTML_PAIR.test(s);
 
+// A bracketed reading alone on its line (`[Yuè]<br>surname Yue`), as the
+// Tuonghinh character dict lays out every pinyin reading. Only joined
+// when the next line is gloss text: a following tag (`<b>DECOMPOSITIONS`,
+// another `<br>`), another `[reading]`, or the end of the entry leaves
+// the line alone. The 40-char cap keeps a bracketed sentence out.
+const LONE_READING_LINE =
+  /(^|<br\s*\/?>)(\s*\[[^[\]<>\n]{1,40}\])\s*<br\s*\/?>(?!\s*(?:<|\[|$))/gi;
+
+// Pre-pass shared by both HTML render paths (htmlToSpans and
+// htmlToPlainText), so a reading and its gloss share one line —
+// `[Yuè] surname Yue` — on screen and in the copy text alike.
+export const joinLoneReadingLines = (html: string): string =>
+  html.replace(LONE_READING_LINE, '$1$2 ');
+
 // Walk `html` and dispatch text + tag events to `visitor`. Idempotent
 // on input with no tags AND no entities (visitor.onText receives the
 // whole string in one call). Malformed unclosed tags are surfaced as

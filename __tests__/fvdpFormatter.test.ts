@@ -2,9 +2,9 @@
 // Fixtures are REAL corpus entries (renderParityCorpus.json), not
 // hand-authored — the repo lesson is that hand-authored fixtures hid the
 // sametypesequence blindspot (#28). The detector's precision is the load-
-// bearing property: it must fire on the FVDP dict and NEVER on the other
-// plain (sametypesequence=m) dicts, so its negatives are real TrungViet
-// entries.
+// bearing property: it must fire on the FVDP dict and the braced-term
+// `- {term} , gloss` layout (NhatVietNhat, TrungViet), and never on a bare
+// `-` list such as NhatVietNhat's 学生, which stays verbatim.
 
 import {
   parseFvdpEntry,
@@ -16,6 +16,7 @@ import corpus from './_fixtures/renderParityCorpus.json';
 
 const fvdp = corpus.fvdp as Record<string, string>;
 const clean = corpus.trungvietClean as Record<string, string>;
+const nhat = corpus.nhatvietnhat as Record<string, string>;
 
 describe('looksLikeFvdp — precision', () => {
   test.each(Object.keys(fvdp))('accepts the FVDP entry %s', (word) => {
@@ -23,11 +24,17 @@ describe('looksLikeFvdp — precision', () => {
   });
 
   test.each(Object.keys(clean))(
-    'rejects the TrungViet plain entry %s (0 false positives)',
+    'accepts the braced-term TrungViet entry %s',
     (word) => {
-      expect(looksLikeFvdp(clean[word])).toBe(false);
+      expect(looksLikeFvdp(clean[word])).toBe(true);
     },
   );
+
+  test('accepts the braced-term NhatVietNhat entries', () => {
+    for (const word of ['行く', 'しゅうはけい', '日本', 'にれ', 'bần cùng hoá']) {
+      expect(looksLikeFvdp(nhat[word])).toBe(true);
+    }
+  });
 
   test('rejects a multi-line body (the no-newline gate is load-bearing)', () => {
     // A `*`-led body that spans lines is WordNet-shaped, not FVDP.
@@ -38,9 +45,14 @@ describe('looksLikeFvdp — precision', () => {
     expect(looksLikeFvdp('a greeting used for most purposes')).toBe(false);
   });
 
-  test('a `-`-led body without an example pair is not FVDP', () => {
-    // TrungViet-style `- {word} , gloss` lists carry no =src+trans pair.
-    expect(looksLikeFvdp('- {word} , a gloss, another gloss')).toBe(false);
+  test('a `-`-led body with neither a braced term nor an example pair is not FVDP', () => {
+    // NhatVietNhat's 学生 and TrungViet's 一举两得 are bare `-` lists.
+    expect(looksLikeFvdp(nhat['学生'])).toBe(false);
+    expect(looksLikeFvdp(corpus.trungvietBare['一举两得'])).toBe(false);
+  });
+
+  test('the braced term must open the entry', () => {
+    expect(looksLikeFvdp('a gloss - {term} , more')).toBe(false);
   });
 });
 
@@ -91,10 +103,10 @@ describe('parseFvdpEntry — real corpus trees', () => {
     expect(note.kind === 'note' && note.body).toContain('Elévation');
   });
 
-  test('abandon: a mid-entry `#` closes the POS block; its body keeps the tail', () => {
+  test('abandon: a mid-entry `#` closes the POS block; the note ends at the next dash', () => {
     const parsed = parseFvdpEntry(fvdp.abandon);
-    expect(parsed.sections).toHaveLength(2);
-    const [pos, note] = parsed.sections;
+    expect(parsed.sections).toHaveLength(3);
+    const [pos, note, after] = parsed.sections;
     // The single sense before the `#` — the `#` boundary ends the POS
     // block even though marker-like `-`/`=` text follows it.
     expect(pos).toMatchObject({
@@ -109,11 +121,96 @@ describe('parseFvdpEntry — real corpus trees', () => {
         },
       ],
     });
-    // Everything after the note's first `=` is verbatim body — including
-    // the trailing `=…+…` fragments that are NOT re-parsed as examples.
-    expect(note).toMatchObject({kind: 'note', label: 'phản nghĩa'});
-    expect(note.kind === 'note' && note.body).toContain('Acquisition');
-    expect(note.kind === 'note' && note.body).toContain("=vivre dans l'abandon+");
+    expect(note).toEqual({
+      kind: 'note',
+      label: 'phản nghĩa',
+      body: 'Acquisition, adoption; conservation, maintien. Raideur, tension, méfiance.',
+    });
+    // The `-abandon à la providence+ …` run after it is a sense of its
+    // own: its idiom pair reads as the gloss, and it carries the
+    // `=vivre dans l'abandon+ …` examples.
+    expect(after).toMatchObject({kind: 'pos', pos: ''});
+    expect(after.kind === 'pos' && after.senses[0].gloss).toBe(
+      'abandon à la providence — phó thác cho trời',
+    );
+    expect(after.kind === 'pos' && after.senses[0].examples[0]).toEqual({
+      source: "vivre dans l'abandon",
+      translation: 'sống trong cảnh bơ vơ, không ai ngó ngàng tới',
+    });
+  });
+
+  test('abattement: senses after a `#` note are kept out of the note', () => {
+    const parsed = parseFvdpEntry(fvdp.abattement);
+    expect(parsed.parseFailed).toBe(false);
+    expect(parsed.sections.slice(1)).toEqual([
+      {kind: 'note', label: 'phản nghĩa', body: 'Energie, excitation. Exaltation, joie'},
+      {
+        kind: 'pos',
+        pos: '',
+        // The POS block before the note has two senses, so this is sense 3.
+        firstIndex: 3,
+        senses: [
+          {
+            gloss: 'giảm miễn (thuế)',
+            examples: [
+              {
+                source: 'Un abattement de dix pour cent',
+                translation: 'giảm thuế mười phần trăm.',
+              },
+            ],
+          },
+        ],
+      },
+    ]);
+  });
+
+  test('agréger: the sense after the note carries on the numbering', () => {
+    expect(fvdpEntryToPlainText(parseFvdpEntry(fvdp['agréger']))).toBe(
+      [
+        'ngoại động từ',
+        '1. kết tụ (các phần tử rắn thành một khối)',
+        'phản nghĩa: Désagréger',
+        '2. kết nạp (vào một tổ chức); tập hợp',
+      ].join('\n'),
+    );
+  });
+
+  test('headword forms after a `#` note are kept, like a preamble\'s', () => {
+    expect(parseFvdpEntry('* n - g # note =x - {かな}').sections).toEqual([
+      {kind: 'pos', pos: 'n', senses: [{gloss: 'g', examples: []}]},
+      {kind: 'note', label: 'note', body: 'x'},
+      {kind: 'pos', pos: '', forms: ['かな'], firstIndex: 2, senses: []},
+    ]);
+  });
+
+  test('senses after a note with no sense block before it number from 1', () => {
+    // The empty `- {}` preamble is dropped, so nothing precedes the note.
+    expect(parseFvdpEntry('- {} # note =x - h').sections).toEqual([
+      {kind: 'note', label: 'note', body: 'x'},
+      {kind: 'pos', pos: '', senses: [{gloss: 'h', examples: []}]},
+    ]);
+  });
+
+  test('bête: a dash-led "idiom+ translation" sense reads "idiom — translation"', () => {
+    const out = fvdpEntryToPlainText(parseFvdpEntry(fvdp['bête'])).split('\n');
+    expect(out).toContain('2. pas si bête — không ngu đến thế đâu');
+    expect(out).toContain('  comme je suis bête! — tôi thật là ngốc!');
+    expect(out.some((l) => /^\d+\. .*\+/.test(l))).toBe(false);
+  });
+
+  test('a braced term keeps a "+" in its gloss', () => {
+    expect(parseFvdpEntry('- {X} , (Econ) X.+ explanation').sections).toEqual([
+      {
+        kind: 'pos',
+        pos: '',
+        senses: [{term: 'X', gloss: '(Econ) X.+ explanation', examples: []}],
+      },
+    ]);
+  });
+
+  test('a "+" not followed by a space is not an idiom pair', () => {
+    const [sec] = parseFvdpEntry('* n - C++ code').sections;
+    expect(sec.kind === 'pos' && sec.senses[0].gloss).toBe('C++ code');
   });
 
   test('a: three distinct POS sections', () => {
@@ -185,8 +282,8 @@ describe('parseFvdpEntry — real corpus trees', () => {
     ]);
   });
 
-  test('parseFailed when the body is not FVDP (real TrungViet entry)', () => {
-    const parsed = parseFvdpEntry(clean['人']);
+  test('parseFailed when the body is not FVDP (real NhatVietNhat 学生)', () => {
+    const parsed = parseFvdpEntry(nhat['学生']);
     expect(parsed.parseFailed).toBe(true);
     expect(parsed.sections).toEqual([]);
   });
@@ -290,6 +387,126 @@ describe('parseFvdpEntry — robustness on degenerate input', () => {
   });
 });
 
+// The `- {term} , gloss` layout (NhatVietNhat ja-vi, TrungViet zh-vi):
+// a term with Latin letters is a sense, a bare kana / kanji term is a
+// form of the headword.
+describe('parseFvdpEntry — braced-term layout', () => {
+  test('行く: kana forms, then the "go" sense with its gloss', () => {
+    const parsed = parseFvdpEntry(nhat['行く']);
+    expect(parsed.parseFailed).toBe(false);
+    expect(parsed.sections).toHaveLength(1);
+    const [section] = parsed.sections;
+    expect(section).toMatchObject({kind: 'pos', pos: '', forms: ['いく', 'ゆく']});
+    expect(section.kind === 'pos' && section.senses).toHaveLength(1);
+    const [go] = section.kind === 'pos' ? section.senses : [];
+    expect(go.term).toBe('go');
+    expect(go.gloss.startsWith('sự đi, sức sống; nhiệt tình')).toBe(true);
+    expect(go.examples).toEqual([]);
+  });
+
+  test('しゅうはけい: a kanji form, a glossed term, and a bare term', () => {
+    expect(parseFvdpEntry(nhat['しゅうはけい']).sections).toEqual([
+      {
+        kind: 'pos',
+        pos: '',
+        forms: ['周波計'],
+        senses: [
+          {
+            term: 'frequency meter',
+            gloss: '(Tech) tần số kế, máy đo tần số',
+            examples: [],
+          },
+          {term: 'wavemeter', gloss: '', examples: []},
+        ],
+      },
+    ]);
+  });
+
+  test('日本: a plain gloss after the forms keeps its `=` examples', () => {
+    const [section] = parseFvdpEntry(nhat['日本']).sections;
+    expect(section).toMatchObject({kind: 'pos', forms: ['にっぽん', 'にほん']});
+    const [sense] = section.kind === 'pos' ? section.senses : [];
+    expect(sense.term).toBeUndefined();
+    expect(sense.gloss).toBe('Nhật Bản');
+    expect(sense.examples[0]).toEqual({
+      source: '日本の (thuộc) Nhật Bản',
+      translation: '',
+    });
+  });
+
+  test('にれ: a forms-only entry still structures', () => {
+    const parsed = parseFvdpEntry(nhat['にれ']);
+    expect(parsed.parseFailed).toBe(false);
+    expect(parsed.sections).toEqual([
+      {kind: 'pos', pos: '', forms: ['楡'], senses: []},
+    ]);
+  });
+
+  test('bần cùng hoá: a dash glued to a closing brace still splits senses', () => {
+    const [section] = parseFvdpEntry(nhat['bần cùng hoá']).sections;
+    expect(section.kind === 'pos' && section.senses.map((x) => x.term)).toEqual([
+      'To impoverish to the utmost',
+      'to pauperize',
+      'To impoverish to the utmost',
+      'to pauperize',
+    ]);
+  });
+
+  test('chân chấu: a dash inside a braced term does not split it', () => {
+    expect(parseFvdpEntry(nhat['chân chấu']).sections).toEqual([
+      {kind: 'pos', pos: '', senses: [{term: 'Saw - teeth', gloss: '', examples: []}]},
+    ]);
+  });
+
+  test('a digit or punctuation term is a sense, not a headword form', () => {
+    // にわり: `- {二割} - {20%}` — the kanji is a form, `20%` is not.
+    const [niwari] = parseFvdpEntry(nhat['にわり']).sections;
+    expect(niwari).toEqual({
+      kind: 'pos',
+      pos: '',
+      forms: ['二割'],
+      senses: [{term: '20%', gloss: '', examples: []}],
+    });
+    // Hoa: the `{000}` scraps of a broken "500,000" stay senses, so the
+    // entry has no forms line at all.
+    const [hoa] = parseFvdpEntry(nhat.Hoa).sections;
+    expect(hoa.kind === 'pos' && hoa.forms).toBeUndefined();
+    expect(hoa.kind === 'pos' && hoa.senses[4]).toEqual({
+      term: '000',
+      gloss: '',
+      examples: [],
+    });
+  });
+
+  test('中国 (TrungViet): each English term is a sense with its gloss', () => {
+    expect(parseFvdpEntry(clean['中国']).sections).toEqual([
+      {
+        kind: 'pos',
+        pos: '',
+        senses: [
+          {term: 'Cathay', gloss: '(từ cổ, nghĩa cổ) Trung Quốc', examples: []},
+          {
+            term: 'china',
+            gloss:
+              'sứ, đồ sứ, làm rối loạn, làm hỗn loạn, làm náo động, bằng sứ, (thuộc) đồ sứ',
+            examples: [],
+          },
+        ],
+      },
+    ]);
+  });
+
+  test('a Vietnamese-only term counts as Latin, so it is a sense', () => {
+    expect(parseFvdpEntry('- {ừ}').sections).toEqual([
+      {kind: 'pos', pos: '', senses: [{term: 'ừ', gloss: '', examples: []}]},
+    ]);
+  });
+
+  test('an empty `{}` term structures nothing (verbatim fallback)', () => {
+    expect(parseFvdpEntry('- {}').parseFailed).toBe(true);
+  });
+});
+
 // The clipboard serializer must mirror FvdpText's on-screen structure so
 // Copy matches what the user sees (the copy-matches-screen invariant).
 describe('fvdpEntryToPlainText', () => {
@@ -323,8 +540,33 @@ describe('fvdpEntryToPlainText', () => {
     expect(out.startsWith('1. xem nhà_rông')).toBe(true);
   });
 
+  test('abattement: the senses after the note follow it as their own block', () => {
+    const out = fvdpEntryToPlainText(parseFvdpEntry(fvdp.abattement));
+    expect(out.split('\n').slice(-3)).toEqual([
+      'phản nghĩa: Energie, excitation. Exaltation, joie',
+      '3. giảm miễn (thuế)',
+      '  Un abattement de dix pour cent — giảm thuế mười phần trăm.',
+    ]);
+  });
+
   test('a note with an empty body serializes to just its label', () => {
     const out = fvdpEntryToPlainText(parseFvdpEntry('* n - g =s+t # justlabel'));
     expect(out).toBe(['n', '1. g', '  s — t', 'justlabel'].join('\n'));
+  });
+
+  test('しゅうはけい: the forms line, then "term — gloss" senses', () => {
+    expect(fvdpEntryToPlainText(parseFvdpEntry(nhat['しゅうはけい']))).toBe(
+      [
+        '周波計',
+        '1. frequency meter — (Tech) tần số kế, máy đo tần số',
+        '2. wavemeter',
+      ].join('\n'),
+    );
+  });
+
+  test('行く: two kana forms share one line', () => {
+    const out = fvdpEntryToPlainText(parseFvdpEntry(nhat['行く']));
+    expect(out.split('\n')[0]).toBe('いく · ゆく');
+    expect(out.split('\n')[1].startsWith('1. go — sự đi, sức sống;')).toBe(true);
   });
 });

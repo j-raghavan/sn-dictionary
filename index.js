@@ -152,6 +152,35 @@ const ensureSdcardPermission = async () => {
   return ok;
 };
 
+// Ask at load, as the other plugins do, so the dialog shows while the
+// plugin is being installed or started. Asking from discovery came after
+// base.db opened and the buttons registered: by then the installer had
+// finished, no dialog appeared, and the request never settled. User-dict
+// discovery awaits this one request rather than making its own. It never
+// rejects — probePerm turns every failure into a value.
+const sdcardPermission = ensureSdcardPermission();
+
+// requestPermission resolves only from the firmware's callback, and the SDK
+// puts no bound on it. bootstrap awaits discovery before it hands back the
+// lookup, so an unanswered dialog would leave every lookup failing for the
+// session. Past the bound, discovery treats it like a denial: no user
+// dictionaries this session, base.db keeps working.
+const PERM_WAIT_MS = 60000;
+const awaitSdcardPermission = () => {
+  let timer;
+  const timeout = new Promise(resolve => {
+    timer = setTimeout(() => resolve(null), PERM_WAIT_MS);
+  });
+  return Promise.race([sdcardPermission, timeout]).then(granted => {
+    clearTimeout(timer);
+    if (granted === null) {
+      logger.log(`[perm] no answer within ${PERM_WAIT_MS / 1000}s`);
+      return false;
+    }
+    return granted;
+  });
+};
+
 // All DBs live in the plugin host's extracted dir, addressed by
 // {name, location} — NOT a hardcoded absolute path. The native side
 // resolves getFilesDir() + location + name (SQLitePlugin.java:392-395),
@@ -190,8 +219,8 @@ const noteHandlerDeps = {
   file: PluginFileAPI,
   lookup: {lookup: (...args) => runtime.lookup.lookup(...args)},
   showRecognizing,
-  // Lasso flow is editable: the popup shows the OCR-correction field so
-  // the user can fix a mis-recognised word (editable === true).
+  // Editable (editable === true): the popup shows the recognized word
+  // with a pencil so the user can fix a mis-recognised word.
   showResult: (result, ocrLabel) => showDefinition(result, ocrLabel, true),
   hidePopup: hideDefinition,
   logger,
@@ -201,8 +230,9 @@ const docHandlerDeps = {
   doc: PluginDocAPI,
   view: PluginManager,
   lookup: {lookup: (...args) => runtime.lookup.lookup(...args)},
-  // Doc-select text is already exact — no OCR field (editable omitted).
-  showResult: showDefinition,
+  // Editable too: the selected text is often an inflected form, and the
+  // user needs to edit it down to the dictionary form (#42).
+  showResult: result => showDefinition(result, undefined, true),
   logger,
 };
 
@@ -278,7 +308,7 @@ const bootstrapPorts = {
   // the guard has to sit BEFORE the call. Denied -> zero import jobs,
   // exactly like an empty root; base.db still works and the plugin lives.
   discover: async () => {
-    if (!(await ensureSdcardPermission())) {
+    if (!(await awaitSdcardPermission())) {
       logger.warn(
         '[perm] sdcard read not granted — skipping user-dict discovery',
       );

@@ -37,8 +37,8 @@ import type {
 export type ResultSnapshot = {
   ocrLabel?: string;
   result: LookupResult;
-  // OPTIONAL: when true the popup shows the OCR-correction editable
-  // field (lasso flow). Absent/false -> read-only view (doc-select).
+  // OPTIONAL: when true the popup shows the editable search-term field
+  // (note lasso and doc select). Absent/false -> read-only view.
   // The component guards on `=== true`, never on ocrLabel presence
   // (Designer ruling 4 / flag 5). The LookupResult shape itself is
   // unchanged (IV-1) — editability is popup chrome, not a result field.
