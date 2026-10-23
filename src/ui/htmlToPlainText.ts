@@ -10,7 +10,7 @@
 // no-ops — the plain-text path strips styling and only carries
 // layout-level structure.
 
-import {parseHtml, looksLikeHtml} from './htmlParser';
+import {joinLoneReadingLines, looksLikeHtml, parseHtml} from './htmlParser';
 import {HtmlBaseRenderer} from './htmlRenderBase';
 
 export {looksLikeHtml};
@@ -73,6 +73,6 @@ export const htmlToPlainText = (html: string): string => {
     return html;
   }
   const renderer = new PlainTextRenderer();
-  parseHtml(html, renderer);
+  parseHtml(joinLoneReadingLines(html), renderer);
   return renderer.finalize();
 };
