@@ -45,7 +45,9 @@ export const CREATE_ENTRIES_INDEX =
 // (a 1.5M-synonym dict used to store 1.5M duplicated bodies). Only the
 // Kotlin importer writes these; base.db, user.db and CSV slugs have no
 // aliases table and keep the plain LIMIT-1 SELECT. The index is built
-// after the bulk load, like idx_entries_key.
+// after the bulk load, like idx_entries_key. An entries row may have an
+// empty word when the dict keeps its headwords only in the .syn (JMdict,
+// #46); such a row is reached only through its aliases.
 //   key         — normalizeKey-folded synonym (the lookup key)
 //   entry_rowid — the target entries rowid
 //   word        — the raw synonym as written in the .syn
@@ -115,21 +117,24 @@ export const SELECT_ENTRY_BY_KEY =
 export const SELECT_ENTRY_BY_KEY_NO_PHONETIC =
   'SELECT word, definition, format FROM entries WHERE key = ? LIMIT 1';
 
-// The keyed lookup for a slug WITH an aliases table: canonical rows
-// first (lowest rowid = first in .idx), then aliases in .syn order, and
-// the first one wins — the same first-key-wins the importer used to apply
-// at write time. The ORDER BY makes the precedence explicit (UNION ALL
-// order is not guaranteed). Rows with an empty definition (a .idx record
-// that overran a corrupt .dict body) are skipped, so the lookup falls
-// through to the key's next row or misses. Binds the folded key TWICE.
-export const SELECT_ENTRY_BY_KEY_WITH_ALIASES =
-  'SELECT word, definition, format, phonetic FROM (' +
-  'SELECT 0 AS src, rowid AS ord, word, definition, format, phonetic ' +
+// The keyed lookup for a slug WITH an aliases table: EVERY entry the key
+// reaches (#46), canonical rows first (lowest rowid = first in .idx), then
+// aliases in .syn order. The ORDER BY makes the precedence explicit (UNION
+// ALL order is not guaranteed). `id` is the entries rowid, so the caller
+// can drop an entry reached twice. An entry with an empty headword shows
+// the alias that matched instead. Rows with an empty definition (a .idx
+// record that overran a corrupt .dict body) are skipped, so they never
+// become a merged part or the headword, and a key that reaches only such
+// rows misses. Binds the folded key TWICE.
+export const SELECT_ENTRIES_BY_KEY_WITH_ALIASES =
+  'SELECT id, word, definition, format, phonetic FROM (' +
+  'SELECT 0 AS src, rowid AS ord, rowid AS id, word, definition, format, phonetic ' +
   "FROM entries WHERE key = ? AND definition <> '' " +
   'UNION ALL ' +
-  'SELECT 1, a.rowid, e.word, e.definition, e.format, e.phonetic ' +
+  "SELECT 1, a.rowid, e.rowid, CASE WHEN e.word = '' THEN a.word ELSE e.word END, " +
+  'e.definition, e.format, e.phonetic ' +
   "FROM aliases a JOIN entries e ON e.rowid = a.entry_rowid WHERE a.key = ? AND e.definition <> ''" +
-  ') ORDER BY src, ord LIMIT 1';
+  ') ORDER BY src, ord';
 
 // Insert a CSV entry (5-col, with phonetic — bound NULL when absent).
 export const INSERT_CSV_ENTRY =
@@ -145,6 +150,11 @@ export interface EntryRow {
   definition: string;
   format: string;
   phonetic?: string | null;
+}
+
+// SELECT_ENTRIES_BY_KEY_WITH_ALIASES adds the entries rowid.
+export interface AliasedEntryRow extends EntryRow {
+  id: number;
 }
 
 // The valid `format` values (mirrors DefinitionFormat in lookup.ts).
