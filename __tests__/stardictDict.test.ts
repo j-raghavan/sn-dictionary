@@ -222,6 +222,63 @@ describe('stardictDict', () => {
       expect(lookupDict(parsed, 'apple')?.definition).toBe('a fruit');
     });
 
+    test.each([
+      ['sametypesequence=h', {sametypesequence: 'h'}],
+      ['sametypesequence absent', {omitSametypesequence: true}],
+    ])(
+      'a dict whose headwords live only in .syn (JMdict, %s) resolves each alias and shows it as the headword (#46)',
+      async (_layout, options) => {
+        const {ifo, idx, dict} = buildSyntheticStarDict(
+          [
+            ['', 'paper'],
+            ['', 'god'],
+          ],
+          options,
+        );
+        const syn = buildSyn([
+          {word: '紙', index: 0},
+          {word: 'かみ', index: 0},
+          {word: '神', index: 1},
+          {word: 'かみ', index: 1},
+        ]);
+        const parsed = await buildDict(ifo, idx, dict, syn);
+        expect(lookupDict(parsed, '紙')).toEqual({
+          canonicalWord: '紙',
+          definition: 'paper',
+        });
+        expect(lookupDict(parsed, '神')).toEqual({
+          canonicalWord: '神',
+          definition: 'god',
+        });
+        // In-memory lookup keeps first-key-wins for a shared kana key.
+        expect(lookupDict(parsed, 'かみ')).toEqual({
+          canonicalWord: 'かみ',
+          definition: 'paper',
+        });
+        expect(parsed.index.has('')).toBe(false);
+      },
+    );
+
+    test('a dict with no lookup keys fails instead of missing every word (#46)', async () => {
+      // JMdict copied without its .syn: every .idx word is empty.
+      const {ifo, idx, dict} = buildSyntheticStarDict(
+        [
+          ['', 'paper'],
+          ['', 'god'],
+        ],
+        {sametypesequence: 'h'},
+      );
+      const noKeys =
+        'parseIdx: no lookup keys (every .idx word is empty and there is no usable .syn)';
+      await expect(buildDict(ifo, idx, dict)).rejects.toThrow(noKeys);
+      // A .syn whose only records are empty or out of range is no better.
+      const unusable = buildSyn([
+        {word: '', index: 0},
+        {word: 'late', index: 9},
+      ]);
+      await expect(buildDict(ifo, idx, dict, unusable)).rejects.toThrow(noKeys);
+    });
+
     test('multi-byte synonym word (Devanagari) resolves correctly', async () => {
       // Real Wiktionary case: native script in .idx, Latin in .syn.
       // Here the synthetic dict has Latin in .idx and Devanagari in

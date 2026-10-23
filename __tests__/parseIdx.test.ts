@@ -58,9 +58,18 @@ describe('parseIdx', () => {
     await expect(parseIdx(bytes, 32)).rejects.toThrow(/truncated record/);
   });
 
-  test('throws on an empty word', async () => {
+  test('accepts an empty word, which keeps its ordinal for the .syn (#46)', async () => {
     const bytes = new Uint8Array([0, 0, 0, 0, 0, 0, 0, 0, 1]);
-    await expect(parseIdx(bytes, 32)).rejects.toThrow(/empty word/);
+    expect(await parseIdx(bytes, 32)).toEqual([
+      {word: '', offset: 0, length: 1},
+    ]);
+  });
+
+  test('still rejects a truncated record after an empty word', async () => {
+    const bytes = new Uint8Array([0, 0, 0, 0]);
+    await expect(parseIdx(bytes, 32)).rejects.toThrow(
+      'parseIdx: truncated record after word at offset 0',
+    );
   });
 
   test('throws when the buffer ends without a null terminator', async () => {

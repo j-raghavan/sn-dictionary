@@ -5,15 +5,17 @@
 // produced by the same normalizeKey used at build/import time, so
 // lookup semantics match the in-memory engine exactly (IV-4).
 
-import type {DefinitionFormat, DictEntry, DictSource} from '../../lookup';
+import type {DefinitionFormat, DictEntry, DictSource, EntryPart} from '../../lookup';
 import {normalizeKey} from '../normalizeKey';
 import {createLazyAsyncSource} from '../lazyAsyncSource';
+import {distinctParts} from '../stardict/dictEntry';
 import type {OpenSqliteDb, SqliteDb} from './db';
 import {
   DEFINITION_FORMATS,
+  SELECT_ENTRIES_BY_KEY_WITH_ALIASES,
   SELECT_ENTRY_BY_KEY,
   SELECT_ENTRY_BY_KEY_NO_PHONETIC,
-  SELECT_ENTRY_BY_KEY_WITH_ALIASES,
+  type AliasedEntryRow,
   type EntryRow,
 } from './schema';
 
@@ -84,48 +86,88 @@ const dbShape = (db: SqliteDb): Promise<DbShape> => {
   return probe;
 };
 
-// Read the row for a folded key. First row wins (every SELECT carries
-// LIMIT 1); no row -> null. A StarDict slug with an aliases table also
-// matches synonyms; otherwise the v3 (phonetic) or 4-col SELECT is picked
-// from the cached probe so a pre-v3 `entries` (user.db / old slug) never
-// throws "no such column".
-const queryEntryRow = async (
-  db: SqliteDb,
-  foldedKey: string,
-): Promise<EntryRow[]> => {
-  const shape = await dbShape(db);
-  // aliases => a native v3 StarDict slug => the phonetic column is present.
-  if (shape.aliases) {
-    return db.query<EntryRow>(SELECT_ENTRY_BY_KEY_WITH_ALIASES, [foldedKey, foldedKey]);
-  }
-  const sql = shape.phonetic
-    ? SELECT_ENTRY_BY_KEY
-    : SELECT_ENTRY_BY_KEY_NO_PHONETIC;
-  return db.query<EntryRow>(sql, [foldedKey]);
-};
-
-export const selectByKey = async (
-  db: SqliteDb,
-  foldedKey: string,
-  formatOverride?: DefinitionFormat,
-): Promise<DictEntry | null> => {
-  const rows = await queryEntryRow(db, foldedKey);
-  if (rows.length === 0) {
-    return null;
-  }
-  const row = rows[0];
-  const entry: DictEntry = {
-    word: row.word,
-    definition: row.definition,
-    format: formatOverride ?? coerceFormat(row.format),
-  };
-  // Map phonetic ONLY when present + non-empty (exact old lookupCsv
-  // contract); a null/'' column is omitted, not surfaced as ''.
+// One row -> DictEntry. Map phonetic ONLY when present + non-empty (exact
+// old lookupCsv contract); a null/'' column is omitted, not surfaced as ''.
+const toEntry = (row: EntryRow, format: DefinitionFormat): DictEntry => {
+  const entry: DictEntry = {word: row.word, definition: row.definition, format};
   const phonetic = row.phonetic;
   if (phonetic !== undefined && phonetic !== null && phonetic !== '') {
     entry.phonetic = phonetic;
   }
   return entry;
+};
+
+// A StarDict slug with an aliases table (#44): EVERY entry the key reaches
+// (#46) — homographs that fold together (Guerra / guerra), the several
+// JMdict entries a kana reading points at (かみ: 紙, 神, 髪), the lemmas of
+// an inflected form (fr-fr suis: suivre, être). Rows come canonical first,
+// then aliases in .syn order; an entry reached twice keeps its first place,
+// and distinctParts drops repeated bodies. With more than one part left
+// the entry carries them as `parts`, each with its own headword and
+// format, and the popup renders each through its own format: nothing is
+// joined, so a WordNet or FVDP body still parses as one entry. The entry's
+// own fields are the first part's (its headword is the matched alias for
+// an entry with an empty headword, see SELECT_ENTRIES_BY_KEY_WITH_ALIASES).
+//
+// No cap on the number of parts. The largest real merge by size is sachxy
+// "sets": 2 parts, 43KB of HTML, 16.7K characters, 1,302 spans, about
+// 1.4ms through htmlToSpans on a host. The most parts is JMdict's こう: 45
+// parts, 29KB.
+const selectMerged = async (
+  db: SqliteDb,
+  foldedKey: string,
+  formatOverride?: DefinitionFormat,
+): Promise<DictEntry | null> => {
+  const rows = await db.query<AliasedEntryRow>(
+    SELECT_ENTRIES_BY_KEY_WITH_ALIASES,
+    [foldedKey, foldedKey],
+  );
+  if (rows.length === 0) {
+    return null;
+  }
+  const formatOf = (row: EntryRow): DefinitionFormat =>
+    formatOverride ?? coerceFormat(row.format);
+  const seen = new Set<number>();
+  const reached: EntryPart[] = [];
+  for (const row of rows) {
+    if (!seen.has(row.id)) {
+      seen.add(row.id);
+      reached.push({word: row.word, definition: row.definition, format: formatOf(row)});
+    }
+  }
+  // rows[0] is non-empty (the SELECT skips empty definitions) and first,
+  // so it is always parts[0].
+  const entry = toEntry(rows[0], formatOf(rows[0]));
+  const parts = distinctParts(reached);
+  if (parts.length > 1) {
+    entry.parts = parts;
+  }
+  return entry;
+};
+
+// Read the entry for a folded key; no row -> null. A StarDict slug with an
+// aliases table merges every entry the key reaches. Every other DB
+// (base.db, user.db, CSV slugs, older StarDict slugs) keeps first-row-wins
+// (LIMIT 1), with the v3 (phonetic) or 4-col SELECT picked from the cached
+// probe so a pre-v3 `entries` never throws "no such column".
+export const selectByKey = async (
+  db: SqliteDb,
+  foldedKey: string,
+  formatOverride?: DefinitionFormat,
+): Promise<DictEntry | null> => {
+  const shape = await dbShape(db);
+  // aliases => a native v3 StarDict slug => the phonetic column is present.
+  if (shape.aliases) {
+    return selectMerged(db, foldedKey, formatOverride);
+  }
+  const sql = shape.phonetic
+    ? SELECT_ENTRY_BY_KEY
+    : SELECT_ENTRY_BY_KEY_NO_PHONETIC;
+  const rows = await db.query<EntryRow>(sql, [foldedKey]);
+  if (rows.length === 0) {
+    return null;
+  }
+  return toEntry(rows[0], formatOverride ?? coerceFormat(rows[0].format));
 };
 
 // Compose the DictSource onto createLazyAsyncSource. The harness owns

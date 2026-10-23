@@ -33,6 +33,9 @@ export const parseSyn = async (bytes: Uint8Array): Promise<SynEntry[]> => {
     bytes.byteLength,
   );
   let i = 0;
+  // Records read, skipped ones included, so the yield cadence holds even
+  // through a run of empty synonyms.
+  let records = 0;
   while (i < bytes.length) {
     let end = i;
     while (end < bytes.length && bytes[end] !== 0) {
@@ -41,19 +44,21 @@ export const parseSyn = async (bytes: Uint8Array): Promise<SynEntry[]> => {
     if (end >= bytes.length) {
       throw new Error('parseSyn: unterminated word at end of buffer');
     }
-    if (end === i) {
-      throw new Error(`parseSyn: empty word at offset ${i}`);
-    }
     if (end + 1 + 4 > bytes.length) {
       throw new Error(
         `parseSyn: truncated record after word at offset ${i}`,
       );
     }
-    const word = decodeUtf8(bytes.subarray(i, end));
-    const originalWordIndex = view.getUint32(end + 1, false);
-    entries.push({word, originalWordIndex});
+    // An empty synonym can never be looked up: skip the record rather
+    // than reject the whole dictionary (#46).
+    if (end > i) {
+      const word = decodeUtf8(bytes.subarray(i, end));
+      const originalWordIndex = view.getUint32(end + 1, false);
+      entries.push({word, originalWordIndex});
+    }
     i = end + 1 + 4;
-    if (shouldYield(entries.length)) {
+    records++;
+    if (shouldYield(records)) {
       await yieldToEventLoop();
     }
   }

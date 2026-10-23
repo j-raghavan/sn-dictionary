@@ -498,9 +498,118 @@ describe('htmlToPlainText', () => {
     });
 
     test('paragraph-mode <p>x</p><p>y</p> preserves paragraph break', () => {
-      // <p> intent is two newlines collapsed to one by post-pass.
+      // Each paragraph is its own line; empty lines are dropped, so
+      // there is no blank row between them.
       expect(htmlToPlainText('<p>x</p><p>y</p>')).toBe('x\ny');
     });
+  });
+});
+
+// #46: every JMdict definition opens with the same <style> block. Its CSS
+// must not show up as text in the popup.
+describe('htmlToPlainText — <style> and <script> (#46)', () => {
+  test('drops the <style> block that opens a real JMdict entry', () => {
+    expect(corpus.jmdict['ヽ'].startsWith('<style>\n.JMdict .x{')).toBe(true);
+    expect(htmlToPlainText(corpus.jmdict['ヽ'])).toBe(
+      'ヽ、くりかえし\nnoun\n• repetition mark in katakana',
+    );
+  });
+
+  test('a merged JMdict result carries no CSS from any of its entries', () => {
+    const merged = `${corpus.jmdict['ヽ']}<br/><br/>${corpus.jmdict['神']}`;
+    const text = htmlToPlainText(merged);
+    expect(text).not.toMatch(/JMdict|font-size|\{/);
+    expect(text).toContain('• repetition mark in katakana');
+    expect(text).toContain('• god');
+  });
+
+  test('drops <script> content too', () => {
+    expect(htmlToPlainText('a<script>alert("x < y")</script>b')).toBe('ab');
+  });
+
+  test('an unclosed <style> drops only its open tag, never the rest', () => {
+    expect(htmlToPlainText('<b>kept</b><style>.a{color:red}')).toBe('kept.a{color:red}');
+    expect(htmlToPlainText('<style>.a{}</ style>ok')).toBe('.a{}ok');
+  });
+
+  test.each([
+    ['a self-closing <style/>', '<style/>def text', 'def text'],
+    ['a self-closing <script src/>', '<script src="a.js"/><b>word</b> meaning', 'word meaning'],
+    ['a <script> mentioned in prose', 'The <script> element runs code.', 'The element runs code.'],
+    // Not tag-shaped, so literal text as before; nothing is swallowed.
+    ['a malformed close </ style>', '</ style>ok', '</ style>ok'],
+    ['a malformed close <//style>', '<//style>ok', '<//style>ok'],
+  ])('keeps the text after %s', (_case, html, text) => {
+    expect(htmlToPlainText(html)).toBe(text);
+  });
+});
+
+// #46: a paragraph ends its line, so inline content after </p> starts a
+// new one instead of gluing onto the paragraph's last word.
+describe('htmlToPlainText — paragraph boundaries (#46)', () => {
+  test('<p>a</p><p>b</p> is exactly two lines, with no blank line between', () => {
+    expect(htmlToPlainText('<p>a</p><p>b</p>')).toBe('a\nb');
+  });
+
+  test('inline text after </p> starts a new line', () => {
+    expect(htmlToPlainText('<p>a</p>b')).toBe('a\nb');
+    expect(htmlToPlainText('a<p>b</p><span>c</span>')).toBe('a\nb\nc');
+  });
+
+  test('a real JMdict entry puts the part of speech after a sense on its own line', () => {
+    const lines = htmlToPlainText(corpus.jmdict['神']).split('\n');
+    // Was "• kaminounnoun (prefix)slang": sense 1 ends in </p>, and the
+    // next sense's part-of-speech <span> followed it directly.
+    const kami = lines.indexOf('• kami');
+    expect(kami).toBeGreaterThan(0);
+    expect(lines[kami + 1].startsWith('noun')).toBe(true);
+    expect(lines).toContain('• fantastic');
+    expect(lines).toContain('3• emperor of Japan');
+    expect(lines).not.toContain('');
+  });
+});
+
+// #46: same-kind inline siblings with nothing between them are separate
+// labels (JMdict part-of-speech pills, fr-fr domain labels) and get one
+// space. Styling changes, <sup>/<sub> and CJK never do.
+describe('htmlToPlainText — adjacent inline labels (#46)', () => {
+  test('a real JMdict entry reads its part-of-speech pills as separate words', () => {
+    const lines = htmlToPlainText(corpus.jmdict['神']).split('\n');
+    expect(lines).toContain('noun noun (prefix) slang');
+    expect(lines).toContain('noun honorific, respectful (sonkeigo) archaism');
+    // A sense number before a 【…】 note is not a label boundary.
+    expect(lines).toContain('2【also written ネ申】');
+  });
+
+  test.each([
+    ['<span class="t p">noun</span><span class="t m">slang</span>', 'noun slang'],
+    ['<i>(Chimie)</i><i>(Désuet)</i> Dérivé', '(Chimie) (Désuet) Dérivé'],
+    ['<i>(Rare)</i><i>Variante de</i>', '(Rare) Variante de'],
+    ['<b><i>a</i></b><b>b</b>', 'a b'],
+  ])('separates the sibling labels in %p', (html, text) => {
+    expect(htmlToPlainText(html)).toBe(text);
+  });
+
+  test.each([
+    ['CJK on both sides', '<span>漢</span><span>字</span>', '漢字'],
+    ['Latin then CJK', '<span>noun</span><span>漢字</span>', 'noun漢字'],
+    ['CJK then Latin', '<span>漢字</span><span>noun</span>', '漢字noun'],
+    ['kana then Latin', '<span>かみ</span><span>god</span>', 'かみgod'],
+    ['a tag change mid-word', '<i>h</i><span>ν</span>', 'hν'],
+    ['a superscript', '<small>XIX</small><sup>e</sup> siècle', 'XIXe siècle'],
+    ['a subscript run', 'SO<sub>4</sub><sup>2-</sup>', 'SO42-'],
+    ['a suffix after a close tag', '<b>run</b>s', 'runs'],
+    ['an opening bracket on the left', '<i>(</i><i>transitif)</i>', '(transitif)'],
+    ['an existing space', '<span>a</span> <span>b</span>', 'a b'],
+    ['a block tag between', '<span>a</span><br><span>b</span>', 'a\nb'],
+    ['an empty element between', '<span>a</span><span></span>b', 'ab'],
+    ['an empty element before', 'abc<b></b><b>def</b>', 'abcdef'],
+    ['an empty anchor before', 'see<a name="n"></a><a href>bar</a>', 'seebar'],
+    // Real fr-fr (acide cacodylique): only the <sub>/<sub> guard stops a
+    // space between the two subscripts.
+    ['adjacent subscripts', 'CH<sub>3</sub><sub>2</sub>AsO-OH', 'CH32AsO-OH'],
+  ])('adds nothing for %s', (_case, html, text) => {
+    expect(htmlToPlainText(html)).toBe(text);
   });
 });
 

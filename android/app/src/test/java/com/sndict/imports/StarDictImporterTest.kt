@@ -250,11 +250,54 @@ class StarDictImporterTest {
     assertEquals("parseIdx: word too long at offset 0", e.message)
   }
 
-  @Test fun rejectsAnEmptyIdxWord() {
-    val e = assertThrows(IllegalArgumentException::class.java) {
-      importEntries(listOf(Entry("word", "def"), Entry("", "orphan")))
+  // #46: JMdict leaves every .idx word empty and keeps all its headwords in
+  // the .syn. Each record still gets its row so the .syn ordinals resolve,
+  // and an empty .syn word is skipped rather than failing the import.
+  @Test fun importsADictWhoseHeadwordsLiveOnlyInTheSyn() {
+    for (sts in listOf("h", null)) {
+      val imported = importEntries(
+        listOf(Entry("", "<p>paper</p>", 'h'), Entry("", "<p>god</p>", 'h')),
+        sts = sts,
+        aliases = listOf("紙" to 0, "かみ" to 0, "" to 1, "神" to 1, "かみ" to 1),
+      )
+      assertEquals(
+        listOf(
+          EntryRow(1, "", "", "<p>paper</p>", "html"),
+          EntryRow(2, "", "", "<p>god</p>", "html"),
+        ),
+        imported.entries,
+      )
+      assertEquals(
+        listOf(
+          AliasRow("紙", 1, "紙"),
+          AliasRow("かみ", 1, "かみ"),
+          AliasRow("神", 2, "神"),
+          AliasRow("かみ", 2, "かみ"),
+        ),
+        imported.aliases,
+      )
     }
-    assertEquals("parseIdx: empty word at offset 13", e.message)
+  }
+
+  // #46: without its .syn, a JMdict-shaped dict has no word anyone can look
+  // up. It must fail so runImport discards the slug, not import silently.
+  @Test fun rejectsADictWithNoLookupKeys() {
+    val message = "parseIdx: no lookup keys (every .idx word is empty and there is no usable .syn)"
+    val entries = List(3) { Entry("", "<p>def $it</p>") }
+    for (aliases in listOf(emptyList(), listOf("" to 0, "late" to 9))) {
+      val e = assertThrows(IllegalArgumentException::class.java) {
+        importEntries(entries, sts = "h", aliases = aliases)
+      }
+      assertEquals(message, e.message)
+    }
+  }
+
+  @Test fun rejectsATruncatedRecordAfterAnEmptyIdxWord() {
+    val files = writeDict(listOf(Entry("", "def")))
+    val idx = files[1]
+    idx.writeBytes(idx.readBytes().copyOf(idx.length().toInt() - 1))
+    val e = assertThrows(IllegalArgumentException::class.java) { import(files) }
+    assertEquals("parseIdx: truncated record after word at offset 0", e.message)
   }
 
   @Test fun rejectsAnUnterminatedSynWord() {

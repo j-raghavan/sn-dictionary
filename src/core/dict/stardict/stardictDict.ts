@@ -81,13 +81,22 @@ export const buildDict = async (
       if (key.length > 0 && !index.has(key)) {
         // Synonym keys point at the SAME canonical .idx entry, so the
         // popup's headerWord (entry.word) shows the original headword,
-        // not the synonym alias the user typed.
-        index.set(key, target);
+        // not the synonym alias the user typed. A target with an empty
+        // headword (JMdict, #46) shows the synonym instead.
+        index.set(key, target.word === '' ? {...target, word: syn.word} : target);
       }
       if (shouldYield(i)) {
         await yieldToEventLoop();
       }
     }
+  }
+  // Every .idx word empty and no usable .syn (JMdict copied without its
+  // .syn, #46): nothing could ever be looked up, so fail loudly like the
+  // native importer instead of returning a dict that misses every word.
+  if (index.size === 0) {
+    throw new Error(
+      'parseIdx: no lookup keys (every .idx word is empty and there is no usable .syn)',
+    );
   }
   return {meta, index, dictReader};
 };
