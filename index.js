@@ -189,8 +189,8 @@ const noteHandlerDeps = {
   file: PluginFileAPI,
   lookup: {lookup: (...args) => runtime.lookup.lookup(...args)},
   showRecognizing,
-  // Lasso flow is editable: the popup shows the OCR-correction field so
-  // the user can fix a mis-recognised word (editable === true).
+  // Editable (editable === true): the popup shows the recognized word
+  // with a pencil so the user can fix a mis-recognised word.
   showResult: (result, ocrLabel) => showDefinition(result, ocrLabel, true),
   hidePopup: hideDefinition,
   logger,
@@ -200,8 +200,9 @@ const docHandlerDeps = {
   doc: PluginDocAPI,
   view: PluginManager,
   lookup: {lookup: (...args) => runtime.lookup.lookup(...args)},
-  // Doc-select text is already exact — no OCR field (editable omitted).
-  showResult: showDefinition,
+  // Editable too: the selected text is often an inflected form, and the
+  // user needs to edit it down to the dictionary form (#42).
+  showResult: result => showDefinition(result, undefined, true),
   logger,
 };
 

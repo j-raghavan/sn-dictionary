@@ -107,14 +107,14 @@ describe('popupController', () => {
     expect(seen).toEqual([]);
   });
 
-  test('showDefinition carries editable=true when requested (lasso flow)', () => {
+  test('showDefinition carries editable=true when requested', () => {
     const seen: Array<{editable?: boolean}> = [];
     subscribe(s => seen.push(s as {editable?: boolean}));
     showDefinition({queriedFor: 'x', hits: [], loading: []}, 'OCR: x', true);
     expect(seen[0].editable).toBe(true);
   });
 
-  test('showDefinition omits editable when not requested (doc-select flow)', () => {
+  test('showDefinition omits editable when not requested', () => {
     const seen: Array<{editable?: boolean}> = [];
     subscribe(s => seen.push(s as {editable?: boolean}));
     showDefinition({queriedFor: 'x', hits: [], loading: []});
