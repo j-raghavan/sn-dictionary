@@ -173,12 +173,13 @@ export abstract class HtmlBaseRenderer implements HtmlVisitor {
         }
         return;
       case 'p':
-        // Paragraph break: two newlines now; the per-line dedup in
-        // most consumers collapses adjacent blank lines.
-        if (!isClose) {
-          this.emitNewline();
-          this.emitNewline();
-        }
+        // A paragraph is a block: it starts AND ends a line, like a
+        // block <div>. Without the break on </p>, inline text that
+        // follows glued onto the paragraph's last word (JMdict:
+        // "…• kami</p><span>noun</span>" -> "kaminoun", #46). Both
+        // consumers drop empty lines, so back-to-back paragraphs
+        // never stack a blank row.
+        this.emitNewline();
         return;
       case 'ol':
       case 'ul':

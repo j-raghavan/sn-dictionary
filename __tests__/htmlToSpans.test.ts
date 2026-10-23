@@ -543,3 +543,33 @@ describe('htmlToSpans — <style> and <script> (#46)', () => {
     ]);
   });
 });
+
+describe('htmlToSpans — paragraph boundaries (#46)', () => {
+  test.each([
+    '<p>a</p><p>b</p>',
+    '<p>a</p>b',
+    'a<p>b</p><span>c</span>',
+    '<p><b>a</b></p><i>b</i>',
+  ])('screen matches copy for %p', html => {
+    expect(concatText(htmlToSpans(html))).toBe(htmlToPlainText(html));
+  });
+
+  test('<p>a</p><p>b</p> is exactly two lines, with no blank line between', () => {
+    expect(concatText(htmlToSpans('<p>a</p><p>b</p>'))).toBe('a\nb');
+  });
+
+  test('screen matches copy for every pinned JMdict entry, alone and merged', () => {
+    const bodies = Object.values(corpus.jmdict);
+    for (const html of [...bodies, bodies.join('<br/><br/>')]) {
+      expect(concatText(htmlToSpans(html))).toBe(htmlToPlainText(html));
+    }
+  });
+
+  test('styling after a paragraph starts on a new line in its own style', () => {
+    expect(summary(htmlToSpans('<p>sense</p><i>noun</i>'))).toEqual([
+      ['sense', '-'],
+      ['\n', '-'],
+      ['noun', 'I'],
+    ]);
+  });
+});

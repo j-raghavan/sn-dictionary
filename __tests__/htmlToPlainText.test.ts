@@ -498,7 +498,8 @@ describe('htmlToPlainText', () => {
     });
 
     test('paragraph-mode <p>x</p><p>y</p> preserves paragraph break', () => {
-      // <p> intent is two newlines collapsed to one by post-pass.
+      // Each paragraph is its own line; empty lines are dropped, so
+      // there is no blank row between them.
       expect(htmlToPlainText('<p>x</p><p>y</p>')).toBe('x\ny');
     });
   });
@@ -540,5 +541,30 @@ describe('htmlToPlainText — <style> and <script> (#46)', () => {
     ['a malformed close <//style>', '<//style>ok', '<//style>ok'],
   ])('keeps the text after %s', (_case, html, text) => {
     expect(htmlToPlainText(html)).toBe(text);
+  });
+});
+
+// #46: a paragraph ends its line, so inline content after </p> starts a
+// new one instead of gluing onto the paragraph's last word.
+describe('htmlToPlainText — paragraph boundaries (#46)', () => {
+  test('<p>a</p><p>b</p> is exactly two lines, with no blank line between', () => {
+    expect(htmlToPlainText('<p>a</p><p>b</p>')).toBe('a\nb');
+  });
+
+  test('inline text after </p> starts a new line', () => {
+    expect(htmlToPlainText('<p>a</p>b')).toBe('a\nb');
+    expect(htmlToPlainText('a<p>b</p><span>c</span>')).toBe('a\nb\nc');
+  });
+
+  test('a real JMdict entry puts the part of speech after a sense on its own line', () => {
+    const lines = htmlToPlainText(corpus.jmdict['神']).split('\n');
+    // Was "• kaminounnoun (prefix)slang": sense 1 ends in </p>, and the
+    // next sense's part-of-speech <span> followed it directly.
+    const kami = lines.indexOf('• kami');
+    expect(kami).toBeGreaterThan(0);
+    expect(lines[kami + 1].startsWith('noun')).toBe(true);
+    expect(lines).toContain('• fantastic');
+    expect(lines).toContain('3• emperor of Japan');
+    expect(lines).not.toContain('');
   });
 });
