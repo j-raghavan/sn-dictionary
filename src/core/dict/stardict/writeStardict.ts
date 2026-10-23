@@ -50,19 +50,33 @@ export type WriteOptions = {
   perEntryType?: Record<string, string>;
 };
 
+// headword -> definition, or [headword, definition] pairs when a test
+// needs headwords a Record can't hold: repeated words, or several empty
+// ones (JMdict keeps every .idx word empty, #46).
+export type StarDictEntries =
+  | Record<string, string>
+  | ReadonlyArray<readonly [string, string]>;
+
+const byWord = (
+  [a]: readonly [string, string],
+  [b]: readonly [string, string],
+): number => (a < b ? -1 : a > b ? 1 : 0);
+
 export const writeStarDict = (
-  entries: Record<string, string>,
+  entries: StarDictEntries,
   options: WriteOptions = {},
 ): StarDictBytes => {
-  // .idx is sorted by case-sensitive byte order in the StarDict spec.
-  const sortedWords = Object.keys(entries).sort();
+  // .idx is sorted by case-sensitive byte order in the StarDict spec. The
+  // sort is stable, so repeated words keep the order they were given in.
+  const sorted = (
+    Array.isArray(entries) ? [...entries] : Object.entries(entries)
+  ).sort(byWord);
   const omitSts = options.omitSametypesequence === true;
   const dictParts: Uint8Array[] = [];
   const idxBuilder: number[] = [];
   let offset = 0;
-  for (let w = 0; w < sortedWords.length; w++) {
-    const word = sortedWords[w];
-    const def = entries[word];
+  for (let w = 0; w < sorted.length; w++) {
+    const [word, def] = sorted[w];
     const defBytes = encodeUtf8(def);
     const wordBytes = encodeUtf8(word);
     for (const b of wordBytes) {
@@ -78,7 +92,7 @@ export const writeStarDict = (
     if (omitSts) {
       const typeChar = options.perEntryType?.[word] ?? 'm';
       const prefix = encodeUtf8(typeChar);
-      const isLast = w === sortedWords.length - 1;
+      const isLast = w === sorted.length - 1;
       const trailer = isLast ? 0 : 1;
       entryBytes = new Uint8Array(prefix.length + defBytes.length + trailer);
       entryBytes.set(prefix, 0);
@@ -103,7 +117,7 @@ export const writeStarDict = (
     "StarDict's dict ifo file\n" +
     'version=2.4.2\n' +
     `bookname=${options.bookname ?? 'Base'}\n` +
-    `wordcount=${sortedWords.length}\n` +
+    `wordcount=${sorted.length}\n` +
     `idxfilesize=${idx.length}\n` +
     'idxoffsetbits=32\n' +
     // sts-absent layout omits the sametypesequence line entirely (the

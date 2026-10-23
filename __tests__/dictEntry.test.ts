@@ -11,6 +11,7 @@ import {
   formatFromTypeChar,
   dictBodyOverrun,
   sanitizeDefinition,
+  distinctParts,
 } from '../src/core/dict/stardict/dictEntry';
 import corpus from './_fixtures/renderParityCorpus.json';
 
@@ -185,5 +186,71 @@ describe('sanitizeDefinition (real star_trungviet corrupt entries)', () => {
     expect(sanitizeDefinition('a�b')).toBe('a�b');
     // Edges still strip while the interior one stays.
     expect(sanitizeDefinition('�a�b�')).toBe('a�b');
+  });
+});
+
+describe('distinctParts', () => {
+  test('a single part is returned as is', () => {
+    expect(distinctParts([{definition: 'only', format: 'plain'}])).toEqual([
+      {definition: 'only', format: 'plain'},
+    ]);
+  });
+
+  test('identical bodies are kept once; the rest keep source order', () => {
+    expect(
+      distinctParts([
+        {definition: 'coffee', format: 'plain'},
+        {definition: 'coffee', format: 'plain'},
+        {definition: 'a cafe', format: 'plain'},
+      ]),
+    ).toEqual([
+      {definition: 'coffee', format: 'plain'},
+      {definition: 'a cafe', format: 'plain'},
+    ]);
+  });
+
+  test('parts are never joined or escaped: each keeps its own format', () => {
+    const parts = [
+      {definition: 'x < y & z > 0\r\nnext', format: 'plain' as const},
+      {definition: '<b>HTML</b>', format: 'html' as const},
+    ];
+    expect(distinctParts(parts)).toEqual(parts);
+  });
+
+  test('an empty part is dropped', () => {
+    expect(
+      distinctParts([
+        {definition: '', format: 'html'},
+        {definition: 'meaning', format: 'plain'},
+        {definition: 'meaning', format: 'plain'},
+      ]),
+    ).toEqual([{definition: 'meaning', format: 'plain'}]);
+  });
+
+  test('when every part is empty the first one stands', () => {
+    expect(
+      distinctParts([
+        {definition: '', format: 'html'},
+        {definition: '', format: 'plain'},
+      ]),
+    ).toEqual([{definition: '', format: 'html'}]);
+  });
+
+  test('the same body in two formats is two parts', () => {
+    expect(
+      distinctParts([
+        {definition: 'a', format: 'plain'},
+        {definition: 'a', format: 'html'},
+      ]),
+    ).toHaveLength(2);
+  });
+
+  test("a caller's extra fields ride along", () => {
+    expect(
+      distinctParts([
+        {word: 'suivre', definition: 'to follow', format: 'plain'},
+        {word: 'être', definition: 'to be', format: 'plain'},
+      ]).map(p => p.word),
+    ).toEqual(['suivre', 'être']);
   });
 });

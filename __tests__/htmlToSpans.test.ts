@@ -1,4 +1,6 @@
 import {htmlToSpans, type Span} from '../src/ui/htmlToSpans';
+import {htmlToPlainText} from '../src/ui/htmlToPlainText';
+import corpus from './_fixtures/renderParityCorpus.json';
 
 // Helper: collapse a span list into the visible plain text (ignoring
 // styles). Pinned to the same shape htmlToPlainText produces — any
@@ -515,8 +517,80 @@ describe('htmlToSpans — text matches htmlToPlainText byte-for-byte', () => {
     ],
     ['entities', 'AT&amp;T &lt; &gt; &nbsp;&#65;'],
   ])('%s', (_label, html) => {
-    // Lazily import to keep the cross-renderer invariant explicit.
-    const {htmlToPlainText} = require('../src/ui/htmlToPlainText');
     expect(concatText(htmlToSpans(html))).toBe(htmlToPlainText(html));
+  });
+});
+
+describe('htmlToSpans — <style> and <script> (#46)', () => {
+  test('a real JMdict entry renders without its <style> block', () => {
+    const spans = htmlToSpans(corpus.jmdict['神']);
+    expect(summary(spans).slice(0, 4)).toEqual([
+      ['神', 'B'],
+      ['\n', '-'],
+      ['かみ', 'B,color=#f00'],
+      ['、', '-'],
+    ]);
+    expect(concatText(spans)).not.toMatch(/JMdict|font-size/);
+    expect(concatText(spans)).toBe(htmlToPlainText(corpus.jmdict['神']));
+  });
+
+  test('style and script content leave no span, and styling resumes after them', () => {
+    expect(
+      summary(htmlToSpans('<b>a</b><STYLE type="text/css">b{}</STYLE ><script>x</script><i>c</i>')),
+    ).toEqual([
+      ['a', 'B'],
+      ['c', 'I'],
+    ]);
+  });
+});
+
+describe('htmlToSpans — paragraph boundaries (#46)', () => {
+  test.each([
+    '<p>a</p><p>b</p>',
+    '<p>a</p>b',
+    'a<p>b</p><span>c</span>',
+    '<p><b>a</b></p><i>b</i>',
+  ])('screen matches copy for %p', html => {
+    expect(concatText(htmlToSpans(html))).toBe(htmlToPlainText(html));
+  });
+
+  test('<p>a</p><p>b</p> is exactly two lines, with no blank line between', () => {
+    expect(concatText(htmlToSpans('<p>a</p><p>b</p>'))).toBe('a\nb');
+  });
+
+  test('screen matches copy for every pinned JMdict entry, alone and merged', () => {
+    const bodies = Object.values(corpus.jmdict);
+    for (const html of [...bodies, bodies.join('<br/><br/>')]) {
+      expect(concatText(htmlToSpans(html))).toBe(htmlToPlainText(html));
+    }
+  });
+
+  test('styling after a paragraph starts on a new line in its own style', () => {
+    expect(summary(htmlToSpans('<p>sense</p><i>noun</i>'))).toEqual([
+      ['sense', '-'],
+      ['\n', '-'],
+      ['noun', 'I'],
+    ]);
+  });
+});
+
+describe('htmlToSpans — adjacent inline labels (#46)', () => {
+  test.each([
+    '<span class="t p">noun</span><span class="t m">slang</span>',
+    '<i>(Chimie)</i><i>(Désuet)</i>',
+    '<span>漢</span><span>字</span>',
+    '<span>noun</span><span>漢字</span>',
+    '<small>XIX</small><sup>e</sup>',
+    '<i>h</i><span>ν</span>',
+  ])('screen matches copy for %p', html => {
+    expect(concatText(htmlToSpans(html))).toBe(htmlToPlainText(html));
+  });
+
+  test('the separator is unstyled, so it never picks up a label style', () => {
+    expect(summary(htmlToSpans('<b>noun</b><b>slang</b>'))).toEqual([
+      ['noun', 'B'],
+      [' ', '-'],
+      ['slang', 'B'],
+    ]);
   });
 });

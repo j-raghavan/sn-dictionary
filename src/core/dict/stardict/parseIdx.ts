@@ -7,6 +7,10 @@
 // StarDict spec; we don't depend on that order — the orchestrator
 // re-indexes case-insensitively for lookup.
 //
+// An empty word is a valid record (#46): JMdict leaves every .idx word
+// empty and keeps all its headwords in the .syn. The record still holds
+// its ordinal, so .syn pointers resolve; it is just never a lookup key.
+//
 // Async + cooperative-yield: large user-supplied dicts can have
 // 200k–2M entries. Walking the buffer synchronously blocks the JS
 // thread for many seconds on Hermes; we yield to the event loop
@@ -42,9 +46,6 @@ export const parseIdx = async (
     }
     if (end >= bytes.length) {
       throw new Error('parseIdx: unterminated word at end of buffer');
-    }
-    if (end === i) {
-      throw new Error(`parseIdx: empty word at offset ${i}`);
     }
     if (end + 1 + recordTrailerBytes > bytes.length) {
       throw new Error(

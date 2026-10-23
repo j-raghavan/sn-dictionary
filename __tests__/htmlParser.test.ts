@@ -313,3 +313,58 @@ describe('parseHtml — malformed input', () => {
     ]);
   });
 });
+
+describe('parseHtml — raw-text elements (#46)', () => {
+  test('a <style> element emits neither tags nor text', () => {
+    expect(collect('<style>\n.a{color:#666}</style><b>x</b>')).toEqual([
+      {kind: 'tag', tag: {name: 'b', isClose: false, attrs: {}}},
+      {kind: 'text', value: 'x'},
+      {kind: 'tag', tag: {name: 'b', isClose: true, attrs: {}}},
+    ]);
+  });
+
+  test('tags and entities inside <script> are not parsed', () => {
+    expect(collect('a<script>if (x < 1 && y) { s = "<b>"; }</script>b')).toEqual([
+      {kind: 'text', value: 'a'},
+      {kind: 'text', value: 'b'},
+    ]);
+  });
+
+  test('</styles> does not end a <style> element; </style > does', () => {
+    expect(collect('<style>p{}</styles>q{}</style >after')).toEqual([
+      {kind: 'text', value: 'after'},
+    ]);
+  });
+
+  test('an unclosed <style> drops only its open tag', () => {
+    expect(collect('before<style>.a{}')).toEqual([
+      {kind: 'text', value: 'before'},
+      {kind: 'text', value: '.a{}'},
+    ]);
+  });
+
+  test('a self-closing <style/> or <script/> has no content to drop', () => {
+    expect(collect('<style/>def text')).toEqual([{kind: 'text', value: 'def text'}]);
+    expect(collect('<script src="a.js"/><b>word</b>')).toEqual([
+      {kind: 'tag', tag: {name: 'b', isClose: false, attrs: {}}},
+      {kind: 'text', value: 'word'},
+      {kind: 'tag', tag: {name: 'b', isClose: true, attrs: {}}},
+    ]);
+  });
+
+  test('a stray </style> close tag passes through as a tag event', () => {
+    expect(collect('a</style>b')).toEqual([
+      {kind: 'text', value: 'a'},
+      {kind: 'tag', tag: {name: 'style', isClose: true, attrs: {}}},
+      {kind: 'text', value: 'b'},
+    ]);
+  });
+
+  test('a tag named after an Object.prototype key is an ordinary tag', () => {
+    expect(collect('<constructor>x</constructor>')).toEqual([
+      {kind: 'tag', tag: {name: 'constructor', isClose: false, attrs: {}}},
+      {kind: 'text', value: 'x'},
+      {kind: 'tag', tag: {name: 'constructor', isClose: true, attrs: {}}},
+    ]);
+  });
+});

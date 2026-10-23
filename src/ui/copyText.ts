@@ -18,7 +18,7 @@
 // needs the firmware element clipboard (pushElementsToClipboard), which
 // the SDK does not expose yet; this writes the OS clipboard only.
 
-import type {SourceHit} from '../core/lookup';
+import type {DefinitionFormat, SourceHit} from '../core/lookup';
 import type {ThesaurusResult} from '../core/dict/sqlite/thesaurusLookup';
 import {htmlToPlainText} from './htmlToPlainText';
 import {containsRenderableHtml} from './htmlParser';
@@ -44,10 +44,9 @@ const senseToText = (sense: WordNetSense): string => {
   return lines.join('\n');
 };
 
-// One hit's definition reduced to plain text matching the on-screen
-// render. Exported for focused testing.
-export const entryToPlainText = (hit: SourceHit): string => {
-  const {definition, format} = hit.entry;
+// One definition body reduced to plain text, mirroring SourceSection's
+// format routing.
+const bodyToPlainText = (definition: string, format: DefinitionFormat): string => {
   if (format === 'html') {
     return htmlToPlainText(definition);
   }
@@ -70,6 +69,23 @@ export const entryToPlainText = (hit: SourceHit): string => {
     return fvdpEntryToPlainText(fvdp);
   }
   return definition;
+};
+
+// One hit's definition reduced to plain text matching the on-screen
+// render. An entry with `parts` (#46) copies each part, a blank line
+// apart, under its headword when that differs from the entry's, as
+// SourceSection labels it. Exported for focused testing.
+export const entryToPlainText = (hit: SourceHit): string => {
+  const {word, definition, format, parts} = hit.entry;
+  if (parts === undefined) {
+    return bodyToPlainText(definition, format);
+  }
+  return parts
+    .map(part => {
+      const body = bodyToPlainText(part.definition, part.format);
+      return part.word !== word ? `${part.word}\n${body}` : body;
+    })
+    .join('\n\n');
 };
 
 const thesaurusToText = (thesaurus: ThesaurusResult): string => {

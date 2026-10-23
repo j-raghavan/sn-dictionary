@@ -22,6 +22,14 @@
 // their content, instead of the popup guessing per render.
 export type DefinitionFormat = 'wordnet' | 'html' | 'plain';
 
+// One of the entries a lookup key reaches, with its own headword, body
+// and format (#46).
+export type EntryPart = {
+  word: string;
+  definition: string;
+  format: DefinitionFormat;
+};
+
 export type DictEntry = {
   word: string;
   definition: string;
@@ -32,6 +40,12 @@ export type DictEntry = {
   // renders it under the headword. Absent for sources that only
   // know word + definition.
   phonetic?: string;
+  // Every distinct entry the key reached, in order, when there is more
+  // than one (#46): homographs, the lemmas of an inflected form, the
+  // words that share a reading. Each part renders on its own through
+  // its format. word / definition / format above are always the FIRST
+  // part's, so a consumer that reads only those sees the first entry.
+  parts?: ReadonlyArray<EntryPart>;
 };
 
 // One source's contribution to the result. `source` is the name of

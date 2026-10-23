@@ -1,5 +1,6 @@
 // The indexed lookup primitive (selectByKey) + format coercion. These
-// assert the query-level contract: first-row-wins, null-on-miss,
+// assert the query-level contract: first-row-wins (merge-all for a
+// StarDict slug with aliases, #46), null-on-miss,
 // format validation with 'plain' fallback, and that the key reaches
 // SQLite as a bound parameter (a quote/DROP payload is inert).
 
@@ -11,14 +12,18 @@ import {
   CREATE_ENTRIES_TABLE,
   INSERT_ALIAS,
   INSERT_STARDICT_ENTRY,
+  SELECT_ENTRIES_BY_KEY_WITH_ALIASES,
   SELECT_ENTRY_BY_KEY,
-  SELECT_ENTRY_BY_KEY_WITH_ALIASES,
 } from '../src/core/dict/sqlite/schema';
 import {
   coerceFormat,
+  createSqliteDictSource,
   selectByKey,
 } from '../src/core/dict/sqlite/sqliteDictSource';
+import {buildBaseDbFromTriple, SCHEMA_VERSION} from '../src/core/dict/sqlite/buildBaseDb';
+import {parseWordNetEntry} from '../src/ui/wordnetFormatter';
 import type {SqliteDb} from '../src/core/dict/sqlite/db';
+import {buildSyntheticStarDict} from './_helpers/buildSyntheticStarDict';
 
 type Seed = {key: string; word: string; definition: string; format: string};
 
@@ -275,7 +280,12 @@ describe('selectByKey — StarDict slug with aliases (#44)', () => {
     await db.close();
   });
 
-  it('prefers a canonical row over an alias on the same key', async () => {
+  // The entry a merged lookup returns: the first part's fields, plus every
+  // part when the key reached more than one distinct entry (#46).
+  type Part = {word: string; definition: string; format: string};
+  const merged = (...parts: Part[]) => ({...parts[0], parts});
+
+  it('puts a canonical row before an alias on the same key', async () => {
     // The alias targets a LOWER rowid than the canonical row, so only the
     // source rank (canonical before alias) can make the canonical win.
     const db = await keyedDb(
@@ -285,27 +295,139 @@ describe('selectByKey — StarDict slug with aliases (#44)', () => {
       ],
       [{key: 'chiens', entryRowid: 1, word: 'chiens'}],
     );
-    expect((await selectByKey(db, 'chiens'))?.definition).toBe('canonical');
+    expect(await selectByKey(db, 'chiens')).toEqual(
+      merged(
+        {word: 'Chiens', definition: 'canonical', format: 'plain'},
+        {word: 'aaa', definition: 'alias target', format: 'plain'},
+      ),
+    );
     await db.close();
   });
 
-  it('returns the first .idx record when several fold to the same key', async () => {
+  it('returns every .idx record that folds to the key, each in its own format (#46)', async () => {
+    // chat (html) + Chat (plain): nothing is joined or escaped.
     const db = await keyedDb(ENTRIES, []);
-    expect(await selectByKey(db, 'chat')).toEqual({
-      word: 'chat',
-      definition: 'cat',
-      format: 'html',
-    });
+    expect(await selectByKey(db, 'chat')).toEqual(
+      merged(
+        {word: 'chat', definition: 'cat', format: 'html'},
+        {word: 'Chat', definition: 'a surname', format: 'plain'},
+      ),
+    );
     await db.close();
   });
 
-  it('returns the first .syn record when several aliases share a key', async () => {
-    // .syn order wins, not target rowid order.
+  it('orders aliases by .syn order, not target rowid order (#46)', async () => {
     const db = await keyedDb(ENTRIES, [
       {key: 'minou', entryRowid: 3, word: 'Minou'},
       {key: 'minou', entryRowid: 1, word: 'minou'},
     ]);
-    expect((await selectByKey(db, 'minou'))?.definition).toBe('a surname');
+    expect(await selectByKey(db, 'minou')).toEqual(
+      merged(
+        {word: 'Chat', definition: 'a surname', format: 'plain'},
+        {word: 'chat', definition: 'cat', format: 'html'},
+      ),
+    );
+    await db.close();
+  });
+
+  it('lists an entry reached by both its headword and an alias once, canonical first (#46)', async () => {
+    // fr-fr: "affranchies" is a .syn form of both affranchi and affranchir.
+    const db = await keyedDb(
+      [
+        {key: 'affranchi', word: 'affranchi', definition: 'freed', format: 'plain'},
+        {key: 'affranchir', word: 'affranchir', definition: 'to free', format: 'plain'},
+      ],
+      [
+        {key: 'affranchies', entryRowid: 1, word: 'affranchies'},
+        {key: 'affranchies', entryRowid: 2, word: 'affranchies'},
+        {key: 'affranchi', entryRowid: 1, word: 'Affranchi'},
+        {key: 'affranchi', entryRowid: 2, word: 'affranchi'},
+      ],
+    );
+    const both = merged(
+      {word: 'affranchi', definition: 'freed', format: 'plain'},
+      {word: 'affranchir', definition: 'to free', format: 'plain'},
+    );
+    expect(await selectByKey(db, 'affranchies')).toEqual(both);
+    expect(await selectByKey(db, 'affranchi')).toEqual(both);
+    await db.close();
+  });
+
+  it('carries no parts when the key reaches one distinct body (#46)', async () => {
+    // Two rows, same format and definition: distinctParts keeps one.
+    const db = await keyedDb(
+      [
+        {key: 'colour', word: 'colour', definition: 'hue', format: 'plain'},
+        {key: 'colour', word: 'Colour', definition: 'hue', format: 'plain'},
+      ],
+      [],
+    );
+    expect(await selectByKey(db, 'colour')).toEqual({
+      word: 'colour',
+      definition: 'hue',
+      format: 'plain',
+    });
+    await db.close();
+  });
+
+  it('shows the matched alias as the headword of an entry with an empty one (JMdict, #46)', async () => {
+    // JMdict: every .idx word is empty; 紙 and 神 share the reading かみ.
+    // Every part takes the alias that matched, so no part differs from the
+    // headword and none is labelled.
+    const db = await keyedDb(
+      [
+        {key: '', word: '', definition: '<p>paper</p>', format: 'html'},
+        {key: '', word: '', definition: '<p>god</p>', format: 'html'},
+      ],
+      [
+        {key: '紙', entryRowid: 1, word: '紙'},
+        {key: 'かみ', entryRowid: 1, word: 'かみ'},
+        {key: '神', entryRowid: 2, word: '神'},
+        {key: 'かみ', entryRowid: 2, word: 'かみ'},
+      ],
+    );
+    expect(await selectByKey(db, '神')).toEqual({
+      word: '神',
+      definition: '<p>god</p>',
+      format: 'html',
+    });
+    expect(await selectByKey(db, 'かみ')).toEqual(
+      merged(
+        {word: 'かみ', definition: '<p>paper</p>', format: 'html'},
+        {word: 'かみ', definition: '<p>god</p>', format: 'html'},
+      ),
+    );
+    await db.close();
+  });
+
+  it('applies the format override to every part', async () => {
+    const db = await keyedDb(ENTRIES, []);
+    expect(await selectByKey(db, 'chat', 'plain')).toEqual(
+      merged(
+        {word: 'chat', definition: 'cat', format: 'plain'},
+        {word: 'Chat', definition: 'a surname', format: 'plain'},
+      ),
+    );
+    await db.close();
+  });
+
+  it("keeps a 'wordnet' slug's entries as parts that each parse as one WordNet entry", async () => {
+    // A sidecar-typed slug stores 'wordnet' in the format column; bootstrap
+    // passes no override. Parts are never joined, so each body is still a
+    // whole entry for parseWordNetEntry.
+    const db = await keyedDb(
+      [
+        {key: 'afghan', word: 'Afghan', definition: 'Afghan\n     adj : of Afghanistan', format: 'wordnet'},
+        {key: 'afghan', word: 'afghan', definition: 'afghan\n     n : a knitted blanket', format: 'wordnet'},
+      ],
+      [],
+    );
+    const entry = await selectByKey(db, 'afghan');
+    expect(entry?.format).toBe('wordnet');
+    expect(entry?.parts?.map(p => parseWordNetEntry(p.definition).senses.map(x => x.definition))).toEqual([
+      ['of Afghanistan'],
+      ['a knitted blanket'],
+    ]);
     await db.close();
   });
 
@@ -317,11 +439,18 @@ describe('selectByKey — StarDict slug with aliases (#44)', () => {
         {key: 'k', word: 'K', definition: '', format: 'plain'},
         {key: 'k', word: 'k', definition: 'real', format: 'plain'},
       ],
-      [{key: 'xs', entryRowid: 1, word: 'xs'}],
+      [
+        {key: 'xs', entryRowid: 1, word: 'xs'},
+        // Merged (#46): an empty row reached first is neither a part nor
+        // the headword; the real row alone is the result.
+        {key: 'm', entryRowid: 1, word: 'm-empty'},
+        {key: 'm', entryRowid: 3, word: 'm-real'},
+      ],
     );
     expect(await selectByKey(db, 'x')).toBeNull();
     expect(await selectByKey(db, 'xs')).toBeNull();
     expect(await selectByKey(db, 'k')).toEqual({word: 'k', definition: 'real', format: 'plain'});
+    expect(await selectByKey(db, 'm')).toEqual({word: 'k', definition: 'real', format: 'plain'});
     await db.close();
   });
 
@@ -348,11 +477,12 @@ describe('selectByKey — StarDict slug with aliases (#44)', () => {
     const keyed = await keyedDb(ENTRIES, []);
     const keyedSql = lookupSql(keyed);
     await selectByKey(keyed, 'chat');
-    expect(keyedSql).toEqual([SELECT_ENTRY_BY_KEY_WITH_ALIASES]);
+    expect(keyedSql).toEqual([SELECT_ENTRIES_BY_KEY_WITH_ALIASES]);
     await keyed.close();
 
     // base.db, user.db, CSV slugs and v2 StarDict slugs have no aliases
     // table and keep the plain LIMIT-1 SELECT.
+    // Same rows, but the first one wins: nothing is merged.
     const plain = await dbWith(ENTRIES);
     const plainSql = lookupSql(plain);
     expect(await selectByKey(plain, 'chat')).toEqual({
@@ -394,4 +524,54 @@ describe('selectByKey — StarDict slug with aliases (#44)', () => {
     expect((await selectByKey(db, 'chat'))?.word).toBe('chat');
     await db.close();
   });
+});
+
+// PR #45 merged base.db too, and the bundled WordNet has 216 folded keys
+// with more than one entry. The merged body folded the next headword into
+// the last sense ("…Afghanistan or its people afghan"). base.db has no
+// aliases table, so its lookup stays single-entry.
+describe('selectByKey — bundled WordNet base.db stays single-entry (#46)', () => {
+  // The real dict/wordnet bodies, in full, for the two records that fold
+  // to 'afghan'.
+  const AFGHAN_ADJ =
+    'Afghan\n     adj : of or relating to or characteristic of Afghanistan or its\n' +
+    '           people [syn: {Afghani}, {Afghanistani}]';
+  const AFGHAN_NOUN =
+    'afghan\n     n 1: a blanket knitted or crocheted in strips or squares;\n' +
+    '          sometimes used as a shawl\n' +
+    '     2: a native or inhabitant of Afghanistan [syn: {Afghanistani}]\n' +
+    '     3: an Iranian language spoken in Afghanistan and Pakistan; the\n' +
+    '        official language of Afghanistan [syn: {Pashto}, {Pashtu},\n' +
+    '         {Paxto}, {Afghani}]\n' +
+    '     4: a coat made of sheepskin [syn: {sheepskin coat}]\n' +
+    '     5: tall graceful breed of hound with a long silky coat; native\n' +
+    '        to the Near East [syn: {Afghan hound}]';
+
+  // base.db stores 'wordnet' in the format column. The bundled source
+  // also passes it as an override; check the lookup both ways.
+  it.each([
+    ['the format override', 'wordnet' as const],
+    ['the format column alone', undefined],
+  ])(
+    'returns only the first Afghan/afghan entry, which parses as one WordNet entry (%s)',
+    async (_how, format) => {
+      const db = await createSeededDb(async () => undefined);
+      const t = buildSyntheticStarDict({Afghan: AFGHAN_ADJ, afghan: AFGHAN_NOUN});
+      await buildBaseDbFromTriple(db, t.ifo, t.idx, t.dict, SCHEMA_VERSION);
+      const source = createSqliteDictSource({
+        name: 'WordNet',
+        openDb: async () => db,
+        format,
+      });
+      const entry = await source.lookup('afghan');
+      expect(entry).toEqual({word: 'Afghan', definition: AFGHAN_ADJ, format: 'wordnet'});
+      const parsed = parseWordNetEntry(entry!.definition);
+      expect(parsed.word).toBe('Afghan');
+      expect(parsed.senses).toHaveLength(1);
+      expect(parsed.senses[0].definition).toBe(
+        'of or relating to or characteristic of Afghanistan or its people',
+      );
+      await db.close();
+    },
+  );
 });

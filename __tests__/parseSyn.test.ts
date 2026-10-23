@@ -54,9 +54,21 @@ describe('parseSyn', () => {
     expect(await parseSyn(new Uint8Array(0))).toEqual([]);
   });
 
-  test('throws on a record with an empty word', async () => {
-    const bytes = new Uint8Array([0, 0, 0, 0, 0]); // \0 + 4 zero index bytes
-    await expect(parseSyn(bytes)).rejects.toThrow(/empty word/);
+  test('skips a record with an empty word and keeps reading (#46)', async () => {
+    const bytes = buildSyn([
+      {word: '', index: 0},
+      {word: 'kept', index: 3},
+    ]);
+    expect(await parseSyn(bytes)).toEqual([
+      {word: 'kept', originalWordIndex: 3},
+    ]);
+  });
+
+  test('still rejects a truncated record after an empty word', async () => {
+    const bytes = new Uint8Array([0, 0, 0]); // \0 + only 2 index bytes
+    await expect(parseSyn(bytes)).rejects.toThrow(
+      'parseSyn: truncated record after word at offset 0',
+    );
   });
 
   test('throws on an unterminated word at end of buffer', async () => {
@@ -67,6 +79,22 @@ describe('parseSyn', () => {
   test('throws on a truncated index (less than 4 bytes after \\0)', async () => {
     const bytes = new Uint8Array([0x66, 0x6f, 0x6f, 0, 0, 0]); // "foo\0" + only 2 bytes
     await expect(parseSyn(bytes)).rejects.toThrow(/truncated record/);
+  });
+
+  test('still yields through a long run of skipped empty words', async () => {
+    const entries = Array.from({length: YIELD_PERIOD + 5}, () => ({
+      word: '',
+      index: 0,
+    }));
+    const setTimeoutSpy = jest.spyOn(global, 'setTimeout');
+    try {
+      expect(await parseSyn(buildSyn(entries))).toEqual([]);
+      expect(
+        setTimeoutSpy.mock.calls.filter(c => c[1] === 0).length,
+      ).toBeGreaterThanOrEqual(1);
+    } finally {
+      setTimeoutSpy.mockRestore();
+    }
   });
 
   test('yields cooperatively while parsing a large buffer', async () => {

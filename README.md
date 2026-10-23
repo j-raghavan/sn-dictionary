@@ -132,6 +132,12 @@ For a CSV the name is **always the filename** (`Dune.csv` → "Dune"); a sidecar
 
 A subfolder without a complete StarDict triple — or a CSV over the size cap — is logged and skipped; discovery is fault-isolated, so one bad item doesn't break the rest. For **other** formats (MDX, EPUB, Babylon, …) convert to StarDict via [`pyglossary`](https://github.com/ilius/pyglossary) (`pip install pyglossary`; reads ~50 formats, writes StarDict).
 
+### When a word reaches more than one entry
+
+A word you look up in a StarDict dictionary often reaches more than one entry: headwords that differ only in case or accents (`Guerra` the surname and `guerra` the noun), an inflected form that belongs to two lemmas (French `affranchies` is a form of both `affranchi` and `affranchir`), or a Japanese reading shared by several words (in JMdict, `かみ` is 紙, 神 and 髪). I show every entry the word reaches, one after another in that dictionary's section: matching headwords first in `.idx` order, then `.syn` matches in `.syn` order. Each entry keeps its own layout, and an entry whose headword differs from the first one's is labelled with it, so `suis` shows `suivre` and then `être` under an `être` label. An entry reached twice, or with the same text as one already shown, appears once. Dictionaries like JMdict that keep all their headwords in the `.syn` show the word that matched as the headword.
+
+If you're upgrading from an older version, StarDict dictionaries whose source files you kept are re-imported in the background on the next launch, and the new layout shows from the launch after that. If **Keep source files after import** was off, the old import keeps working but shows only the first entry for each word. To pick up the new layout, copy the original dictionary folder back into `MyStyle/SnDict/` and restart Dictionary.
+
 ### Where to find dictionaries
 
 Most users won't author a StarDict from scratch — there are huge corpora of pre-built dicts in the wild. Five sources cover the long tail:
