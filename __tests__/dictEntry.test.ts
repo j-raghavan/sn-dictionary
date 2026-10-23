@@ -11,7 +11,7 @@ import {
   formatFromTypeChar,
   dictBodyOverrun,
   sanitizeDefinition,
-  mergeDefinitions,
+  distinctParts,
 } from '../src/core/dict/stardict/dictEntry';
 import corpus from './_fixtures/renderParityCorpus.json';
 
@@ -189,82 +189,68 @@ describe('sanitizeDefinition (real star_trungviet corrupt entries)', () => {
   });
 });
 
-describe('mergeDefinitions', () => {
+describe('distinctParts', () => {
   test('a single part is returned as is', () => {
-    expect(mergeDefinitions([{definition: 'only', format: 'plain'}])).toEqual({
-      definition: 'only',
-      format: 'plain',
-    });
+    expect(distinctParts([{definition: 'only', format: 'plain'}])).toEqual([
+      {definition: 'only', format: 'plain'},
+    ]);
   });
 
-  test('identical bodies are shown once; other senses keep source order', () => {
+  test('identical bodies are kept once; the rest keep source order', () => {
     expect(
-      mergeDefinitions([
+      distinctParts([
         {definition: 'coffee', format: 'plain'},
         {definition: 'coffee', format: 'plain'},
         {definition: 'a cafe', format: 'plain'},
       ]),
-    ).toEqual({definition: 'coffee\n\na cafe', format: 'plain'});
+    ).toEqual([
+      {definition: 'coffee', format: 'plain'},
+      {definition: 'a cafe', format: 'plain'},
+    ]);
   });
 
-  test('HTML senses join with a blank HTML line', () => {
-    expect(
-      mergeDefinitions([
-        {definition: '<p>A surname.</p>', format: 'html'},
-        {definition: '<p>Armed conflict.</p>', format: 'html'},
-      ]),
-    ).toEqual({
-      definition: '<p>A surname.</p><br/><br/><p>Armed conflict.</p>',
-      format: 'html',
-    });
+  test('parts are never joined or escaped: each keeps its own format', () => {
+    const parts = [
+      {definition: 'x < y & z > 0\r\nnext', format: 'plain' as const},
+      {definition: '<b>HTML</b>', format: 'html' as const},
+    ];
+    expect(distinctParts(parts)).toEqual(parts);
   });
 
-  test('mixed plain/HTML escapes the plain part and adopts HTML', () => {
+  test('an empty part is dropped', () => {
     expect(
-      mergeDefinitions([
-        {definition: 'x < y & z > 0\r\nnext', format: 'plain'},
-        {definition: '<b>HTML</b>', format: 'html'},
-      ]),
-    ).toEqual({
-      definition: 'x &lt; y &amp; z &gt; 0<br/>next<br/><br/><b>HTML</b>',
-      format: 'html',
-    });
-  });
-
-  test('an empty sense is dropped, so the result opens with the meaning', () => {
-    expect(
-      mergeDefinitions([
-        {definition: '', format: 'plain'},
+      distinctParts([
+        {definition: '', format: 'html'},
         {definition: 'meaning', format: 'plain'},
         {definition: 'meaning', format: 'plain'},
       ]),
-    ).toEqual({definition: 'meaning', format: 'plain'});
+    ).toEqual([{definition: 'meaning', format: 'plain'}]);
   });
 
-  test('an empty HTML sense does not turn plain senses into HTML', () => {
+  test('when every part is empty the first one stands', () => {
     expect(
-      mergeDefinitions([
-        {definition: '', format: 'html'},
-        {definition: 'a < b', format: 'plain'},
-      ]),
-    ).toEqual({definition: 'a < b', format: 'plain'});
-  });
-
-  test('when every sense is empty the first one stands', () => {
-    expect(
-      mergeDefinitions([
+      distinctParts([
         {definition: '', format: 'html'},
         {definition: '', format: 'plain'},
       ]),
-    ).toEqual({definition: '', format: 'html'});
+    ).toEqual([{definition: '', format: 'html'}]);
   });
 
-  test('the same body in two formats is two senses', () => {
+  test('the same body in two formats is two parts', () => {
     expect(
-      mergeDefinitions([
+      distinctParts([
         {definition: 'a', format: 'plain'},
         {definition: 'a', format: 'html'},
       ]),
-    ).toEqual({definition: 'a<br/><br/>a', format: 'html'});
+    ).toHaveLength(2);
+  });
+
+  test("a caller's extra fields ride along", () => {
+    expect(
+      distinctParts([
+        {word: 'suivre', definition: 'to follow', format: 'plain'},
+        {word: 'être', definition: 'to be', format: 'plain'},
+      ]).map(p => p.word),
+    ).toEqual(['suivre', 'être']);
   });
 });

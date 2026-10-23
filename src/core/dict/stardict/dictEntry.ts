@@ -1,8 +1,10 @@
 // StarDict .dict entry splitter (issue #28). Shared by the host reader
 // (stardictDict.lookupDict) and the host base.db builder
 // (buildBaseDb.entriesFromParsedDict); the Kotlin StarDictImporter
-// mirrors this helper byte-for-byte so device imports stay
-// byte-identical (the device-only-bug guard).
+// mirrors splitDictEntry, formatFromTypeChar and sanitizeDefinition
+// byte-for-byte so device imports stay byte-identical (the
+// device-only-bug guard). distinctParts, at the end, is read-time only
+// and has no Kotlin mirror.
 //
 // StarDict stores an entry's body two ways:
 //   - sametypesequence PRESENT: every entry uses that single type
@@ -101,14 +103,19 @@ export type DefinitionPart = {
   format: DefinitionFormat;
 };
 
-// Keep distinct senses sharing a folded key. Mixed plain/HTML records must
-// escape the plain parts before adopting HTML; otherwise text becomes markup.
-// An empty part is dropped so it can't open the result with a blank gap,
-// unless every part is empty, when the first one stands. `parts` must be
-// non-empty.
-export const mergeDefinitions = (parts: DefinitionPart[]): DefinitionPart => {
+// The parts a lookup shows when one key reaches several entries (#46).
+// Read-time only: sqliteDictSource calls it on the rows a key reaches; the
+// Kotlin importer stores every entry as it is and has no mirror. Each part
+// keeps its own format and is rendered on its own, so nothing is joined or
+// escaped here. A part with an empty definition is dropped, unless every
+// part is empty, when the first one stands, and a part that repeats an
+// earlier one (same format and definition) is dropped. Source order is
+// kept. `parts` must be non-empty.
+export const distinctParts = <T extends DefinitionPart>(
+  parts: readonly T[],
+): T[] => {
   const seen = new Set<string>();
-  const unique = parts.filter(part => {
+  const kept = parts.filter(part => {
     const id = `${part.format}\0${part.definition}`;
     if (part.definition === '' || seen.has(id)) {
       return false;
@@ -116,22 +123,5 @@ export const mergeDefinitions = (parts: DefinitionPart[]): DefinitionPart => {
     seen.add(id);
     return true;
   });
-  if (unique.length === 0) {
-    return parts[0];
-  }
-  const format = unique.some(part => part.format === 'html')
-    ? 'html'
-    : unique[0].format;
-  const definition = unique
-    .map(part =>
-      format === 'html' && part.format !== 'html'
-        ? part.definition
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/\r\n|\r|\n/g, '<br/>')
-        : part.definition,
-    )
-    .join(format === 'html' ? '<br/><br/>' : '\n\n');
-  return {definition, format};
+  return kept.length === 0 ? [parts[0]] : kept;
 };
