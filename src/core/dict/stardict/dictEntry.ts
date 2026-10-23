@@ -103,15 +103,22 @@ export type DefinitionPart = {
 
 // Keep distinct senses sharing a folded key. Mixed plain/HTML records must
 // escape the plain parts before adopting HTML; otherwise text becomes markup.
-// Mirrored by StarDictImporter.mergeDefinitions.
+// An empty part is dropped so it can't open the result with a blank gap,
+// unless every part is empty, when the first one stands. `parts` must be
+// non-empty.
 export const mergeDefinitions = (parts: DefinitionPart[]): DefinitionPart => {
-  const unique = parts.filter(
-    (part, i) =>
-      parts.findIndex(
-        other =>
-          other.definition === part.definition && other.format === part.format,
-      ) === i,
-  );
+  const seen = new Set<string>();
+  const unique = parts.filter(part => {
+    const id = `${part.format}\0${part.definition}`;
+    if (part.definition === '' || seen.has(id)) {
+      return false;
+    }
+    seen.add(id);
+    return true;
+  });
+  if (unique.length === 0) {
+    return parts[0];
+  }
   const format = unique.some(part => part.format === 'html')
     ? 'html'
     : unique[0].format;

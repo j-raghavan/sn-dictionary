@@ -231,13 +231,40 @@ describe('mergeDefinitions', () => {
     });
   });
 
-  test('an empty sense still takes a slot', () => {
+  test('an empty sense is dropped, so the result opens with the meaning', () => {
     expect(
       mergeDefinitions([
         {definition: '', format: 'plain'},
         {definition: 'meaning', format: 'plain'},
         {definition: 'meaning', format: 'plain'},
-      ]).definition,
-    ).toBe('\n\nmeaning');
+      ]),
+    ).toEqual({definition: 'meaning', format: 'plain'});
+  });
+
+  test('an empty HTML sense does not turn plain senses into HTML', () => {
+    expect(
+      mergeDefinitions([
+        {definition: '', format: 'html'},
+        {definition: 'a < b', format: 'plain'},
+      ]),
+    ).toEqual({definition: 'a < b', format: 'plain'});
+  });
+
+  test('when every sense is empty the first one stands', () => {
+    expect(
+      mergeDefinitions([
+        {definition: '', format: 'html'},
+        {definition: '', format: 'plain'},
+      ]),
+    ).toEqual({definition: '', format: 'html'});
+  });
+
+  test('the same body in two formats is two senses', () => {
+    expect(
+      mergeDefinitions([
+        {definition: 'a', format: 'plain'},
+        {definition: 'a', format: 'html'},
+      ]),
+    ).toEqual({definition: 'a<br/><br/>a', format: 'html'});
   });
 });
