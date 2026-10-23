@@ -32,12 +32,23 @@ import {
 } from '../src/core/dict/stardict/dictEntry';
 
 const SIDECAR = JSON.stringify({name: 'My Dict', language: 'en'});
-const DICT_BYTES = 1000;
+const DICT_BODY = {bytes: 1000, inflated: false};
+// The estimate inputs the default harness reports (no .idx/.syn sizes).
+const DEFAULT_SIZES = {body: DICT_BODY, idxBytes: 0, synBytes: 0};
+// reader-dict fr-fr (#44): 98.9MB inflated body (22.4MB .dz), 10.8MB
+// .idx, 27.7MB .syn; its import peaks at 99MB temp + 232MB DB.
+const FR_FR = {
+  body: {bytes: 98_932_738, inflated: true},
+  idxBytes: 10_774_224,
+  synBytes: 27_667_768,
+};
+const FR_FR_PEAK = 99_000_000 + 232_000_000;
 
 type Harness = {
   ports: ImportPorts;
   runNativeImport: jest.Mock;
-  statDictSize: jest.Mock;
+  statDictBody: jest.Mock;
+  statFileSize: jest.Mock;
   deleteFile: jest.Mock;
   deleteFolder: jest.Mock;
   slugFiles: Map<string, SqliteDb>;
@@ -48,9 +59,12 @@ type Harness = {
 type Opts = {
   sidecarText?: string;
   space?: number;
-  // Override the .dict size the statDictSize port reports (default
-  // DICT_BYTES).
-  dictSize?: number;
+  // Override the .dict body the statDictBody port reports (default
+  // DICT_BODY).
+  dictBody?: {bytes: number; inflated: boolean};
+  // Source file sizes the statFileSize port reports by path (default 0,
+  // as the native stat reports for a missing file).
+  fileSizes?: Record<string, number>;
   sourcePaths?: string[];
   // The rows the fake native importer "inserts" into the slug DB and
   // the count it reports (default: keyed entries below).
@@ -95,7 +109,8 @@ const makeHarness = async (opts: Opts = {}): Promise<Harness> => {
     slugFiles.delete(filename);
   });
   // The .dict-size port the space guard reads (native stat on-device).
-  const statDictSize = jest.fn(async () => opts.dictSize ?? DICT_BYTES);
+  const statDictBody = jest.fn(async () => opts.dictBody ?? DICT_BODY);
+  const statFileSize = jest.fn(async (path: string) => opts.fileSizes?.[path] ?? 0);
 
   const staticRows = opts.nativeRows ?? DEFAULT_ROWS;
 
@@ -152,7 +167,8 @@ const makeHarness = async (opts: Opts = {}): Promise<Harness> => {
     dictPath: 'dict.dict',
     // Real .dict size comes from this async port (native stat on-device);
     // the fake returns a known size so the space guard still fires.
-    statDictSize,
+    statDictBody,
+    statFileSize,
     deleteFile,
     sourcePaths: opts.sourcePaths ?? ['dict.ifo', 'dict.idx', 'dict.dict', 'meta.json'],
     slugDb: {
@@ -179,7 +195,8 @@ const makeHarness = async (opts: Opts = {}): Promise<Harness> => {
   return {
     ports,
     runNativeImport,
-    statDictSize,
+    statDictBody,
+    statFileSize,
     deleteFile,
     deleteFolder,
     slugFiles,
@@ -590,33 +607,114 @@ describe('importStardict — re-add + coexist', () => {
 });
 
 describe('estimateImportBytes', () => {
-  it('scales the dict byte length with headroom', () => {
-    expect(estimateImportBytes(1000)).toBe(2500);
-    expect(estimateImportBytes(0)).toBe(0);
+  const sizes = (bytes: number, inflated: boolean, idxBytes = 0, synBytes = 0) => ({
+    body: {bytes, inflated},
+    idxBytes,
+    synBytes,
+  });
+
+  it('scales a plain .dict body with headroom', () => {
+    expect(estimateImportBytes(sizes(1000, false))).toBe(2500);
+    expect(estimateImportBytes(sizes(0, false))).toBe(0);
+  });
+
+  it('adds the temp file an inflated body needs during the import (#44)', () => {
+    expect(estimateImportBytes(sizes(1000, true))).toBe(3500);
+  });
+
+  it('adds 4.5x the .syn and 2x the .idx for aliases, keys and their indexes (#44)', () => {
+    expect(estimateImportBytes(sizes(1000, false, 100, 200))).toBe(2500 + 900 + 200);
+  });
+
+  it('sizes a syn-heavy dict with a small body from its .syn (#44)', () => {
+    // A 1MB body with a 30MB .syn writes ~100MB of aliases + index; the
+    // body terms alone would ask for 2.5MB.
+    expect(estimateImportBytes(sizes(1_000_000, false, 500_000, 30_000_000))).toBe(
+      2_500_000 + 135_000_000 + 1_000_000,
+    );
+  });
+
+  it('covers the measured reader-dict fr-fr and JMdict peaks (#44)', () => {
+    expect(estimateImportBytes(FR_FR)).toBe(492_317_987);
+    expect(estimateImportBytes(FR_FR)).toBeGreaterThanOrEqual(FR_FR_PEAK);
+    // JMdict: 100MB inflated -> 100MB temp + 136MB DB.
+    expect(estimateImportBytes(sizes(100_000_000, true))).toBeGreaterThanOrEqual(236_000_000);
+  });
+
+  it.each([
+    [{body: {bytes: -1, inflated: false}, idxBytes: 0, synBytes: 0}],
+    [{body: {bytes: Number.NaN, inflated: true}, idxBytes: 0, synBytes: 0}],
+    [{body: {bytes: Number.POSITIVE_INFINITY, inflated: true}, idxBytes: 0, synBytes: 0}],
+    [{body: {bytes: '1000', inflated: false}, idxBytes: 0, synBytes: 0}],
+    [{body: {bytes: 1000, inflated: 'yes'}, idxBytes: 0, synBytes: 0}],
+    [{body: {bytes: 1000}, idxBytes: 0, synBytes: 0}],
+    [{body: undefined, idxBytes: 0, synBytes: 0}],
+    [{body: {bytes: 1000, inflated: false}, idxBytes: -5, synBytes: 0}],
+    [{body: {bytes: 1000, inflated: false}, idxBytes: 0, synBytes: Number.NaN}],
+    [{body: {bytes: 1000, inflated: false}, idxBytes: 0}],
+  ])('rejects the invalid native sizes %p', input => {
+    expect(() =>
+      estimateImportBytes(input as unknown as Parameters<typeof estimateImportBytes>[0]),
+    ).toThrow('[import] invalid source sizes');
   });
 });
 
 describe('importStardict — space guard (TF5-FR6)', () => {
-  it('sizes the estimate from statDictSize (real .dict size, not a hardcoded 0)', async () => {
+  it('sizes the estimate from statDictBody (real body size, not a hardcoded 0)', async () => {
     // The fix: the guard reads the size from the port. A LARGE .dict
     // (50 MB) with too little free space must be refused — a hardcoded 0
     // would estimate 0 and never trip.
-    const dictSize = 50_000_000;
-    const required = estimateImportBytes(dictSize);
-    const h = await makeHarness({dictSize, space: required - 1});
+    const dictBody = {bytes: 50_000_000, inflated: false};
+    const required = estimateImportBytes({...DEFAULT_SIZES, body: dictBody});
+    const h = await makeHarness({dictBody, space: required - 1});
     const warn = jest.fn();
     const res = await importStardict(h.ports, {warn});
     expect(res).toEqual({
       ok: false,
       reason: `[import] insufficient space: need ${required}, have ${required - 1}`,
     });
-    expect(h.statDictSize).toHaveBeenCalledTimes(1);
+    expect(h.statDictBody).toHaveBeenCalledTimes(1);
     expect(h.runNativeImport).not.toHaveBeenCalled();
     expect(h.deleteFile).not.toHaveBeenCalled();
   });
 
+  it('refuses fr-fr just above its measured peak, sizing .idx and .syn from their files (#44)', async () => {
+    // The old 2.5x-compressed estimate asked for 56MB; body terms alone
+    // for 346MB, a 4.5% margin over the 331MB peak.
+    const space = FR_FR_PEAK + 10_000_000;
+    const h = await makeHarness({
+      dictBody: FR_FR.body,
+      fileSizes: {'dict.idx': FR_FR.idxBytes, 'dict.syn': FR_FR.synBytes},
+      space,
+    });
+    h.ports.synPath = 'dict.syn';
+    const res = await importStardict(h.ports, {warn: jest.fn()});
+    expect(res).toEqual({
+      ok: false,
+      reason: `[import] insufficient space: need 492317987, have ${space}`,
+    });
+    expect(h.statFileSize.mock.calls).toEqual([['dict.idx'], ['dict.syn']]);
+    expect(h.runNativeImport).not.toHaveBeenCalled();
+  });
+
+  it('counts no .syn term when the dict has no .syn', async () => {
+    const h = await makeHarness({fileSizes: {'dict.idx': 100}, space: 2500 + 200});
+    const res = await importStardict(h.ports);
+    expect(res.ok).toBe(true);
+    expect(h.statFileSize.mock.calls).toEqual([['dict.idx']]);
+  });
+
+  it('counts a missing .syn file as 0 bytes', async () => {
+    // The native stat reports 0 for a missing file.
+    const h = await makeHarness({space: 2500});
+    h.ports.synPath = 'dict.syn';
+    const res = await importStardict(h.ports);
+    expect(res.ok).toBe(true);
+    expect(h.statFileSize).toHaveBeenCalledWith('dict.syn');
+  });
+
   it('insufficient space -> {ok:false} tagged, nothing imported or deleted', async () => {
-    const required = estimateImportBytes(DICT_BYTES);
+    const required = estimateImportBytes(DEFAULT_SIZES);
     const h = await makeHarness({space: required - 1});
     const warn = jest.fn();
     const res = await importStardict(h.ports, {warn});
@@ -624,18 +722,18 @@ describe('importStardict — space guard (TF5-FR6)', () => {
       ok: false,
       reason: `[import] insufficient space: need ${required}, have ${required - 1}`,
     });
-    expect(h.statDictSize).toHaveBeenCalled();
+    expect(h.statDictBody).toHaveBeenCalled();
     expect(h.runNativeImport).not.toHaveBeenCalled();
     expect(h.deleteFile).not.toHaveBeenCalled();
     expect(warn).toHaveBeenCalled();
   });
 
   it('sufficient space -> import proceeds', async () => {
-    const required = estimateImportBytes(DICT_BYTES);
+    const required = estimateImportBytes(DEFAULT_SIZES);
     const h = await makeHarness({space: required + 1000});
     const res = await importStardict(h.ports);
     expect(res.ok).toBe(true);
-    expect(h.statDictSize).toHaveBeenCalled();
+    expect(h.statDictBody).toHaveBeenCalled();
   });
 
   it('skipped when no free-space probe is installed (guard no-op)', async () => {

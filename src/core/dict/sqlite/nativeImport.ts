@@ -5,6 +5,8 @@
 // it touches NativeModules which aren't bound off the device; the
 // importStardict orchestration it feeds is host-tested with a fake.
 
+import type {DictBodySize} from './importStardict';
+
 export type NativeImportParams = {
   ifoPath: string;
   idxPath: string;
@@ -48,6 +50,18 @@ export const getFileSize = async (path: string): Promise<number> => {
     throw new Error('[import] native SnDictImport module is unavailable');
   }
   return mod.fileSize(path);
+};
+
+// The uncompressed .dict body size and whether the import inflates it to
+// a temp file (SnDictImport.dictBodySize reads a .dz's gzip ISIZE
+// trailer). Feeds the import space guard, which validates the shape.
+export const getDictBodySize = async (path: string): Promise<DictBodySize> => {
+  const {NativeModules} = require('react-native');
+  const mod = NativeModules.SnDictImport;
+  if (mod === undefined || typeof mod.dictBodySize !== 'function') {
+    throw new Error('[import] native SnDictImport.dictBodySize is unavailable');
+  }
+  return mod.dictBodySize(path);
 };
 
 // Copy a plugin DB across the filesDir<->external boundary in EITHER

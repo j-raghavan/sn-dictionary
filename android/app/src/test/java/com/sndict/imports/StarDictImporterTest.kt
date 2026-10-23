@@ -202,6 +202,31 @@ class StarDictImporterTest {
     assertEquals(listOf<String>(), output.parentFile!!.list()!!.filter { it.endsWith(".tmp") })
   }
 
+  @Test fun sizesAPlainBodyFromTheFileAndAGzipBodyFromItsTrailer() {
+    val entries = listOf(Entry("word", "x".repeat(70_000)), Entry("other", "def"))
+    val plain = writeDict(entries)[2]
+    assertEquals(
+      StarDictImporter.BodySize(70_003, inflated = false),
+      StarDictImporter.dictBodySize(plain.path),
+    )
+    val gzip = writeDict(entries, gzip = true)[2]
+    assertEquals(
+      StarDictImporter.BodySize(70_003, inflated = true),
+      StarDictImporter.dictBodySize(gzip.path),
+    )
+  }
+
+  @Test fun rejectsADzBodyWithoutTheGzipMagic() {
+    val dz = File(temp.newFolder(), "plain.dict.dz").apply { writeText("not compressed at all") }
+    val e = assertThrows(IllegalArgumentException::class.java) { StarDictImporter.dictBodySize(dz.path) }
+    assertEquals("not gzip: ${dz.path}", e.message)
+  }
+
+  @Test fun rejectsAGzipBodyTooShortToHoldATrailer() {
+    val dz = File(temp.newFolder(), "short.dict.dz").apply { writeBytes(byteArrayOf(0x1f, 0x8b.toByte())) }
+    assertThrows(IllegalArgumentException::class.java) { StarDictImporter.dictBodySize(dz.path) }
+  }
+
   @Test fun storesAnIdxRecordThatOverrunsTheBodyWithAnEmptyDefinition() {
     // "A" folds onto "a" and its slice reaches past the end of a truncated
     // .dict: it is kept (rowid and count stay aligned) but empty, and the

@@ -1,5 +1,6 @@
 package com.sndict.imports
 
+import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
@@ -86,6 +87,26 @@ class SnDictImportModule(
         promise.resolve(if (f.exists()) f.length().toDouble() else 0.0)
       } catch (e: Exception) {
         promise.reject("FILE_SIZE_FAILED", e.message, e)
+      }
+    }
+  }
+
+  // The uncompressed .dict body size + whether the import inflates it, for
+  // the on-device import space guard: {bytes: Double, inflated: Boolean}.
+  // Double for the RN bridge (no native long), like fileSize.
+  @ReactMethod
+  fun dictBodySize(path: String, promise: Promise) {
+    executor.execute {
+      try {
+        val body = StarDictImporter.dictBodySize(resolve(path).path)
+        promise.resolve(
+          Arguments.createMap().apply {
+            putDouble("bytes", body.bytes.toDouble())
+            putBoolean("inflated", body.inflated)
+          },
+        )
+      } catch (e: Throwable) {
+        promise.reject("DICT_SIZE_FAILED", e.message ?: e.javaClass.name, e)
       }
     }
   }

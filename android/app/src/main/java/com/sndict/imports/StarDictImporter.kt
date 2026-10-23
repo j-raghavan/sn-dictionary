@@ -7,6 +7,7 @@ import java.io.BufferedInputStream
 import java.io.Closeable
 import java.io.File
 import java.io.FileOutputStream
+import java.io.RandomAccessFile
 import java.nio.MappedByteBuffer
 import java.nio.channels.FileChannel
 import java.nio.file.StandardOpenOption
@@ -129,11 +130,46 @@ object StarDictImporter {
 
   private data class PreparedBody(val file: File, val isTemp: Boolean)
 
+  // The uncompressed body size, and whether run() inflates it to a temp
+  // file first. Feeds the JS import space guard (#44), which sized itself
+  // from the compressed .dz and asked for a fraction of the space needed.
+  data class BodySize(val bytes: Long, val inflated: Boolean)
+
+  // A gzip body's size comes from its ISIZE trailer: the last 4 bytes,
+  // little-endian, the uncompressed length mod 2^32. That is exact for
+  // dictzip, which is ONE gzip member (its random-access chunks are flush
+  // points inside a single deflate stream, indexed by the RA extra field),
+  // and for any single-member gzip. A multi-member gzip would report only
+  // its last member; dictzip and the StarDict tools never write one.
+  fun dictBodySize(dictPath: String): BodySize {
+    val src = File(dictPath)
+    if (!isGzip(dictPath, src)) {
+      return BodySize(src.length(), inflated = false)
+    }
+    // A .dz without the gzip magic would yield a garbage "ISIZE".
+    if (!isGzipMagic(src)) {
+      throw IllegalArgumentException("not gzip: $dictPath")
+    }
+    RandomAccessFile(src, "r").use { f ->
+      // 10-byte header + 8-byte trailer is the smallest valid member.
+      if (f.length() < 18) {
+        throw IllegalArgumentException("gzip body too short: ${f.length()} bytes")
+      }
+      f.seek(f.length() - 4)
+      var isize = 0L
+      for (shift in 0 until 32 step 8) {
+        isize = isize or (f.read().toLong() shl shift)
+      }
+      return BodySize(isize, inflated = true)
+    }
+  }
+
+  private fun isGzip(dictPath: String, src: File): Boolean =
+    dictPath.lowercase(java.util.Locale.ROOT).endsWith(".dz") || isGzipMagic(src)
+
   private fun prepareBody(dictPath: String, dbPath: String): PreparedBody {
     val src = File(dictPath)
-    val isGzip = dictPath.lowercase(java.util.Locale.ROOT).endsWith(".dz") ||
-      isGzipMagic(src)
-    if (!isGzip) {
+    if (!isGzip(dictPath, src)) {
       return PreparedBody(src, isTemp = false)
     }
     // STREAM the inflate to a temp file next to the output DB (writable
