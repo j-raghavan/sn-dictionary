@@ -60,6 +60,30 @@ describe('writeStarDict', () => {
       expect(Array.from(dict)).toEqual(expected);
     });
 
+    test('[word, definition] pairs keep repeated and empty headwords in a stable order (#46)', async () => {
+      const {ifo, idx, dict} = writeStarDict(
+        [
+          ['b', 'second b'],
+          ['', 'first empty'],
+          ['b', 'third b'],
+          ['', 'second empty'],
+        ],
+        {omitSametypesequence: true},
+      );
+      const parsed = await buildDict(ifo, idx, dict);
+      expect(parsed.meta.wordcount).toBe(4);
+      expect(lookupDict(parsed, 'b')?.definition).toBe('second b');
+      expect(Array.from(dict)).toEqual([
+        ...decodeUtf8Bytes('mfirst empty'),
+        0x00,
+        ...decodeUtf8Bytes('msecond empty'),
+        0x00,
+        ...decodeUtf8Bytes('msecond b'),
+        0x00,
+        ...decodeUtf8Bytes('mthird b'),
+      ]);
+    });
+
     test('perEntryType sets the per-word type char (default m); .idx lengths cover prefix + terminator', async () => {
       const {ifo, idx, dict} = writeStarDict(
         {alpha: '<b>A</b>', beta: 'plain B'},

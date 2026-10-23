@@ -317,7 +317,9 @@ object StarDictImporter {
   // Streams `word\0` + big-endian unsigned fields from a .idx or .syn file
   // with a small reusable word buffer, so the file is never held in heap.
   // Same guards and messages as parseIdx.ts / parseSyn.ts: an unterminated
-  // last word, an empty word, or a record cut short throws.
+  // last word or a record cut short throws. An empty word is returned as
+  // "" (#46: JMdict leaves every .idx word empty and keeps its headwords in
+  // the .syn); the callers decide what an empty word means.
   private class RecordReader(file: File, private val what: String) : Closeable {
     private val input = BufferedInputStream(file.inputStream(), 1 shl 16)
     private var word = ByteArray(256)
@@ -343,9 +345,6 @@ object StarDictImporter {
           word = word.copyOf(minOf(n * 2, MAX_WORD_BYTES))
         }
         word[n++] = b.toByte()
-      }
-      if (n == 0) {
-        throw IllegalArgumentException("$what: empty word at offset $recordStart")
       }
       return String(word, 0, n, Charsets.UTF_8)
     }
@@ -402,7 +401,7 @@ object StarDictImporter {
       db.execSQL(CREATE_ALIASES_TABLE)
       db.beginTransaction()
       try {
-        idxCount = insertEntries(
+        val idx = insertEntries(
           db.compileStatement(INSERT_STARDICT_ENTRY),
           idxFile,
           idxoffsetbits,
@@ -413,13 +412,24 @@ object StarDictImporter {
           dbPath,
         )
         val synFile = synPath?.let(::File)
-        if (synFile != null && synFile.exists() && synFile.length() > 0) {
+        val aliasCount = if (synFile != null && synFile.exists() && synFile.length() > 0) {
           insertAliases(
             db.compileStatement(INSERT_ALIAS),
             synFile,
-            idxCount,
+            idx.records,
+          )
+        } else {
+          0
+        }
+        // #46: JMdict copied without its .syn has only empty .idx words.
+        // It would import "successfully" and then miss every lookup, so
+        // fail and let runImport discard the slug.
+        if (idx.keyed + aliasCount == 0) {
+          throw IllegalArgumentException(
+            "parseIdx: no lookup keys (every .idx word is empty and there is no usable .syn)",
           )
         }
+        idxCount = idx.records
         db.setTransactionSuccessful()
       } finally {
         db.endTransaction()
@@ -443,7 +453,8 @@ object StarDictImporter {
   // + 1 and a .syn ordinal maps straight to its row. No dedup: a folded
   // key shared by several records keeps every row, and lookup takes the
   // lowest rowid (first-key-wins). A record whose word folds to an empty
-  // key is stored too (it keeps the rowid mapping) but is never looked up.
+  // key, including an empty word, is stored too (it keeps the rowid
+  // mapping) but is never looked up.
   // Each raw .dict slice is split (strip the sts-absent type byte + NUL)
   // BEFORE decode, and its format derived per entry from the type char
   // unless the sidecar overrides it (mirror dictEntry.ts).
@@ -456,9 +467,10 @@ object StarDictImporter {
     sametypesequence: String?,
     formatOverride: String?,
     dbPath: String,
-  ): Int {
+  ): IdxCounts {
     val offsetBytes = if (idxoffsetbits == 64) 8 else 4
     var count = 0
+    var keyed = 0
     RecordReader(idxFile, "parseIdx").use { reader ->
       while (true) {
         val word = reader.nextWord() ?: break
@@ -481,9 +493,11 @@ object StarDictImporter {
         }
         val split = splitDictEntry(sametypesequence, raw)
         count++
+        val key = NormalizeKey.fold(word)
+        if (key.isNotEmpty()) keyed++
         stmt.clearBindings()
         stmt.bindLong(1, count.toLong())
-        stmt.bindString(2, NormalizeKey.fold(word))
+        stmt.bindString(2, key)
         stmt.bindString(3, word)
         stmt.bindString(4, sanitizeDefinition(String(split.payload, Charsets.UTF_8)))
         stmt.bindString(5, formatOverride ?: formatFromTypeChar(split.typeChar))
@@ -492,14 +506,19 @@ object StarDictImporter {
       }
     }
     Log.i(TAG, "entries: $count (done)")
-    return count
+    return IdxCounts(records = count, keyed = keyed)
   }
+
+  // .idx records inserted, and how many of them have a lookup key.
+  private data class IdxCounts(val records: Int, val keyed: Int)
 
   // One `aliases` row per .syn record pointing at its target's entries
   // rowid. The definition is NOT copied (#44: a 1.5M-record .syn used to
   // duplicate every target body). Out-of-range ordinals and words that
-  // fold to an empty key are skipped, as buildDict does.
-  private fun insertAliases(stmt: SQLiteStatement, synFile: File, idxCount: Int) {
+  // fold to an empty key, including an empty word, are skipped, as
+  // buildDict does.
+  // Returns the number of aliases inserted.
+  private fun insertAliases(stmt: SQLiteStatement, synFile: File, idxCount: Int): Int {
     var count = 0
     RecordReader(synFile, "parseSyn").use { reader ->
       while (true) {
@@ -517,5 +536,6 @@ object StarDictImporter {
       }
     }
     Log.i(TAG, "aliases: $count (done)")
+    return count
   }
 }

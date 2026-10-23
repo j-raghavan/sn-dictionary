@@ -7,6 +7,7 @@
 import {
   writeStarDict,
   type StarDictBytes,
+  type StarDictEntries,
   type WriteOptions,
 } from '../../src/core/dict/stardict/writeStardict';
 
@@ -14,6 +15,6 @@ export type SyntheticStarDict = StarDictBytes;
 export type BuildOptions = WriteOptions;
 
 export const buildSyntheticStarDict = (
-  entries: Record<string, string>,
+  entries: StarDictEntries,
   options: WriteOptions = {},
 ): StarDictBytes => writeStarDict(entries, options);
