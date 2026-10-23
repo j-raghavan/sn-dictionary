@@ -38,6 +38,36 @@ export const CREATE_ENTRIES_TABLE =
 export const CREATE_ENTRIES_INDEX =
   'CREATE INDEX IF NOT EXISTS idx_entries_key ON entries(key)';
 
+// --- StarDict .syn aliases (#44) ------------------------------------
+// A native StarDict slug stores ONE entries row per .idx record (rowid =
+// ordinal + 1, no dedup) and ONE aliases row per .syn record pointing at
+// its target's entries rowid — never a copy of the target's definition
+// (a 1.5M-synonym dict used to store 1.5M duplicated bodies). Only the
+// Kotlin importer writes these; base.db, user.db and CSV slugs have no
+// aliases table and keep the plain LIMIT-1 SELECT. The index is built
+// after the bulk load, like idx_entries_key.
+//   key         — normalizeKey-folded synonym (the lookup key)
+//   entry_rowid — the target entries rowid
+//   word        — the raw synonym as written in the .syn
+// aliases.entry_rowid points at entries' implicit rowids — never VACUUM or
+// rebuild a StarDict slug's entries, or the aliases point at wrong rows.
+export const CREATE_ALIASES_TABLE =
+  'CREATE TABLE IF NOT EXISTS aliases (' +
+  'key TEXT NOT NULL, ' +
+  'entry_rowid INTEGER NOT NULL, ' +
+  'word TEXT NOT NULL)';
+
+export const CREATE_ALIASES_INDEX =
+  'CREATE INDEX IF NOT EXISTS idx_aliases_key ON aliases(key)';
+
+// The native StarDict writes: entries with an explicit rowid (= .idx
+// ordinal + 1; phonetic left NULL) and aliases pointing at that rowid.
+export const INSERT_STARDICT_ENTRY =
+  'INSERT INTO entries (rowid, key, word, definition, format) VALUES (?, ?, ?, ?, ?)';
+
+export const INSERT_ALIAS =
+  'INSERT INTO aliases (key, entry_rowid, word) VALUES (?, ?, ?)';
+
 // --- user.db entries (TF7) ------------------------------------------
 // user.db carries the SAME 'entries' table name as base.db (Designer
 // ruling 3) so the user source reuses createSqliteDictSource +
@@ -84,6 +114,22 @@ export const SELECT_ENTRY_BY_KEY =
 // e.g. user.db's 6-col table or an old StarDict slug.
 export const SELECT_ENTRY_BY_KEY_NO_PHONETIC =
   'SELECT word, definition, format FROM entries WHERE key = ? LIMIT 1';
+
+// The keyed lookup for a slug WITH an aliases table: canonical rows
+// first (lowest rowid = first in .idx), then aliases in .syn order, and
+// the first one wins — the same first-key-wins the importer used to apply
+// at write time. The ORDER BY makes the precedence explicit (UNION ALL
+// order is not guaranteed). Rows with an empty definition (a .idx record
+// that overran a corrupt .dict body) are skipped, so the lookup falls
+// through to the key's next row or misses. Binds the folded key TWICE.
+export const SELECT_ENTRY_BY_KEY_WITH_ALIASES =
+  'SELECT word, definition, format, phonetic FROM (' +
+  'SELECT 0 AS src, rowid AS ord, word, definition, format, phonetic ' +
+  "FROM entries WHERE key = ? AND definition <> '' " +
+  'UNION ALL ' +
+  'SELECT 1, a.rowid, e.word, e.definition, e.format, e.phonetic ' +
+  "FROM aliases a JOIN entries e ON e.rowid = a.entry_rowid WHERE a.key = ? AND e.definition <> ''" +
+  ') ORDER BY src, ord LIMIT 1';
 
 // Insert a CSV entry (5-col, with phonetic — bound NULL when absent).
 export const INSERT_CSV_ENTRY =
@@ -199,7 +245,11 @@ export interface ThesaurusRow {
 // (sanitizeDefinition) on a .idx-overrun corrupt dict. A slug DB built by
 // v1 stored the mis-decoded edges; bumping marks it stale so it auto
 // re-imports clean at bootstrap.
-export const IMPORTER_VERSION = 2;
+//
+// v2 -> v3 (#44): StarDict slugs keep every .idx record and store .syn
+// synonyms in the aliases table instead of copying definitions. Bumping
+// re-imports v2 slugs into the new layout.
+export const IMPORTER_VERSION = 3;
 
 export const CREATE_IMPORTS_TABLE =
   'CREATE TABLE IF NOT EXISTS imports (' +

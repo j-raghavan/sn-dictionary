@@ -13,6 +13,7 @@ import {
   DEFINITION_FORMATS,
   SELECT_ENTRY_BY_KEY,
   SELECT_ENTRY_BY_KEY_NO_PHONETIC,
+  SELECT_ENTRY_BY_KEY_WITH_ALIASES,
   type EntryRow,
 } from './schema';
 
@@ -41,41 +42,63 @@ export const coerceFormat = (raw: string): DefinitionFormat =>
 // v3 SELECT and caught the failure for a pre-v3 table — but every miss
 // LOGGED a native `SQLiteException: no such column: phonetic` (red log
 // noise on every user.db / old-slug lookup) AND wasted a round-trip on
-// the retry. Instead probe `entries` ONCE per DB handle (PRAGMA
-// table_info), cache the boolean, and ALWAYS run the correct SELECT — so
-// we never issue a query that throws.
+// the retry. Instead probe the DB's shape ONCE per handle, cache it, and
+// ALWAYS run the correct SELECT — so we never issue a query that throws.
+// The shape is whether `entries` has the v3 phonetic column and whether
+// the DB carries a StarDict `aliases` table (#44).
 //
 // Cache is keyed by the DB handle (a WeakMap, GC'd with the handle) and
 // stores the in-flight PROMISE so concurrent first-lookups share the one
-// probe instead of racing N PRAGMAs.
-const phoneticSupport = new WeakMap<SqliteDb, Promise<boolean>>();
+// probe instead of racing N probes. A FAILED probe is not cached: one
+// transient error (e.g. a bridge timeout) must not disable synonym lookups
+// for the rest of the session, so the next lookup probes again.
+type DbShape = {phonetic: boolean; aliases: boolean};
 
-const probeHasPhonetic = async (db: SqliteDb): Promise<boolean> => {
+const shapes = new WeakMap<SqliteDb, Promise<DbShape>>();
+
+const probeShape = async (db: SqliteDb): Promise<DbShape> => {
   const cols = await db.query<{name: string}>('PRAGMA table_info(entries)');
-  return cols.some(c => c.name === 'phonetic');
+  const aliases = await db.query(
+    "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'aliases'",
+  );
+  return {
+    phonetic: cols.some(c => c.name === 'phonetic'),
+    aliases: aliases.length > 0,
+  };
 };
 
-const hasPhonetic = (db: SqliteDb): Promise<boolean> => {
-  let probe = phoneticSupport.get(db);
+const dbShape = (db: SqliteDb): Promise<DbShape> => {
+  let probe = shapes.get(db);
   if (probe === undefined) {
-    // Probe failures (e.g. no `entries` table yet) resolve false rather
-    // than rejecting — the phonetic-less SELECT is the safe default and
-    // surfaces the real "no such table" error itself if it persists.
-    probe = probeHasPhonetic(db).catch(() => false);
-    phoneticSupport.set(db, probe);
+    // A probe failure (e.g. no `entries` table yet) resolves to the plain
+    // shape for THIS lookup rather than rejecting — the phonetic-less
+    // SELECT is the safe default and surfaces the real "no such table"
+    // error itself if it persists — and is evicted so the next lookup
+    // re-probes.
+    probe = probeShape(db).catch(() => {
+      shapes.delete(db);
+      return {phonetic: false, aliases: false};
+    });
+    shapes.set(db, probe);
   }
   return probe;
 };
 
-// Read the row for a folded key. First row wins (the SELECT carries
-// LIMIT 1); no row -> null. Picks the v3 (phonetic) or 4-col SELECT from
-// the cached schema probe so a pre-v3 `entries` (user.db / old slug)
-// never throws "no such column".
+// Read the row for a folded key. First row wins (every SELECT carries
+// LIMIT 1); no row -> null. A StarDict slug with an aliases table also
+// matches synonyms; otherwise the v3 (phonetic) or 4-col SELECT is picked
+// from the cached probe so a pre-v3 `entries` (user.db / old slug) never
+// throws "no such column".
 const queryEntryRow = async (
   db: SqliteDb,
   foldedKey: string,
 ): Promise<EntryRow[]> => {
-  const sql = (await hasPhonetic(db))
+  const shape = await dbShape(db);
+  // aliases => a native v3 StarDict slug => the phonetic column is present.
+  if (shape.aliases) {
+    return db.query<EntryRow>(SELECT_ENTRY_BY_KEY_WITH_ALIASES, [foldedKey, foldedKey]);
+  }
+  const sql = shape.phonetic
     ? SELECT_ENTRY_BY_KEY
     : SELECT_ENTRY_BY_KEY_NO_PHONETIC;
   return db.query<EntryRow>(sql, [foldedKey]);

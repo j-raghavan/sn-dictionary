@@ -16,10 +16,14 @@ import {
   type ImportPorts,
 } from '../src/core/dict/sqlite/importStardict';
 import {
+  CREATE_ALIASES_TABLE,
   CREATE_ENTRIES_TABLE,
   IMPORTER_VERSION,
+  INSERT_ALIAS,
+  INSERT_STARDICT_ENTRY,
   SELECT_ENTRY_BY_KEY,
 } from '../src/core/dict/sqlite/schema';
+import {selectByKey} from '../src/core/dict/sqlite/sqliteDictSource';
 import type {SqliteDb} from '../src/core/dict/sqlite/db';
 import type {RunNativeImport} from '../src/core/dict/sqlite/nativeImport';
 import {
@@ -63,6 +67,9 @@ type Opts = {
     formatOverride?: string;
     entries: Array<{key: string; word: string; raw: Uint8Array}>;
   };
+  // .syn aliases the fake writes the way the Kotlin importer does (#44):
+  // an aliases table pointing at entries rowids, never counted.
+  nativeAliases?: Array<{key: string; entryRowid: number; word: string}>;
   // Override the count the native side REPORTS (to force a verify
   // mismatch even when rows are inserted) and/or make it throw.
   nativeReports?: number;
@@ -121,13 +128,14 @@ const makeHarness = async (opts: Opts = {}): Promise<Harness> => {
         : staticRows;
       const db = await createSeededDb(async d => {
         await d.run(CREATE_ENTRIES_TABLE);
-        for (const r of rows) {
-          await d.run('INSERT INTO entries (key, word, definition, format) VALUES (?, ?, ?, ?)', [
-            r.key,
-            r.word,
-            r.definition,
-            r.format,
-          ]);
+        for (const [i, r] of rows.entries()) {
+          await d.run(INSERT_STARDICT_ENTRY, [i + 1, r.key, r.word, r.definition, r.format]);
+        }
+        if (opts.nativeAliases) {
+          await d.run(CREATE_ALIASES_TABLE);
+          for (const a of opts.nativeAliases) {
+            await d.run(INSERT_ALIAS, [a.key, a.entryRowid, a.word]);
+          }
         }
       });
       slugFiles.set(filename, db);
@@ -257,6 +265,25 @@ describe('importStardict — happy path', () => {
     const slug = h.slugFiles.get('my-dict.en.db')!;
     const rich = await slug.query(SELECT_ENTRY_BY_KEY, ['rich']);
     expect(rich[0]).toMatchObject({definition: '<i>x</i>', format: 'html'});
+  });
+
+  it('verifies the entries COUNT alone when the slug also carries .syn aliases (#44)', async () => {
+    const h = await makeHarness({
+      nativeAliases: [
+        {key: 'apples', entryRowid: 1, word: 'apples'},
+        {key: 'bananas', entryRowid: 2, word: 'Bananas'},
+        {key: 'plantain', entryRowid: 2, word: 'plantain'},
+      ],
+    });
+    h.ports.synPath = 'dict.syn';
+    const res = await importStardict(h.ports);
+    expect(res).toMatchObject({ok: true, entryCount: 2});
+    const slug = h.slugFiles.get('my-dict.en.db')!;
+    expect(await selectByKey(slug, 'plantain')).toEqual({
+      word: 'Banana',
+      definition: 'a yellow fruit',
+      format: 'plain',
+    });
   });
 
   it('forwards the optional .syn path to the native import', async () => {

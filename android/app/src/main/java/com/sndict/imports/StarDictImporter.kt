@@ -1,11 +1,12 @@
 package com.sndict.imports
 
 import android.database.sqlite.SQLiteDatabase
+import android.database.sqlite.SQLiteStatement
 import android.util.Log
+import java.io.BufferedInputStream
+import java.io.Closeable
 import java.io.File
 import java.io.FileOutputStream
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
 import java.nio.MappedByteBuffer
 import java.nio.channels.FileChannel
 import java.nio.file.StandardOpenOption
@@ -14,28 +15,30 @@ import java.util.zip.GZIPInputStream
 // DEVICE-UNVERIFIED. Native StarDict importer (ADR-0006 Option 2):
 // parse the triple (+ optional .syn) and bulk-insert into a per-dict
 // SQLite DB, ALL off the Hermes/JS thread. Logic mirrors the TS path
-// EXACTLY so natively-imported dicts are byte-identical to base.db:
+// EXACTLY so natively-imported dicts key and render like base.db:
 //   - .ifo  -> parseIfo.ts (sametypesequence, idxoffsetbits 32|64)
 //   - .dict -> dictReader (gzip inflate when .dz / 0x1f8b magic);
 //             each entry's slice -> splitDictEntry (strip sts-absent
 //             type byte + trailing NUL) + formatFromTypeChar (mirror
 //             dictEntry.ts) before decode (issue #28)
-//   - .idx  -> parseIdx.ts (word\0 + BE offset(u32|u64) + BE length(u32))
-//   - .syn  -> parseSyn.ts + buildDict merge (.idx first, then .syn,
-//              first-key-wins, normalizeKey-folded, out-of-range skipped)
+//   - .idx  -> parseIdx.ts (word\0 + BE offset(u32|u64) + BE length(u32));
+//              ONE `entries` row per record, rowid = ordinal + 1
+//   - .syn  -> parseSyn.ts; ONE `aliases` row per in-range record
+//              (normalizeKey-folded key -> entries rowid), never a copy of
+//              the target's definition
 //   - SQLite -> schema.ts DDL literals + SCHEMA_VERSION; meta LAST.
+// Lookup (sqliteDictSource.ts) resolves a key to its first canonical row,
+// else its first alias, so first-key-wins now happens at read time.
 //
-// MEMORY (M11): the host process caps the Java heap at ~192MB and we
-// can't raise it. So we NEVER materialize the whole dict in heap:
+// MEMORY (M11, #44): the host process caps the Java heap at ~192MB and we
+// can't raise it. So heap use is CONSTANT in the dict size:
 //   - the .dict body is inflated to a TEMP FILE (streaming, ~constant
 //     heap) and read OFF-HEAP via an mmap'd MappedByteBuffer (on-demand
 //     paging — doesn't count against the Java heap);
-//   - we keep only the lightweight idxEntries (word + offset + length,
-//     no definitions) plus a `seen` HashSet for first-key-wins dedup;
-//   - definitions are read + inserted ONE AT A TIME inside the
-//     transaction, so only a single definition String is ever live.
-// The output DB is byte-identical to the prior all-in-heap version —
-// only HOW we read the body and WHEN we insert changed.
+//   - .idx and .syn are STREAMED record by record and each row is inserted
+//     as it is read: no whole-file byte array, no entry list, no dedup set
+//     (a 27MB .syn with 1.5M records used to exhaust the heap);
+//   - only a single definition String is ever live.
 //
 // IMPORTER VERSIONING: any import- or render-affecting change to the logic
 // here (parse, dedup, type-byte stripping, format mapping, insert) MUST be
@@ -45,11 +48,40 @@ import java.util.zip.GZIPInputStream
 
 private const val SCHEMA_VERSION = 3 // MUST match buildBaseDb.ts SCHEMA_VERSION (v3: + phonetic col, ADR-0008)
 
-private data class IdxEntry(val word: String, val offset: Long, val length: Int)
+// SAME DDL as schema.ts (the single source of truth; sqliteSchema.test.ts
+// fails if these drift). The nullable `phonetic TEXT` last column keeps
+// StarDict slugs the same shape as CSV slugs + base.db; the INSERT below
+// leaves it NULL (StarDict carries no phonetic).
+private const val CREATE_ENTRIES_TABLE =
+  "CREATE TABLE IF NOT EXISTS entries (" +
+    "key TEXT NOT NULL, word TEXT NOT NULL, " +
+    "definition TEXT NOT NULL, format TEXT NOT NULL, phonetic TEXT)"
+private const val CREATE_ENTRIES_INDEX =
+  "CREATE INDEX IF NOT EXISTS idx_entries_key ON entries(key)"
+private const val CREATE_ALIASES_TABLE =
+  "CREATE TABLE IF NOT EXISTS aliases (" +
+    "key TEXT NOT NULL, entry_rowid INTEGER NOT NULL, word TEXT NOT NULL)"
+private const val CREATE_ALIASES_INDEX =
+  "CREATE INDEX IF NOT EXISTS idx_aliases_key ON aliases(key)"
+private const val CREATE_META_TABLE =
+  "CREATE TABLE IF NOT EXISTS meta (" +
+    "schema_version INTEGER NOT NULL, built_at TEXT NOT NULL)"
+private const val INSERT_STARDICT_ENTRY =
+  "INSERT INTO entries (rowid, key, word, definition, format) VALUES (?, ?, ?, ?, ?)"
+private const val INSERT_ALIAS =
+  "INSERT INTO aliases (key, entry_rowid, word) VALUES (?, ?, ?)"
+private const val INSERT_META =
+  "INSERT INTO meta (schema_version, built_at) VALUES (?, ?)"
+
+private const val PROGRESS_EVERY = 100_000
+// Longest .idx/.syn word accepted; a corrupt file with no NUL fails here
+// instead of growing the word buffer without bound.
+private const val MAX_WORD_BYTES = 64 * 1024
+private const val TAG = "StarDictImporter"
 
 object StarDictImporter {
 
-  // Returns the number of entries inserted (== distinct folded keys).
+  // Returns the number of .idx records inserted (== COUNT(*) FROM entries).
   fun run(
     ifoPath: String,
     idxPath: String,
@@ -61,9 +93,6 @@ object StarDictImporter {
     val ifo = parseIfo(File(ifoPath).readBytes())
     val builtAt = builtAt(ifo)
 
-    // .idx walk holds only words + offsets/lengths (no definitions).
-    val idxEntries = parseIdx(File(idxPath).readBytes(), ifo.idxoffsetbits)
-
     // Inflate the .dict body to a temp file (streaming) and mmap it
     // off-heap. A raw .dict is mapped in place (no temp file).
     val prepared = prepareBody(dictPath, dbPath)
@@ -73,30 +102,10 @@ object StarDictImporter {
       val size = channel.size()
       val body: MappedByteBuffer = channel.map(FileChannel.MapMode.READ_ONLY, 0, size)
 
-      // Warn (once) when the .idx reaches past the .dict body — a corrupt/
-      // truncated dict (real: star_trungviet, overrun 103 bytes) whose edge
-      // entries slice past the end, leaving mis-decoded U+FFFD that
-      // sanitizeDefinition strips. Host-side this is unit-tested via
-      // dictBodyOverrun in dictEntry.ts (the reader there exposes no body
-      // size); here we HAVE both idxEntries and channel.size(), so it is
-      // emitted device-side.
-      var maxOffsetEnd = 0L
-      for (e in idxEntries) {
-        val end = e.offset + e.length
-        if (end > maxOffsetEnd) maxOffsetEnd = end
-      }
-      val overrun = dictBodyOverrun(maxOffsetEnd, size)
-      if (overrun > 0) {
-        Log.w(
-          "StarDictImporter",
-          "dict \"$dbPath\": .idx overruns .dict body by $overrun bytes; " +
-            "edge entries may be sanitized",
-        )
-      }
-
       return writeDbStreaming(
         dbPath = dbPath,
-        idxEntries = idxEntries,
+        idxFile = File(idxPath),
+        idxoffsetbits = ifo.idxoffsetbits,
         synPath = synPath,
         body = body,
         bodySize = size,
@@ -148,21 +157,18 @@ object StarDictImporter {
     }
   }
 
-  // Read `length` raw bytes at `offset` from the mmap'd body. Bounds-
-  // checked (same guard as before). Returns the RAW slice — the caller
-  // runs splitDictEntry to strip any sts-absent type prefix/NUL BEFORE
-  // decoding to UTF-8 (issue #28; mirrors dictEntry.ts).
+  // Read `length` raw bytes at `offset` from the mmap'd body, or null when
+  // the slice falls outside it. Returns the RAW slice — the caller runs
+  // splitDictEntry to strip any sts-absent type prefix/NUL BEFORE decoding
+  // to UTF-8 (issue #28; mirrors dictEntry.ts).
   private fun readDef(
     body: MappedByteBuffer,
     bodySize: Long,
     offset: Long,
     length: Int,
-  ): ByteArray {
-    val end = offset + length
-    if (offset < 0 || length < 0 || end > bodySize) {
-      throw IndexOutOfBoundsException(
-        "dict slice out of bounds: offset=$offset length=$length size=$bodySize",
-      )
+  ): ByteArray? {
+    if (offset < 0 || length < 0 || offset + length > bodySize) {
+      return null
     }
     val buf = ByteArray(length)
     // Duplicate so concurrent position moves stay local (single-threaded
@@ -270,82 +276,72 @@ object StarDictImporter {
     return "${ifo.bookname ?: "base"}@${ifo.wordcount ?: ""}"
   }
 
-  // --- .idx (mirror parseIdx.ts EXACTLY, big-endian) ------------------
+  // --- .idx / .syn records (mirror parseIdx.ts / parseSyn.ts) --------
 
-  private fun parseIdx(bytes: ByteArray, idxoffsetbits: Int): List<IdxEntry> {
-    val entries = ArrayList<IdxEntry>()
-    val buf = ByteBuffer.wrap(bytes).order(ByteOrder.BIG_ENDIAN)
-    val offsetBytes = if (idxoffsetbits == 64) 8 else 4
-    val recordTrailerBytes = offsetBytes + 4
-    var i = 0
-    while (i < bytes.size) {
-      var end = i
-      while (end < bytes.size && bytes[end].toInt() != 0) end++
-      if (end >= bytes.size) {
-        throw IllegalArgumentException("parseIdx: unterminated word at end of buffer")
+  // Streams `word\0` + big-endian unsigned fields from a .idx or .syn file
+  // with a small reusable word buffer, so the file is never held in heap.
+  // Same guards and messages as parseIdx.ts / parseSyn.ts: an unterminated
+  // last word, an empty word, or a record cut short throws.
+  private class RecordReader(file: File, private val what: String) : Closeable {
+    private val input = BufferedInputStream(file.inputStream(), 1 shl 16)
+    private var word = ByteArray(256)
+    private var pos = 0L
+    private var recordStart = 0L
+
+    // The next record's word, or null at a clean end of file.
+    fun nextWord(): String? {
+      recordStart = pos
+      var n = 0
+      while (true) {
+        val b = input.read()
+        if (b < 0) {
+          if (n == 0) return null
+          throw IllegalArgumentException("$what: unterminated word at end of buffer")
+        }
+        pos++
+        if (b == 0) break
+        if (n == word.size) {
+          if (n == MAX_WORD_BYTES) {
+            throw IllegalArgumentException("$what: word too long at offset $recordStart")
+          }
+          word = word.copyOf(minOf(n * 2, MAX_WORD_BYTES))
+        }
+        word[n++] = b.toByte()
       }
-      if (end == i) {
-        throw IllegalArgumentException("parseIdx: empty word at offset $i")
+      if (n == 0) {
+        throw IllegalArgumentException("$what: empty word at offset $recordStart")
       }
-      if (end + 1 + recordTrailerBytes > bytes.size) {
-        throw IllegalArgumentException("parseIdx: truncated record after word at offset $i")
-      }
-      val word = String(bytes, i, end - i, Charsets.UTF_8)
-      var pos = end + 1
-      val offset: Long
-      if (idxoffsetbits == 64) {
-        val hi = buf.getInt(pos).toLong() and 0xffffffffL
-        val lo = buf.getInt(pos + 4).toLong() and 0xffffffffL
-        offset = hi * 0x100000000L + lo
-        pos += 8
-      } else {
-        offset = buf.getInt(pos).toLong() and 0xffffffffL
-        pos += 4
-      }
-      val length = (buf.getInt(pos).toLong() and 0xffffffffL).toInt()
-      pos += 4
-      entries.add(IdxEntry(word, offset, length))
-      i = pos
+      return String(word, 0, n, Charsets.UTF_8)
     }
-    return entries
-  }
 
-  // --- .syn (mirror parseSyn.ts) -------------------------------------
-
-  private data class SynEntry(val word: String, val originalWordIndex: Int)
-
-  private fun parseSyn(bytes: ByteArray): List<SynEntry> {
-    val entries = ArrayList<SynEntry>()
-    val buf = ByteBuffer.wrap(bytes).order(ByteOrder.BIG_ENDIAN)
-    var i = 0
-    while (i < bytes.size) {
-      var end = i
-      while (end < bytes.size && bytes[end].toInt() != 0) end++
-      if (end >= bytes.size) {
-        throw IllegalArgumentException("parseSyn: unterminated word at end of buffer")
+    // A big-endian unsigned field of `bytes` width (4 or 8).
+    fun unsigned(bytes: Int): Long {
+      var v = 0L
+      repeat(bytes) {
+        val b = input.read()
+        if (b < 0) {
+          throw IllegalArgumentException(
+            "$what: truncated record after word at offset $recordStart",
+          )
+        }
+        v = (v shl 8) or b.toLong()
       }
-      if (end == i) {
-        throw IllegalArgumentException("parseSyn: empty word at offset $i")
-      }
-      if (end + 1 + 4 > bytes.size) {
-        throw IllegalArgumentException("parseSyn: truncated record after word at offset $i")
-      }
-      val word = String(bytes, i, end - i, Charsets.UTF_8)
-      val originalWordIndex = (buf.getInt(end + 1).toLong() and 0xffffffffL).toInt()
-      entries.add(SynEntry(word, originalWordIndex))
-      i = end + 1 + 4
+      pos += bytes
+      return v
     }
-    return entries
+
+    override fun close() = input.close()
   }
 
   // --- SQLite write (STREAMING; schema.ts DDL literals; meta LAST) ----
 
-  // Streams the merge+insert: .idx first then .syn, first-key-wins via a
-  // `seen` set, reading ONE definition at a time from the mmap'd body.
-  // Returns the number of distinct keys inserted (== prior map.size).
+  // Streams .idx into `entries` (rowid = ordinal + 1) and then .syn into
+  // `aliases`, reading ONE definition at a time from the mmap'd body.
+  // Returns the number of .idx records inserted.
   private fun writeDbStreaming(
     dbPath: String,
-    idxEntries: List<IdxEntry>,
+    idxFile: File,
+    idxoffsetbits: Int,
     synPath: String?,
     body: MappedByteBuffer,
     bodySize: Long,
@@ -364,100 +360,126 @@ object StarDictImporter {
     // dropped its own DELETE and leans on the spine (JS-only path).
     File(dbPath).delete()
     val db = SQLiteDatabase.openOrCreateDatabase(dbPath, null)
-    val seen = HashSet<String>()
+    val idxCount: Int
     try {
-      // SAME DDL as schema.ts CREATE_ENTRIES_TABLE (schema v3): the
-      // nullable `phonetic TEXT` last column keeps StarDict slugs the same
-      // shape as CSV slugs + base.db. The 4-col INSERT below leaves it
-      // NULL (StarDict carries no phonetic).
-      db.execSQL(
-        "CREATE TABLE IF NOT EXISTS entries (" +
-          "key TEXT NOT NULL, word TEXT NOT NULL, " +
-          "definition TEXT NOT NULL, format TEXT NOT NULL, phonetic TEXT)",
-      )
+      db.execSQL(CREATE_ENTRIES_TABLE)
+      db.execSQL(CREATE_ALIASES_TABLE)
       db.beginTransaction()
       try {
-        val stmt = db.compileStatement(
-          "INSERT INTO entries (key, word, definition, format) VALUES (?, ?, ?, ?)",
+        idxCount = insertEntries(
+          db.compileStatement(INSERT_STARDICT_ENTRY),
+          idxFile,
+          idxoffsetbits,
+          body,
+          bodySize,
+          sametypesequence,
+          formatOverride,
+          dbPath,
         )
-        // .idx first (first-key-wins). Only one definition String is
-        // live per iteration (GC-eligible after executeInsert). Each
-        // entry's raw .dict slice is split (strip sts-absent type byte +
-        // NUL) BEFORE decode, and its format derived per-entry from the
-        // type char unless the sidecar overrides it (mirror dictEntry.ts).
-        for (e in idxEntries) {
-          val key = NormalizeKey.fold(e.word)
-          if (key.isNotEmpty() && seen.add(key)) {
-            val split = splitDictEntry(sametypesequence, readDef(body, bodySize, e.offset, e.length))
-            val rowFormat = formatOverride ?: formatFromTypeChar(split.typeChar)
-            insertRow(
-              stmt,
-              key,
-              e.word,
-              sanitizeDefinition(String(split.payload, Charsets.UTF_8)),
-              rowFormat,
-            )
-          }
-        }
-        // .syn aliases -> canonical .idx entry (its headword + def),
-        // mirroring buildDict's merge; out-of-range index skipped. The
-        // body + format derive from the TARGET entry's slice.
-        if (synPath != null) {
-          val synFile = File(synPath)
-          if (synFile.exists() && synFile.length() > 0) {
-            for (syn in parseSyn(synFile.readBytes())) {
-              val target = idxEntries.getOrNull(syn.originalWordIndex) ?: continue
-              val key = NormalizeKey.fold(syn.word)
-              if (key.isNotEmpty() && seen.add(key)) {
-                val split = splitDictEntry(
-                  sametypesequence,
-                  readDef(body, bodySize, target.offset, target.length),
-                )
-                val rowFormat = formatOverride ?: formatFromTypeChar(split.typeChar)
-                insertRow(
-                  stmt,
-                  key,
-                  target.word,
-                  sanitizeDefinition(String(split.payload, Charsets.UTF_8)),
-                  rowFormat,
-                )
-              }
-            }
-          }
+        val synFile = synPath?.let(::File)
+        if (synFile != null && synFile.exists() && synFile.length() > 0) {
+          insertAliases(
+            db.compileStatement(INSERT_ALIAS),
+            synFile,
+            idxCount,
+          )
         }
         db.setTransactionSuccessful()
       } finally {
         db.endTransaction()
       }
-      // Index AFTER the bulk load (schema.ts CREATE_ENTRIES_INDEX).
-      db.execSQL("CREATE INDEX IF NOT EXISTS idx_entries_key ON entries(key)")
+      // Indexes AFTER the bulk load (schema.ts CREATE_*_INDEX).
+      db.execSQL(CREATE_ENTRIES_INDEX)
+      db.execSQL(CREATE_ALIASES_INDEX)
       // meta LAST (schema.ts CREATE_META_TABLE + INSERT_META).
+      db.execSQL(CREATE_META_TABLE)
       db.execSQL(
-        "CREATE TABLE IF NOT EXISTS meta (" +
-          "schema_version INTEGER NOT NULL, built_at TEXT NOT NULL)",
-      )
-      db.execSQL(
-        "INSERT INTO meta (schema_version, built_at) VALUES (?, ?)",
+        INSERT_META,
         arrayOf<Any>(SCHEMA_VERSION, builtAt),
       )
     } finally {
       db.close()
     }
-    return seen.size
+    return idxCount
   }
 
-  private fun insertRow(
-    stmt: android.database.sqlite.SQLiteStatement,
-    key: String,
-    word: String,
-    definition: String,
-    format: String,
-  ) {
-    stmt.clearBindings()
-    stmt.bindString(1, key)
-    stmt.bindString(2, word)
-    stmt.bindString(3, definition)
-    stmt.bindString(4, format)
-    stmt.executeInsert()
+  // One `entries` row per .idx record, in file order, so rowid == ordinal
+  // + 1 and a .syn ordinal maps straight to its row. No dedup: a folded
+  // key shared by several records keeps every row, and lookup takes the
+  // lowest rowid (first-key-wins). A record whose word folds to an empty
+  // key is stored too (it keeps the rowid mapping) but is never looked up.
+  // Each raw .dict slice is split (strip the sts-absent type byte + NUL)
+  // BEFORE decode, and its format derived per entry from the type char
+  // unless the sidecar overrides it (mirror dictEntry.ts).
+  private fun insertEntries(
+    stmt: SQLiteStatement,
+    idxFile: File,
+    idxoffsetbits: Int,
+    body: MappedByteBuffer,
+    bodySize: Long,
+    sametypesequence: String?,
+    formatOverride: String?,
+    dbPath: String,
+  ): Int {
+    val offsetBytes = if (idxoffsetbits == 64) 8 else 4
+    var count = 0
+    RecordReader(idxFile, "parseIdx").use { reader ->
+      while (true) {
+        val word = reader.nextWord() ?: break
+        val offset = reader.unsigned(offsetBytes)
+        val length = reader.unsigned(4).toInt()
+        // A corrupt/truncated dict (real: star_trungviet) has .idx records
+        // reaching past the .dict body. Such a record is still inserted,
+        // with an empty definition, so rowid == ordinal + 1 and the count
+        // hold; the import used to fail on it. The keyed lookup skips
+        // empty-definition rows, so such a word misses or falls through to
+        // the next row for its key instead of showing a blank card. The
+        // overrun arithmetic is unit-tested host-side via dictBodyOverrun
+        // in dictEntry.ts.
+        val raw = readDef(body, bodySize, offset, length) ?: ByteArray(0).also {
+          Log.w(
+            TAG,
+            "dict \"$dbPath\": .idx record ${count + 1} \"$word\" overruns the .dict " +
+              "body by ${dictBodyOverrun(offset + length, bodySize)} bytes; stored empty",
+          )
+        }
+        val split = splitDictEntry(sametypesequence, raw)
+        count++
+        stmt.clearBindings()
+        stmt.bindLong(1, count.toLong())
+        stmt.bindString(2, NormalizeKey.fold(word))
+        stmt.bindString(3, word)
+        stmt.bindString(4, sanitizeDefinition(String(split.payload, Charsets.UTF_8)))
+        stmt.bindString(5, formatOverride ?: formatFromTypeChar(split.typeChar))
+        stmt.executeInsert()
+        if (count % PROGRESS_EVERY == 0) Log.i(TAG, "entries: $count")
+      }
+    }
+    Log.i(TAG, "entries: $count (done)")
+    return count
+  }
+
+  // One `aliases` row per .syn record pointing at its target's entries
+  // rowid. The definition is NOT copied (#44: a 1.5M-record .syn used to
+  // duplicate every target body). Out-of-range ordinals and words that
+  // fold to an empty key are skipped, as buildDict does.
+  private fun insertAliases(stmt: SQLiteStatement, synFile: File, idxCount: Int) {
+    var count = 0
+    RecordReader(synFile, "parseSyn").use { reader ->
+      while (true) {
+        val word = reader.nextWord() ?: break
+        val ordinal = reader.unsigned(4)
+        val key = NormalizeKey.fold(word)
+        if (ordinal >= idxCount || key.isEmpty()) continue
+        stmt.clearBindings()
+        stmt.bindString(1, key)
+        stmt.bindLong(2, ordinal + 1)
+        stmt.bindString(3, word)
+        stmt.executeInsert()
+        count++
+        if (count % PROGRESS_EVERY == 0) Log.i(TAG, "aliases: $count")
+      }
+    }
+    Log.i(TAG, "aliases: $count (done)")
   }
 }
