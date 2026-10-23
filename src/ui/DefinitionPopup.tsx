@@ -117,13 +117,13 @@ export default function DefinitionPopup(): React.JSX.Element {
   const [maximized, setMaximized] = useState(false);
   const [tab, setTab] = useState<Tab>('definition');
   const [thesaurus, setThesaurus] = useState<ThesaurusCache | null>(null);
-  // The OCR-correction field's current text (lasso flow only). Seeded
+  // The editable search-term field's current text. Seeded
   // from the queried word and re-seeded whenever a new result arrives.
   const [editText, setEditText] = useState('');
-  // Display-first OCR correction (lasso flow): false = show the
-  // recognized word + a pencil to edit; true = show the editable field
+  // Display-first search-term correction: false = show the
+  // search term + a pencil to edit; true = show the editable field
   // + Lookup. Reset to false on every new result so each lookup opens in
-  // display mode (the common case — the OCR was correct).
+  // display mode (the common case — the term needs no correction).
   const [editing, setEditing] = useState(false);
   // Transient clipboard-copy feedback ('idle' until a copy fires, then
   // 'ok'/'fail'). No timer — it clears on a new headword or tab switch so
@@ -138,12 +138,12 @@ export default function DefinitionPopup(): React.JSX.Element {
 
   useEffect(() => subscribe(setState), []);
 
-  // The word the current result was queried for — the OCR field's seed.
+  // The word the current result was queried for — the edit field's seed.
   const queriedFor =
     state.visible && state.kind === 'result' ? state.result.queriedFor : '';
   useEffect(() => {
     setEditText(queriedFor);
-    // A new result opens in display mode (the OCR was usually correct).
+    // A new result opens in display mode (the term is usually right).
     setEditing(false);
     // A new query resets the add-definition form (collapsed, headword
     // re-seeded, body + error cleared).
@@ -378,7 +378,7 @@ export default function DefinitionPopup(): React.JSX.Element {
   }, []);
   const handleEditOcr = useCallback(() => setEditing(true), []);
 
-  // Re-run the lookup with the corrected OCR text. Empty/whitespace is
+  // Re-run the lookup with the corrected search term. Empty/whitespace is
   // a no-op (nothing to look up). getPopupActions() may be null — guard.
   const handleLookUp = useCallback(() => {
     const trimmed = editText.trim();
@@ -523,10 +523,10 @@ export default function DefinitionPopup(): React.JSX.Element {
   // A single derived expression, NOT a second Record<FontSize, number>:
   // one scale table, one damping factor, so the two cannot drift apart.
   const headingScale = 1 + (fontScale - 1) / 2;
-  // OCR-correction field shows ONLY in the lasso flow, gated on an
-  // EXPLICIT editable===true (Designer ruling 4 / flag 5) — never
-  // inferred from ocrLabel presence. doc-select omits editable and so
-  // gets the read-only view.
+  // The editable search-term field is gated on an EXPLICIT
+  // editable===true (Designer ruling 4 / flag 5) — never inferred from
+  // ocrLabel presence. A caller that omits editable gets the read-only
+  // view.
   const isEditable = state.editable === true;
   // The Definition/Thesaurus tab strip is only meaningful once we have
   // a real hit (a headword to fetch a thesaurus for).
@@ -674,8 +674,8 @@ export default function DefinitionPopup(): React.JSX.Element {
             {headerPhonetic}
           </Text>
         ) : null}
-        {/* Non-editable (doc-select) flow: the bare OCR label, unchanged.
-            The editable (lasso) flow shows the display/edit row below
+        {/* Non-editable view: the bare OCR label, unchanged.
+            The editable view shows the display/edit row below
             INSTEAD, so the recognized text isn't shown twice. */}
         {state.ocrLabel && !isEditable ? (
           <Text style={styles.ocrLabel}>{state.ocrLabel}</Text>
@@ -701,7 +701,7 @@ export default function DefinitionPopup(): React.JSX.Element {
               </Pressable>
             </View>
           ) : (
-            // DISPLAY mode (default): show the recognized word + a pencil
+            // DISPLAY mode (default): show the search term + a pencil
             // to edit. Tapping the text OR the pencil enters edit mode.
             <Pressable
               accessibilityRole="button"

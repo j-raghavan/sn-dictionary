@@ -13,7 +13,7 @@
 // shared with htmlToPlainText via HtmlBaseRenderer — this file is
 // purely the span/style sink.
 
-import {parseHtml, looksLikeHtml} from './htmlParser';
+import {joinLoneReadingLines, looksLikeHtml, parseHtml} from './htmlParser';
 import {HtmlBaseRenderer, type StyleHint} from './htmlRenderBase';
 
 export type SpanStyle = {
@@ -286,6 +286,6 @@ export const htmlToSpans = (html: string): Span[] => {
     return [{text: html, style: EMPTY_STYLE}];
   }
   const renderer = new SpanRenderer();
-  parseHtml(html, renderer);
+  parseHtml(joinLoneReadingLines(html), renderer);
   return renderer.finalize();
 };

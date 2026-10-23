@@ -32,6 +32,21 @@ describe('entryToPlainText', () => {
     expect(out).not.toContain('=Froncer'); // raw marker gone
   });
 
+  test('a braced-term entry (TrungViet 中国) copies the structured senses', () => {
+    const def = corpus.trungvietClean['中国'];
+    expect(entryToPlainText(hit('TrungViet', '中国', def, 'plain'))).toBe(
+      [
+        '1. Cathay — (từ cổ, nghĩa cổ) Trung Quốc',
+        '2. china — sứ, đồ sứ, làm rối loạn, làm hỗn loạn, làm náo động, bằng sứ, (thuộc) đồ sứ',
+      ].join('\n'),
+    );
+  });
+
+  test('a bare `-` list (NhatVietNhat 学生) copies verbatim', () => {
+    const def = corpus.nhatvietnhat['学生'];
+    expect(entryToPlainText(hit('NhatVietNhat', '学生', def, 'plain'))).toBe(def);
+  });
+
   test('plain entry carrying real HTML copies tag-free text', () => {
     const out = entryToPlainText(
       hit('Dict', 'x', 'lead <b>bold</b> tail', 'plain'),

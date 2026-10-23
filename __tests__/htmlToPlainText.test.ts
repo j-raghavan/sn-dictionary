@@ -1,4 +1,5 @@
 import {htmlToPlainText, looksLikeHtml} from '../src/ui/htmlToPlainText';
+import corpus from './_fixtures/renderParityCorpus.json';
 
 describe('looksLikeHtml', () => {
   test('detects opening tags', () => {
@@ -500,5 +501,56 @@ describe('htmlToPlainText', () => {
       // <p> intent is two newlines collapsed to one by post-pass.
       expect(htmlToPlainText('<p>x</p><p>y</p>')).toBe('x\ny');
     });
+  });
+});
+
+// Tuonghinh (Char-Component-Dict) puts each pinyin reading alone on a
+// line above its gloss. The shared pre-pass joins the two; fixtures are
+// the real 乐 / 好 entries.
+describe('lone pinyin reading lines (Tuonghinh, #28)', () => {
+  const tuonghinh = corpus.tuonghinh as Record<string, string>;
+
+  test('乐: each reading shares its gloss line', () => {
+    expect(htmlToPlainText(tuonghinh['乐']).split('\n').slice(0, 4)).toEqual([
+      '[Yuè] surname Yue',
+      '[lè] ① happy ② cheerful ③ to laugh',
+      '[yuè] music',
+      '[Lè] surname Le',
+    ]);
+  });
+
+  test('好: the section headings and TREE lines are left as they were', () => {
+    expect(htmlToPlainText(tuonghinh['好']).split('\n').slice(0, 8)).toEqual([
+      '[hǎo] ① good ② well ③ proper ④ good to ⑤ easy to ⑥ very ⑦ so ' +
+        '⑧ (suffix indicating completion or readiness) ⑨ (of two people) ' +
+        'close ⑩ on intimate terms ⑪ (after a personal pronoun) hello',
+      '[hào] ① to be fond of ② to have a tendency to ③ to be prone to',
+      'DECOMPOSITIONS',
+      '好　⿰女子',
+      'TREE',
+      '好 hǎo',
+      '├── 女 nǚ / nữ',
+      '└── 子 zǐ / tử',
+    ]);
+  });
+
+  test.each([
+    ['a tag', '[hǎo]<br><b>DECOMPOSITIONS</b>', '[hǎo]\nDECOMPOSITIONS'],
+    ['another reading', '[hǎo]<br>[hào]<br>good', '[hǎo]\n[hào] good'],
+    ['a blank line', '[hǎo]<br><br>good', '[hǎo]\ngood'],
+    ['the end of the entry', 'x<br>[hǎo]<br>', 'x\n[hǎo]'],
+  ])('a reading followed by %s stays on its own line', (_label, html, out) => {
+    expect(htmlToPlainText(html)).toBe(out);
+  });
+
+  test('a bracketed run over 40 chars is not a reading', () => {
+    const long = `[${'a'.repeat(41)}]`;
+    expect(htmlToPlainText(`${long}<br>gloss`)).toBe(`${long}\ngloss`);
+    const max = `[${'a'.repeat(40)}]`;
+    expect(htmlToPlainText(`${max}<br>gloss`)).toBe(`${max} gloss`);
+  });
+
+  test('only a reading that opens its line is joined', () => {
+    expect(htmlToPlainText('see [hǎo]<br>good')).toBe('see [hǎo]\ngood');
   });
 });

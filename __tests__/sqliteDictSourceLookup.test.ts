@@ -4,7 +4,16 @@
 // SQLite as a bound parameter (a quote/DROP payload is inert).
 
 import {createSeededDb} from './_helpers/betterSqliteDb';
-import {CREATE_ENTRIES_TABLE} from '../src/core/dict/sqlite/schema';
+import {
+  CREATE_ALIASES_INDEX,
+  CREATE_ALIASES_TABLE,
+  CREATE_ENTRIES_INDEX,
+  CREATE_ENTRIES_TABLE,
+  INSERT_ALIAS,
+  INSERT_STARDICT_ENTRY,
+  SELECT_ENTRY_BY_KEY,
+  SELECT_ENTRY_BY_KEY_WITH_ALIASES,
+} from '../src/core/dict/sqlite/schema';
 import {
   coerceFormat,
   selectByKey,
@@ -215,6 +224,174 @@ describe('selectByKey — phonetic (v3)', () => {
     await selectByKey(db, 'a');
     // One probe for the handle, cached thereafter.
     expect(pragmaCount).toBe(1);
+    await db.close();
+  });
+});
+
+// --- StarDict aliases (#44) ------------------------------------------
+
+describe('selectByKey — StarDict slug with aliases (#44)', () => {
+  type Alias = {key: string; entryRowid: number; word: string};
+
+  // The layout StarDictImporter.kt writes: entries in .idx order (rowid =
+  // ordinal + 1, no dedup), aliases in .syn order pointing at a rowid.
+  const keyedDb = (entries: Seed[], aliases: Alias[]): Promise<SqliteDb> =>
+    createSeededDb(async d => {
+      await d.run(CREATE_ENTRIES_TABLE);
+      await d.run(CREATE_ALIASES_TABLE);
+      for (const [i, r] of entries.entries()) {
+        await d.run(INSERT_STARDICT_ENTRY, [i + 1, r.key, r.word, r.definition, r.format]);
+      }
+      for (const a of aliases) {
+        await d.run(INSERT_ALIAS, [a.key, a.entryRowid, a.word]);
+      }
+      await d.run(CREATE_ENTRIES_INDEX);
+      await d.run(CREATE_ALIASES_INDEX);
+    });
+
+  const ENTRIES: Seed[] = [
+    {key: 'chat', word: 'chat', definition: 'cat', format: 'html'},
+    {key: 'chien', word: 'chien', definition: 'dog', format: 'html'},
+    {key: 'chat', word: 'Chat', definition: 'a surname', format: 'plain'},
+  ];
+
+  it('returns the canonical row for a headword', async () => {
+    const db = await keyedDb(ENTRIES, []);
+    expect(await selectByKey(db, 'chien')).toEqual({
+      word: 'chien',
+      definition: 'dog',
+      format: 'html',
+    });
+    await db.close();
+  });
+
+  it("resolves an alias-only key to its target's headword and definition", async () => {
+    const db = await keyedDb(ENTRIES, [{key: 'chiens', entryRowid: 2, word: 'chiens'}]);
+    expect(await selectByKey(db, 'chiens')).toEqual({
+      word: 'chien',
+      definition: 'dog',
+      format: 'html',
+    });
+    await db.close();
+  });
+
+  it('prefers a canonical row over an alias on the same key', async () => {
+    // The alias targets a LOWER rowid than the canonical row, so only the
+    // source rank (canonical before alias) can make the canonical win.
+    const db = await keyedDb(
+      [
+        {key: 'aaa', word: 'aaa', definition: 'alias target', format: 'plain'},
+        {key: 'chiens', word: 'Chiens', definition: 'canonical', format: 'plain'},
+      ],
+      [{key: 'chiens', entryRowid: 1, word: 'chiens'}],
+    );
+    expect((await selectByKey(db, 'chiens'))?.definition).toBe('canonical');
+    await db.close();
+  });
+
+  it('returns the first .idx record when several fold to the same key', async () => {
+    const db = await keyedDb(ENTRIES, []);
+    expect(await selectByKey(db, 'chat')).toEqual({
+      word: 'chat',
+      definition: 'cat',
+      format: 'html',
+    });
+    await db.close();
+  });
+
+  it('returns the first .syn record when several aliases share a key', async () => {
+    // .syn order wins, not target rowid order.
+    const db = await keyedDb(ENTRIES, [
+      {key: 'minou', entryRowid: 3, word: 'Minou'},
+      {key: 'minou', entryRowid: 1, word: 'minou'},
+    ]);
+    expect((await selectByKey(db, 'minou'))?.definition).toBe('a surname');
+    await db.close();
+  });
+
+  it('skips empty-definition rows: an only-empty key misses, else the next row wins', async () => {
+    // Empty rows are .idx records that overran a corrupt .dict body.
+    const db = await keyedDb(
+      [
+        {key: 'x', word: 'X', definition: '', format: 'plain'},
+        {key: 'k', word: 'K', definition: '', format: 'plain'},
+        {key: 'k', word: 'k', definition: 'real', format: 'plain'},
+      ],
+      [{key: 'xs', entryRowid: 1, word: 'xs'}],
+    );
+    expect(await selectByKey(db, 'x')).toBeNull();
+    expect(await selectByKey(db, 'xs')).toBeNull();
+    expect(await selectByKey(db, 'k')).toEqual({word: 'k', definition: 'real', format: 'plain'});
+    await db.close();
+  });
+
+  it('returns null when neither entries nor aliases match', async () => {
+    const db = await keyedDb(ENTRIES, [{key: 'chiens', entryRowid: 2, word: 'chiens'}]);
+    expect(await selectByKey(db, 'oiseau')).toBeNull();
+    await db.close();
+  });
+
+  // Spy on the SQL each lookup issues (PRAGMA/sqlite_master probes aside).
+  const lookupSql = (db: SqliteDb): string[] => {
+    const seen: string[] = [];
+    const realQuery = db.query.bind(db);
+    db.query = ((sql: string, params?: unknown[]) => {
+      if (!/PRAGMA|sqlite_master/.test(sql)) {
+        seen.push(sql);
+      }
+      return realQuery(sql, params as never);
+    }) as typeof db.query;
+    return seen;
+  };
+
+  it('uses the keyed SELECT only when the aliases table exists', async () => {
+    const keyed = await keyedDb(ENTRIES, []);
+    const keyedSql = lookupSql(keyed);
+    await selectByKey(keyed, 'chat');
+    expect(keyedSql).toEqual([SELECT_ENTRY_BY_KEY_WITH_ALIASES]);
+    await keyed.close();
+
+    // base.db, user.db, CSV slugs and v2 StarDict slugs have no aliases
+    // table and keep the plain LIMIT-1 SELECT.
+    const plain = await dbWith(ENTRIES);
+    const plainSql = lookupSql(plain);
+    expect(await selectByKey(plain, 'chat')).toEqual({
+      word: 'chat',
+      definition: 'cat',
+      format: 'html',
+    });
+    expect(plainSql).toEqual([SELECT_ENTRY_BY_KEY]);
+    await plain.close();
+  });
+
+  it('re-probes after a failed probe instead of caching the plain shape', async () => {
+    const db = await keyedDb(ENTRIES, [{key: 'chiens', entryRowid: 2, word: 'chiens'}]);
+    const realQuery = db.query.bind(db);
+    let failNext = true;
+    db.query = ((sql: string, params?: unknown[]) => {
+      if (/sqlite_master/.test(sql) && failNext) {
+        failNext = false;
+        return Promise.reject(new Error('timeout'));
+      }
+      return realQuery(sql, params as never);
+    }) as typeof db.query;
+    // First lookup: the probe fails, so this call takes the plain SELECT
+    // and misses the alias...
+    expect(await selectByKey(db, 'chiens')).toBeNull();
+    // ...but the failure is not cached: the next lookup re-probes and
+    // resolves the alias.
+    expect((await selectByKey(db, 'chiens'))?.word).toBe('chien');
+    await db.close();
+  });
+
+  it('falls back to the plain shape when the probe itself fails', async () => {
+    const db = await dbWith(ENTRIES);
+    const realQuery = db.query.bind(db);
+    db.query = ((sql: string, params?: unknown[]) =>
+      /sqlite_master/.test(sql)
+        ? Promise.reject(new Error('probe failed'))
+        : realQuery(sql, params as never)) as typeof db.query;
+    expect((await selectByKey(db, 'chat'))?.word).toBe('chat');
     await db.close();
   });
 });
