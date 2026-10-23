@@ -101,16 +101,13 @@ const FvdpSenseBlock = ({
   fontScale,
 }: FvdpSenseBlockProps): React.JSX.Element => (
   <View style={[styles.sense, showDivider && styles.senseDivider]}>
-    <View style={styles.senseHeader}>
-      <Text style={scaled(styles.senseIndex, fontScale)}>
-        {`${index}.`}
-      </Text>
-    </View>
-    {sense.gloss ? (
-      <Text style={scaled(styles.definition, fontScale)}>
-        {sense.gloss}
-      </Text>
-    ) : null}
+    {/* The index runs inline with its gloss ("1. gloss"), as the copy
+        text has it. Unlike SenseBlock there is no POS badge to share a
+        header row with, so a header View would only break the line. */}
+    <Text style={scaled(styles.definition, fontScale)}>
+      <Text style={scaled(styles.senseIndex, fontScale)}>{`${index}.`}</Text>
+      {sense.gloss ? ` ${sense.gloss}` : null}
+    </Text>
     {sense.examples.length > 0 ? (
       <View style={styles.examples}>
         {sense.examples.map((ex, j) => (
