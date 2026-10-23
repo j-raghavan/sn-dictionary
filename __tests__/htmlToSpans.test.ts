@@ -1,4 +1,6 @@
 import {htmlToSpans, type Span} from '../src/ui/htmlToSpans';
+import {htmlToPlainText} from '../src/ui/htmlToPlainText';
+import corpus from './_fixtures/renderParityCorpus.json';
 
 // Helper: collapse a span list into the visible plain text (ignoring
 // styles). Pinned to the same shape htmlToPlainText produces — any
@@ -515,8 +517,29 @@ describe('htmlToSpans — text matches htmlToPlainText byte-for-byte', () => {
     ],
     ['entities', 'AT&amp;T &lt; &gt; &nbsp;&#65;'],
   ])('%s', (_label, html) => {
-    // Lazily import to keep the cross-renderer invariant explicit.
-    const {htmlToPlainText} = require('../src/ui/htmlToPlainText');
     expect(concatText(htmlToSpans(html))).toBe(htmlToPlainText(html));
+  });
+});
+
+describe('htmlToSpans — <style> and <script> (#46)', () => {
+  test('a real JMdict entry renders without its <style> block', () => {
+    const spans = htmlToSpans(corpus.jmdict['神']);
+    expect(summary(spans).slice(0, 4)).toEqual([
+      ['神', 'B'],
+      ['\n', '-'],
+      ['かみ', 'B,color=#f00'],
+      ['、', '-'],
+    ]);
+    expect(concatText(spans)).not.toMatch(/JMdict|font-size/);
+    expect(concatText(spans)).toBe(htmlToPlainText(corpus.jmdict['神']));
+  });
+
+  test('style and script content leave no span, and styling resumes after them', () => {
+    expect(
+      summary(htmlToSpans('<b>a</b><STYLE type="text/css">b{}</STYLE ><script>x</script><i>c</i>')),
+    ).toEqual([
+      ['a', 'B'],
+      ['c', 'I'],
+    ]);
   });
 });

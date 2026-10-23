@@ -17,6 +17,9 @@
 //     `&...` from a malformed body cheap.
 //   - Malformed unclosed tags surface as literal text rather than
 //     silently swallowing the rest of the entry.
+//   - <style> and <script> are raw-text elements: their content is CSS
+//     or JS, never text to show, so the element is dropped whole. JMdict
+//     opens every definition with a ~330-byte <style> block (#46).
 
 export type TagInfo = {
   // Lowercased tag name with no leading slash.
@@ -117,6 +120,15 @@ const decodeEntity = (entity: string): string => {
 };
 
 const HAS_HTML_TAG = /<\/?[a-zA-Z][^>]*>/;
+
+// The close tag that ends each raw-text element, by tag name. Global so
+// exec() can resume from lastIndex. `</style` must be followed by `>`,
+// whitespace or `/`, so `</styles>` doesn't end the element. A Map, not
+// an object literal, so a tag named `constructor` finds nothing.
+const RAW_TEXT_CLOSE = new Map<string, RegExp>([
+  ['style', /<\/style(?:[\s/][^>]*)?>/gi],
+  ['script', /<\/script(?:[\s/][^>]*)?>/gi],
+]);
 
 // Lowercased tag name without the leading slash. Stops at the first
 // whitespace, `/`, or `>` after the name.
@@ -252,11 +264,24 @@ export const parseHtml = (html: string, visitor: HtmlVisitor): void => {
       flush();
       const inner = html.slice(i + 1, end);
       const isClose = inner.trim().startsWith('/');
-      visitor.onTag({
-        name: tagNameOf(inner),
-        isClose,
-        attrs: parseTagAttrs(inner),
-      });
+      const name = tagNameOf(inner);
+      const rawTextClose = isClose ? undefined : RAW_TEXT_CLOSE.get(name);
+      if (rawTextClose !== undefined) {
+        // Skip to just past the matching close tag. A self-closing tag
+        // (<style/>, <script src="a.js"/>) has no content to skip, and an
+        // open tag with no close drops only itself: a stray or prose
+        // "<script>" must not swallow the rest of the entry.
+        i = end + 1;
+        if (!inner.trimEnd().endsWith('/')) {
+          rawTextClose.lastIndex = i;
+          const close = rawTextClose.exec(html);
+          if (close !== null) {
+            i = close.index + close[0].length;
+          }
+        }
+        continue;
+      }
+      visitor.onTag({name, isClose, attrs: parseTagAttrs(inner)});
       i = end + 1;
     } else if (ch === '&') {
       const semi = html.indexOf(';', i);
