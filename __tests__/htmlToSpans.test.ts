@@ -573,3 +573,24 @@ describe('htmlToSpans — paragraph boundaries (#46)', () => {
     ]);
   });
 });
+
+describe('htmlToSpans — adjacent inline labels (#46)', () => {
+  test.each([
+    '<span class="t p">noun</span><span class="t m">slang</span>',
+    '<i>(Chimie)</i><i>(Désuet)</i>',
+    '<span>漢</span><span>字</span>',
+    '<span>noun</span><span>漢字</span>',
+    '<small>XIX</small><sup>e</sup>',
+    '<i>h</i><span>ν</span>',
+  ])('screen matches copy for %p', html => {
+    expect(concatText(htmlToSpans(html))).toBe(htmlToPlainText(html));
+  });
+
+  test('the separator is unstyled, so it never picks up a label style', () => {
+    expect(summary(htmlToSpans('<b>noun</b><b>slang</b>'))).toEqual([
+      ['noun', 'B'],
+      [' ', '-'],
+      ['slang', 'B'],
+    ]);
+  });
+});

@@ -111,6 +111,33 @@ const formatListMarker = (
   return '•';
 };
 
+// Sibling-label separator (#46). Two elements of the same kind side by
+// side with no text between them are separate items: JMdict's part-of-
+// speech pills (`<span class="t p">noun</span><span class="t p">noun
+// (prefix)</span>`), fr-fr's stacked domain labels (`<i>(Chimie)</i><i>
+// (Désuet)</i>`). A browser lays them apart with CSS margins; as text they
+// ran together ("nounnoun (prefix)"), so one space goes between them.
+//
+// Kept narrow, from a census of every glued inline boundary across the
+// reporter's dicts, JMdict and fr-fr:
+//   - same tag name on both sides only: a tag change mid-word is styling
+//     (fr-fr's <i>h</i><span>ν</span> is hν);
+//   - never at <sup>/<sub>: they attach to the token before them (XIXᵉ,
+//     SO₄²⁻);
+//   - only between word characters, or a closing then an opening bracket,
+//     from Latin, Greek and Cyrillic. CJK is outside these ranges, so 漢字
+//     split across spans never gains a space (none of the dicts glue CJK at
+//     such a boundary; this keeps it that way). Explicit ranges rather than
+//     \p{…}, which nothing else here relies on the JS engine for.
+const SIBLING_WORD_CHARS =
+  '0-9A-Za-z\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u024F\u0370-\u03FF\u0400-\u04FF\u1E00-\u1EFF';
+const SIBLING_LEFT = new RegExp(`[${SIBLING_WORD_CHARS})\\]]$`);
+const SIBLING_RIGHT = new RegExp(`^[${SIBLING_WORD_CHARS}(\\[]`);
+// The tags that break or start a line; must match the layout cases in
+// onTag.
+const BLOCK_TAGS: ReadonlySet<string> = new Set(['br', 'p', 'ol', 'ul', 'li', 'div']);
+const ATTACHED_TAGS: ReadonlySet<string> = new Set(['sup', 'sub']);
+
 export type ListFrame = {
   // Whether items are numbered (ol) or bulleted (ul). A stray <li>
   // without an enclosing list defaults to ul-style "•".
@@ -149,7 +176,29 @@ export abstract class HtmlBaseRenderer implements HtmlVisitor {
   // ", " (comma list) instead of repeating " — ".
   protected justClosedInlineDiv = false;
 
+  // Sibling-label separator state, for the tag run since the last text:
+  // the last inline element closed, the first one opened after it, and
+  // whether the run holds a block or <sup>/<sub> tag. lastTextChar is the
+  // final char of the last text event.
+  private lastTextChar = '';
+  private siblingClosed: string | null = null;
+  private siblingOpened: string | null = null;
+  private siblingRunBlocked = false;
+
   onText(text: string): void {
+    if (
+      !this.siblingRunBlocked &&
+      this.siblingOpened !== null &&
+      this.siblingOpened === this.siblingClosed &&
+      SIBLING_LEFT.test(this.lastTextChar) &&
+      SIBLING_RIGHT.test(text)
+    ) {
+      this.emitLayout(' ');
+    }
+    this.siblingClosed = null;
+    this.siblingOpened = null;
+    this.siblingRunBlocked = false;
+    this.lastTextChar = text.slice(-1);
     for (const ch of text) {
       if (ch === '\n') {
         this.contentOnLine = false;
@@ -166,6 +215,7 @@ export abstract class HtmlBaseRenderer implements HtmlVisitor {
 
   onTag(tag: TagInfo): void {
     const {name, isClose, attrs} = tag;
+    this.trackSiblingRun(name, isClose);
     switch (name) {
       case 'br':
         if (!isClose) {
@@ -264,6 +314,27 @@ export abstract class HtmlBaseRenderer implements HtmlVisitor {
   }
 
   // -- shared layout helpers --
+
+  // Record one tag of the run between two text events (see SIBLING_*).
+  // The run must be closes then opens. An open before any close, or a
+  // close after an open, means an empty element sits in the run
+  // (abc<b></b><b>def), so the next text is not a sibling of the text
+  // before it: no separator.
+  private trackSiblingRun(name: string, isClose: boolean): void {
+    if (BLOCK_TAGS.has(name) || ATTACHED_TAGS.has(name)) {
+      this.siblingRunBlocked = true;
+    } else if (isClose) {
+      if (this.siblingOpened === null) {
+        this.siblingClosed = name;
+      } else {
+        this.siblingRunBlocked = true;
+      }
+    } else if (this.siblingClosed === null) {
+      this.siblingRunBlocked = true;
+    } else if (this.siblingOpened === null) {
+      this.siblingOpened = name;
+    }
+  }
 
   protected emitNewline(): void {
     this.emitLayout('\n');
