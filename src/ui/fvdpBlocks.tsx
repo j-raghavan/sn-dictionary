@@ -5,19 +5,22 @@
 // Layout mirrors the WordNet renderer's visual language so the two
 // structured paths read alike: a POS badge heads each POS section, its
 // senses stack as numbered blocks with a hairline divider, and each
-// bilingual example renders as "source — translation".
+// bilingual example renders as "source — translation". A braced-term
+// sense reads "1. **term** — gloss", under a forms line of the
+// headword's kana / kanji forms when the entry has any.
 //
 // fontScale is the popup's A−/A+ body multiplier (1.0 to 2.0).
 // Chrome (the POS badge) stays at base size; only readable body text —
-// gloss, sense index, examples, note body — scales, exactly as SenseList
-// threads it.
+// forms, gloss, sense index, examples, note body — scales, exactly as
+// SenseList threads it.
 
 import React from 'react';
 import {Text, View} from 'react-native';
-import type {
-  FvdpSection,
-  FvdpSense,
-  ParsedFvdpEntry,
+import {
+  fvdpFormsLine,
+  type FvdpSection,
+  type FvdpSense,
+  type ParsedFvdpEntry,
 } from './fvdpFormatter';
 import {popupStyles as styles, scaled, scaleText} from './popupStyles';
 
@@ -69,6 +72,11 @@ const FvdpSectionBlock = ({
   }
   return (
     <View style={[styles.sense, showDivider && styles.senseDivider]}>
+      {section.forms ? (
+        <Text style={scaled(styles.phonetic, fontScale)}>
+          {fvdpFormsLine(section.forms)}
+        </Text>
+      ) : null}
       {section.pos ? (
         <View style={styles.senseHeader}>
           <Text style={styles.posBadge}>{section.pos}</Text>
@@ -106,7 +114,11 @@ const FvdpSenseBlock = ({
         header row with, so a header View would only break the line. */}
     <Text style={scaled(styles.definition, fontScale)}>
       <Text style={scaled(styles.senseIndex, fontScale)}>{`${index}.`}</Text>
-      {sense.gloss ? ` ${sense.gloss}` : null}
+      {/* Bold label style; its size inherits from the scaled definition. */}
+      {sense.term ? (
+        <Text style={styles.synonymsLabel}>{` ${sense.term}`}</Text>
+      ) : null}
+      {sense.gloss ? `${sense.term ? ' —' : ''} ${sense.gloss}` : null}
     </Text>
     {sense.examples.length > 0 ? (
       <View style={styles.examples}>

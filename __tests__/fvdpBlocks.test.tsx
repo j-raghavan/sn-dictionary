@@ -20,10 +20,11 @@ import {
   parseFvdpEntry,
   type ParsedFvdpEntry,
 } from '../src/ui/fvdpFormatter';
-import {popupStyles} from '../src/ui/popupStyles';
+import {popupStyles, scaled} from '../src/ui/popupStyles';
 import corpus from './_fixtures/renderParityCorpus.json';
 
 const fvdp = corpus.fvdp as Record<string, string>;
+const nhat = corpus.nhatvietnhat as Record<string, string>;
 
 type RTNode = {
   type: string;
@@ -31,14 +32,17 @@ type RTNode = {
   children: Array<RTNode | string> | null;
 };
 
-const render = (word: string, fontScale = 1): ReactTestRenderer => {
+const renderRaw = (raw: string, fontScale = 1): ReactTestRenderer => {
   let tree!: ReactTestRenderer;
-  const parsed = parseFvdpEntry(fvdp[word]);
+  const parsed = parseFvdpEntry(raw);
   act(() => {
     tree = create(<FvdpText parsed={parsed} fontScale={fontScale} />);
   });
   return tree;
 };
+
+const render = (word: string, fontScale = 1): ReactTestRenderer =>
+  renderRaw(fvdp[word], fontScale);
 
 const flatten = (node: RTNode | string | null): string => {
   if (node === null) {
@@ -237,6 +241,44 @@ describe('FvdpText', () => {
     const badge = textNodesWith(root, 'ngoại động từ')[0];
     expect(effectiveFontSize(badge.props.style)).toBe(
       popupStyles.posBadge.fontSize,
+    );
+  });
+
+  test('行く: the kana forms head the entry, the term is bold in its sense line', () => {
+    const root = renderRaw(nhat['行く']).toJSON() as unknown as RTNode;
+    const forms = textNodesWith(root, 'いく · ゆく');
+    expect(forms).toHaveLength(1);
+    expect(forms[0].props.style).toEqual(scaled(popupStyles.phonetic, 1));
+    const line = collectAllNodes(root).find(
+      (n) => n.type === 'Text' && flatten(n).startsWith('1. go — sự đi, sức sống;'),
+    );
+    expect(line).toBeDefined();
+    const term = textNodesWith(line as RTNode, ' go');
+    expect(term).toHaveLength(1);
+    expect(term[0].props.style).toBe(popupStyles.synonymsLabel);
+  });
+
+  test('しゅうはけい: screen lines match the copy text', () => {
+    const raw = nhat['しゅうはけい'];
+    const root = renderRaw(raw).toJSON() as unknown as RTNode;
+    const lines = fvdpEntryToPlainText(parseFvdpEntry(raw)).split('\n');
+    expect(lines).toHaveLength(3);
+    for (const l of lines) {
+      expect(textNodesWith(root, l)).toHaveLength(1);
+    }
+  });
+
+  test('the forms line scales; the term takes its size from the gloss line', () => {
+    const scale = 2;
+    const root = renderRaw(nhat['しゅうはけい'], scale).toJSON() as unknown as RTNode;
+    expect(effectiveFontSize(textNodesWith(root, '周波計')[0].props.style)).toBe(
+      popupStyles.phonetic.fontSize * scale,
+    );
+    const term = textNodesWith(root, ' wavemeter')[0];
+    expect(effectiveFontSize(term.props.style)).toBeUndefined();
+    const line = textNodesWith(root, '2. wavemeter')[0];
+    expect(effectiveFontSize(line.props.style)).toBe(
+      popupStyles.definition.fontSize * scale,
     );
   });
 });
