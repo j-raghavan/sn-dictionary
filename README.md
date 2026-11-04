@@ -66,6 +66,12 @@ By design, **the plugin is pure read** — it never modifies the page, never del
 
 Lookup is ready in well under a second after the plugin process spins up — the native SQLite engine just opens the prebuilt `base.db` (no parse, no in-memory index build), and every lookup is a single indexed `SELECT`. (Measured ~250 ms to Lookup-ready on a note re-open; ADR-0007.)
 
+**Lookup history.** Like Kindle's Vocabulary Builder, every DOC lookup is saved to `EXPORT/SnDict/vocab.db` on the device: the selected text, the sentence it appeared in, the document file name, and a timestamp. Connect the Supernote over USB and read it directly (e.g. to make flashcards) — no export step needed. It needs the file permissions the plugin asks for on first launch; without them nothing is recorded.
+
+```sh
+sqlite3 vocab.db "SELECT word, usage, book, timestamp FROM lookups ORDER BY timestamp"
+```
+
 ## Settings
 
 Tap the **gear (⚙)** in the top-right of any lookup popup to open Settings. Edits are staged locally and only written when you tap **Save** (a "Settings saved" line confirms); **Back** returns to the definition.
