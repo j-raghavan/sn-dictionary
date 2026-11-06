@@ -76,6 +76,32 @@ describe('onDocSelectDefine', () => {
     expect(deps.view.closePluginView).toHaveBeenCalled();
   });
 
+  test('records the trimmed word after the final showResult, without awaiting it (ADR-0011)', async () => {
+    const order: string[] = [];
+    const recordLookup = jest.fn(() => {
+      order.push('record');
+      return new Promise<void>(() => {}); // never settles — must not block
+    });
+    const deps = buildDeps({
+      doc: {getLastSelectedText: jest.fn(async () => ok('  hello  '))},
+      showResult: jest.fn(() => order.push('show')),
+      recordLookup,
+    });
+    expect(await onDocSelectDefine(deps)).toBe('ok');
+    expect(recordLookup).toHaveBeenCalledWith('hello');
+    expect(order).toEqual(['show', 'record']);
+  });
+
+  test('does not record an empty selection', async () => {
+    const recordLookup = jest.fn(async () => {});
+    const deps = buildDeps({
+      doc: {getLastSelectedText: jest.fn(async () => ok('   '))},
+      recordLookup,
+    });
+    await onDocSelectDefine(deps);
+    expect(recordLookup).not.toHaveBeenCalled();
+  });
+
   test('reentrancy: when guard is busy, returns busy and closes view without calling SDK', async () => {
     expect(tryAcquire()).toBe(true);
     const deps = buildDeps();

@@ -105,6 +105,23 @@ export const INSERT_USER_ENTRY =
   'INSERT INTO entries (key, word, definition, format, lang, created_at) ' +
   'VALUES (?, ?, ?, ?, ?, ?)';
 
+// --- vocab.db lookup history (ADR-0011) -------------------------------
+// One row per DOC lookup, Kindle-vocab.db style: the selected text, the
+// sentence it sat in (usage), the document it came from (book) and when.
+// Lives in its own vocab.db in shared storage (EXPORT/SnDict/), readable
+// over USB without an export step.
+export const CREATE_LOOKUPS_TABLE =
+  'CREATE TABLE IF NOT EXISTS lookups (' +
+  'word TEXT NOT NULL, usage TEXT, book TEXT, timestamp TEXT NOT NULL)';
+
+export const INSERT_LOOKUP =
+  'INSERT INTO lookups (word, usage, book, timestamp) VALUES (?, ?, ?, ?)';
+
+// Android opens DBs in TRUNCATE journal mode, which leaves an empty
+// vocab.db-journal next to the user-visible file; DELETE removes it after
+// every write. Per-connection, so it runs on each open.
+export const LOOKUPS_JOURNAL_MODE = 'PRAGMA journal_mode=DELETE';
+
 // First row wins (TF2-FR4): LIMIT 1 so a duplicate-key table returns
 // one deterministic row. `key` is bound, never selected. Projects the
 // v3 `phonetic` column; selectByKey falls back to the 4-col SELECT for

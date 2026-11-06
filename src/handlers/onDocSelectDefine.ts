@@ -19,6 +19,9 @@ export type DocDefineDeps = {
   view: ClosablePluginView;
   lookup: DictLookup;
   showResult: (result: LookupResult) => void;
+  // Lookup history (ADR-0011). Fire-and-forget: never awaited, so it
+  // can't hold the reentrancy guard or delay the popup.
+  recordLookup?: (word: string) => Promise<void>;
   logger: Logger;
 };
 
@@ -60,6 +63,7 @@ export const onDocSelectDefine = async (
     });
     popupShown = true;
     deps.showResult(result);
+    deps.recordLookup?.(text);
     return 'ok';
   } catch (e) {
     deps.logger.error(`[doc-define] pipeline crashed: ${(e as Error).message}`);
