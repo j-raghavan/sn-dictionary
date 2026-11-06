@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [master, feat/*]
+    branches: [master, contrib, feat/*]
   pull_request:
-    branches: [master]
+    branches: [master, contrib]
 
 jobs:
   native-test:
