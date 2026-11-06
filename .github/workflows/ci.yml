@@ -68,10 +68,20 @@ jobs:
         with:
           node-version: 20
           cache: npm
+      # Gradle 8.13 can't run on the runner's default JDK once the image
+      # moves past Java 23 ("Unsupported class file major version 69").
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
       - run: npm ci
       - name: Build plugin
         shell: bash
         run: chmod +x buildPlugin.sh && ./buildPlugin.sh
+      # buildPlugin.sh logs "APK build failed" but still exits 0 and ships a
+      # .snplg without the native app.npk — fail the job instead.
+      - name: Check native package is bundled
+        run: unzip -l build/outputs/SnDict.snplg | grep -q app.npk
       - uses: actions/upload-artifact@v4
         with:
           name: plugin-linux-${{ github.sha }}
