@@ -391,6 +391,9 @@ public class SQLitePlugin extends ReactContextBaseJavaModule {
                 openFlags = SQLiteDatabase.OPEN_READWRITE | SQLiteDatabase.CREATE_IF_NECESSARY;
                 if (TextUtils.isEmpty(location)) {
                     dbfile = this.getContext().getDatabasePath(dbname);
+                } else if (location.startsWith("/")) {
+                    // Absolute location (e.g. shared storage), used by the lookup history DB.
+                    dbfile = new File(location + dbname);
                 } else {
                     dbfile = new File(this.getContext().getFilesDir() + File.separator + location + dbname);
                 }
