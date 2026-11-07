@@ -130,21 +130,30 @@ jobs:
           fi
 
           TAG="v$VERSION"
-          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
-            echo "::error::Tag $TAG already exists."
-            exit 1
+          # Idempotent releases: if the tag already exists on origin (a
+          # re-run after a partial failure, or a tag pushed out of band),
+          # reuse it and skip re-tagging rather than failing. Check the
+          # remote, not just the local fetch, so a tag that exists only on
+          # origin is still detected. PREV_TAG above excludes $TAG via the
+          # version compare, so auto-bump is unaffected.
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            TAG_EXISTS=true
+            echo "Tag $TAG already exists on origin; the release will reuse it."
+          else
+            TAG_EXISTS=false
           fi
 
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "prev_tag=$PREV_TAG" >> "$GITHUB_OUTPUT"
+          echo "tag_exists=$TAG_EXISTS" >> "$GITHUB_OUTPUT"
 
       - name: Bump package.json (runner only)
-        # The release workflow OWNS the version bump — package.json must
+        # The release workflow OWNS the version bump: package.json must
         # not be hand-edited in feature PRs. --allow-same-version keeps
         # the release idempotent so a stray manual bump (or a re-run)
-        # can't wedge it with "Version not changed". The "tag already
-        # exists" guard above is what actually prevents double-releasing.
+        # can't wedge it with "Version not changed". When the tag already
+        # exists the commit/tag step below reuses it and skips the push.
         env:
           VERSION: ${{ steps.ver.outputs.version }}
         run: npm version "$VERSION" --no-git-tag-version --allow-same-version
@@ -158,12 +167,20 @@ jobs:
           # buildPlugin.sh exits 0 even when the APK build fails.
           unzip -l build/outputs/SnDict.snplg | grep -q app.npk
 
-      - name: Commit version bump to master
+      - name: Commit version bump and tag
         env:
           VERSION: ${{ steps.ver.outputs.version }}
           TAG: ${{ steps.ver.outputs.tag }}
+          TAG_EXISTS: ${{ steps.ver.outputs.tag_exists }}
         run: |
           set -euo pipefail
+          # When the tag already exists we reuse it: don't bump, commit or
+          # re-tag. The build artifact from this run is still what gets
+          # attached to the release below.
+          if [ "$TAG_EXISTS" = "true" ]; then
+            echo "Tag $TAG already exists; skipping version-bump commit and tagging."
+            exit 0
+          fi
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add package.json
